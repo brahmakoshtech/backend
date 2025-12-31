@@ -1,275 +1,279 @@
-# Mobile API Routes - Profile Section
+# Mobile User Registration API
 
-This folder contains mobile-specific API endpoints for profile management.
+This document describes the multi-step registration flow for mobile users.
 
-## Client Profile Endpoints
+## Registration Flow Overview
 
-Base URL: `/api/mobile/client`
+The registration process consists of 3 steps:
+1. **Email/Google OTP Verification** - Verify user's email address
+2. **Mobile OTP Verification** - Verify user's mobile number
+3. **Profile Completion** - Collect user details and profile image
 
-### 1. Client Login
-- **Endpoint:** `POST /api/mobile/client/login`
-- **Description:** Login for client users (mobile)
-- **Request Body:**
-  ```json
-  {
-    "email": "client@example.com",
-    "password": "password123"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "message": "Login successful",
-    "data": {
-      "client": {
-        "_id": "...",
-        "email": "client@example.com",
-        "businessName": "...",
-        "businessType": "...",
-        "contactNumber": "...",
-        "address": "...",
-        "role": "client",
-        ...
-      },
-      "token": "jwt_token_here"
-    }
-  }
-  ```
+## API Endpoints
 
-### 2. Client Registration
-- **Endpoint:** `POST /api/mobile/client/register`
-- **Description:** Register a new client (mobile)
-- **Request Body:**
-  ```json
-  {
-    "email": "client@example.com",
-    "password": "password123",
-    "businessName": "My Business",
-    "businessType": "Retail",
-    "contactNumber": "1234567890",
-    "address": "123 Main St"
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "message": "Client registered successfully. Please wait for super admin approval to login.",
-    "data": {
-      "client": {
-        "_id": "...",
-        "email": "client@example.com",
-        ...
-      }
-    }
-  }
-  ```
+### Step 1: Email/Google OTP Verification
 
-### 3. Get Client Profile
-- **Endpoint:** `GET /api/mobile/client/profile`
-- **Description:** Get current client profile (requires authentication)
-- **Headers:**
-  ```
-  Authorization: Bearer <token>
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "data": {
-      "client": {
-        "_id": "...",
-        "email": "client@example.com",
-        "businessName": "...",
-        "businessType": "...",
-        "contactNumber": "...",
-        "address": "...",
-        "role": "client",
-        ...
-      }
-    }
-  }
-  ```
+#### Initiate Email OTP
+**POST** `/api/mobile/user/register/step1`
 
-### 4. Update Client Profile
-- **Endpoint:** `PUT /api/mobile/client/profile`
-- **Description:** Update client profile (requires authentication)
-- **Headers:**
-  ```
-  Authorization: Bearer <token>
-  ```
-- **Request Body:**
-  ```json
-  {
-    "businessName": "Updated Business Name",
-    "businessType": "Updated Type",
-    "contactNumber": "9876543210",
-    "address": "456 New St",
-    "email": "newemail@example.com",
-    "password": "newpassword" // optional
-  }
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "message": "Profile updated successfully",
-    "data": {
-      "client": {
-        "_id": "...",
-        "email": "newemail@example.com",
-        ...
-      }
-    }
-  }
-  ```
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "optional_password" // Optional for Google sign-in
+}
+```
 
-## User Profile Endpoints
-
-Base URL: `/api/mobile/user`
-
-### 1. User Login
-- **Endpoint:** `POST /api/mobile/user/login`
-- **Description:** Login for user accounts (mobile)
-- **Request Body:**
-  ```json
-  {
+**Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent to your email. Please verify to continue.",
+  "data": {
     "email": "user@example.com",
-    "password": "password123"
+    "registrationStep": 1
   }
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "message": "Login successful",
-    "data": {
-      "user": {
-        "_id": "...",
-        "email": "user@example.com",
-        "profile": {
-          "name": "...",
-          "dob": "...",
-          "placeOfBirth": "...",
-          "timeOfBirth": "...",
-          "gowthra": "...",
-          "profession": "..."
-        },
-        "role": "user",
-        ...
-      },
-      "token": "jwt_token_here"
-    }
-  }
-  ```
+}
+```
 
-### 2. User Registration
-- **Endpoint:** `POST /api/mobile/user/register`
-- **Description:** Register a new user (mobile)
-- **Request Body:**
-  ```json
-  {
+#### Verify Email OTP
+**POST** `/api/mobile/user/register/step1/verify`
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "otp": "123456"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Email verified successfully",
+  "data": {
     "email": "user@example.com",
-    "password": "password123",
-    "profile": {
-      "name": "John Doe",
-      "dob": "1990-01-01",
-      "placeOfBirth": "City",
-      "timeOfBirth": "10:00",
-      "gowthra": "Gowthra Name",
-      "profession": "student"
-    }
+    "registrationStep": 1,
+    "nextStep": "mobile_verification"
   }
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "message": "User registered successfully. Please wait for super admin approval to login.",
-    "data": {
-      "user": {
-        "_id": "...",
-        "email": "user@example.com",
-        "profile": {...},
-        ...
-      }
-    }
-  }
-  ```
+}
+```
 
-### 3. Get User Profile
-- **Endpoint:** `GET /api/mobile/user/profile`
-- **Description:** Get current user profile (requires authentication)
-- **Headers:**
-  ```
-  Authorization: Bearer <token>
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "data": {
-      "user": {
-        "_id": "...",
-        "email": "user@example.com",
-        "profile": {
-          "name": "...",
-          "dob": "...",
-          "placeOfBirth": "...",
-          "timeOfBirth": "...",
-          "gowthra": "...",
-          "profession": "..."
-        },
-        "clientId": {...}, // populated client info
-        "role": "user",
-        ...
-      }
-    }
-  }
-  ```
+#### Resend Email OTP
+**POST** `/api/mobile/user/register/resend-email-otp`
 
-### 4. Update User Profile
-- **Endpoint:** `PUT /api/mobile/user/profile`
-- **Description:** Update user profile (requires authentication)
-- **Headers:**
-  ```
-  Authorization: Bearer <token>
-  ```
-- **Request Body:**
-  ```json
-  {
-    "email": "newemail@example.com",
-    "password": "newpassword", // optional
-    "profile": {
-      "name": "Updated Name",
-      "dob": "1990-01-01",
-      "placeOfBirth": "Updated City",
-      "timeOfBirth": "11:00",
-      "gowthra": "Updated Gowthra",
-      "profession": "private job"
+**Request Body:**
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+---
+
+### Step 2: Mobile OTP Verification
+
+#### Initiate Mobile OTP
+**POST** `/api/mobile/user/register/step2`
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "mobile": "+1234567890"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "OTP sent to your mobile number. Please verify to continue.",
+  "data": {
+    "email": "user@example.com",
+    "mobile": "+1234567890",
+    "registrationStep": 2
+  }
+}
+```
+
+#### Verify Mobile OTP
+**POST** `/api/mobile/user/register/step2/verify`
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "otp": "123456"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Mobile verified successfully",
+  "data": {
+    "email": "user@example.com",
+    "mobile": "+1234567890",
+    "registrationStep": 2,
+    "nextStep": "profile_completion"
+  }
+}
+```
+
+#### Resend Mobile OTP
+**POST** `/api/mobile/user/register/resend-mobile-otp`
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+---
+
+### Step 3: Profile Completion
+
+#### Complete Profile
+**POST** `/api/mobile/user/register/step3`
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "name": "John Doe",
+  "dob": "1990-01-15",
+  "timeOfBirth": "10:30 AM",
+  "placeOfBirth": "New York, USA",
+  "gowthra": "Bharadwaja",
+  "imageFileName": "profile.jpg", // Optional
+  "imageContentType": "image/jpeg" // Optional
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Profile completed successfully. Registration complete!",
+  "data": {
+    "user": {
+      "_id": "...",
+      "email": "user@example.com",
+      "mobile": "+1234567890",
+      "profile": {
+        "name": "John Doe",
+        "dob": "1990-01-15T00:00:00.000Z",
+        "timeOfBirth": "10:30 AM",
+        "placeOfBirth": "New York, USA",
+        "gowthra": "Bharadwaja"
+      },
+      "registrationStep": 3,
+      "role": "user"
+    },
+    "registrationStep": 3,
+    "registrationComplete": true,
+    "imageUpload": {
+      "presignedUrl": "https://s3.amazonaws.com/...",
+      "key": "images/user/.../profile/..."
     }
   }
-  ```
-- **Response:**
-  ```json
-  {
-    "success": true,
-    "message": "Profile updated successfully",
-    "data": {
-      "user": {
-        "_id": "...",
-        "email": "newemail@example.com",
-        "profile": {...},
-        ...
-      }
+}
+```
+
+**Note:** If `imageFileName` and `imageContentType` are provided, the response will include a `presignedUrl` for uploading the image directly to S3. After receiving the response, upload the image file to the provided `presignedUrl` using a PUT request.
+
+---
+
+## Login
+
+**POST** `/api/mobile/user/login`
+
+**Request Body:**
+```json
+{
+  "email": "user@example.com",
+  "password": "userpassword"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Login successful",
+  "data": {
+    "user": {
+      "_id": "...",
+      "email": "user@example.com",
+      "role": "user",
+      ...
+    },
+    "token": "jwt_token_here"
+  }
+}
+```
+
+**Note:** Users can only login after completing all 3 registration steps.
+
+---
+
+## Profile Management
+
+### Get Profile
+**GET** `/api/mobile/user/profile`
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "_id": "...",
+      "email": "user@example.com",
+      "mobile": "+1234567890",
+      "profile": {...},
+      "profileImageUrl": "https://s3.amazonaws.com/...",
+      "role": "user"
     }
   }
-  ```
+}
+```
+
+### Update Profile
+**PUT** `/api/mobile/user/profile`
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+```json
+{
+  "name": "Updated Name",
+  "dob": "1990-01-15",
+  "timeOfBirth": "10:30 AM",
+  "placeOfBirth": "New York, USA",
+  "gowthra": "Bharadwaja",
+  "imageFileName": "new-profile.jpg", // Optional
+  "imageContentType": "image/jpeg" // Optional
+}
+```
+
+---
 
 ## Error Responses
 
-All endpoints may return error responses in the following format:
+All endpoints return errors in the following format:
 
 ```json
 {
@@ -278,19 +282,62 @@ All endpoints may return error responses in the following format:
 }
 ```
 
-### Common HTTP Status Codes:
-- `400` - Bad Request (missing required fields, validation errors)
-- `401` - Unauthorized (invalid credentials, no token, inactive account)
-- `403` - Forbidden (login not approved, insufficient permissions)
-- `404` - Not Found (user/client not found)
+Common HTTP status codes:
+- `400` - Bad Request (missing/invalid parameters)
+- `401` - Unauthorized (invalid credentials/token)
+- `403` - Forbidden (insufficient permissions)
+- `404` - Not Found (user/resource not found)
 - `500` - Internal Server Error
 
-## Authentication
+---
 
-Protected endpoints require a JWT token in the Authorization header:
+## Registration Flow Diagram
+
 ```
-Authorization: Bearer <your_jwt_token>
+1. POST /register/step1
+   ↓
+   [OTP sent to email]
+   ↓
+2. POST /register/step1/verify
+   ↓
+   [Email verified]
+   ↓
+3. POST /register/step2
+   ↓
+   [OTP sent to mobile]
+   ↓
+4. POST /register/step2/verify
+   ↓
+   [Mobile verified]
+   ↓
+5. POST /register/step3
+   ↓
+   [Profile completed]
+   ↓
+6. POST /login
+   [User can now login]
 ```
 
-The token is obtained from the login endpoints and should be included in all subsequent requests.
+---
 
+## OTP Configuration
+
+OTPs are valid for **10 minutes**. To integrate actual email/SMS sending:
+
+1. **Email OTP**: Update `backend/utils/otp.js` - `sendEmailOTP()` function
+   - Recommended services: Nodemailer, SendGrid, AWS SES
+
+2. **Mobile OTP**: Update `backend/utils/otp.js` - `sendMobileOTP()` function
+   - Recommended services: Twilio, AWS SNS, MessageBird
+
+Currently, OTPs are logged to console for development purposes.
+
+---
+
+## Notes
+
+- Users can register and login directly without admin approval
+- Email and mobile numbers must be unique
+- Profile image is stored in S3 and accessed via presigned URLs
+- All OTP fields are automatically cleared after successful verification
+- Registration step is tracked to ensure users complete all steps in order
