@@ -45,20 +45,6 @@ export const validateOTP = (storedOTP, providedOTP, expiryDate) => {
 
 // Create nodemailer transporter
 const createEmailTransporter = () => {
-  const emailService = 'EMAIL_SERVICE'; // gmail, outlook, yahoo, custom
-  
-  // For Gmail, Outlook, Yahoo - use OAuth2 or App Password
-  if (['gmail', 'outlook', 'yahoo'].includes(emailService.toLowerCase())) {
-    return nodemailer.createTransport({
-      service: emailService,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD // Use App Password for Gmail
-      }
-    });
-  }
-  
-  // For custom SMTP servers
   return nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
@@ -76,6 +62,7 @@ const createEmailTransporter = () => {
     },
   });
 };
+
 
 // Send email OTP using nodemailer
 export const sendEmailOTP = async (email, otp) => {
