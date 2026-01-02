@@ -45,7 +45,7 @@ export const validateOTP = (storedOTP, providedOTP, expiryDate) => {
 
 // Create nodemailer transporter
 const createEmailTransporter = () => {
-  const emailService = process.env.EMAIL_SERVICE || 'gmail'; // gmail, outlook, yahoo, custom
+  const emailService = 'EMAIL_SERVICE'; // gmail, outlook, yahoo, custom
   
   // For Gmail, Outlook, Yahoo - use OAuth2 or App Password
   if (['gmail', 'outlook', 'yahoo'].includes(emailService.toLowerCase())) {
@@ -60,16 +60,20 @@ const createEmailTransporter = () => {
   
   // For custom SMTP servers
   return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: process.env.SMTP_SECURE === 'false', // true for 465, false for other ports
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // MUST be false for 587
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASSWORD
+      pass: process.env.EMAIL_PASSWORD, // Gmail App Password
     },
+    connectionTimeout: 10000, // 10s
+    socketTimeout: 10000,
+    greetingTimeout: 10000,
     tls: {
-      rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false'
-    }
+      servername: "smtp.gmail.com",
+      rejectUnauthorized: false,
+    },
   });
 };
 
