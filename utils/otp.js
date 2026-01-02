@@ -239,26 +239,45 @@ export const sendEmailOTP = async (email, otp) => {
         console.log(`✅ Email OTP sent via Brevo to ${email}. Message ID: ${result.messageId || 'N/A'}`);
         
         // Mark old unverified OTPs as used (allow unlimited retries if not verified)
-        await OTP.updateMany(
-          { email, type: 'email', isUsed: false },
-          { $set: { isUsed: true } }
-        );
+        // Database save is optional - OTP is already saved in User model
+        try {
+          await OTP.updateMany(
+            { email, type: 'email', isUsed: false },
+            { $set: { isUsed: true } }
+          );
+          
+          // Save new OTP to database (optional - OTP is already saved in User model)
+          const expiresAt = getOTPExpiry();
+          await OTP.create({
+            email,
+            otp,
+            expiresAt,
+            type: 'email',
+            client: 'brahmakosh'
+          });
+        } catch (dbError) {
+          // Handle database errors gracefully (e.g., duplicate key, index issues)
+          // OTP is already saved in User model, so this is not critical
+          // Don't treat database errors as Brevo failures
+          console.warn('Could not save OTP to database collection (OTP is saved in User model):', dbError.message);
+        }
         
-        // Save new OTP to database
-        const expiresAt = getOTPExpiry();
-        await OTP.create({
-          email,
-          otp,
-          expiresAt,
-          type: 'email',
-          client: 'brahmakosh'
-        });
-        
+        // Return success - email was sent successfully via Brevo
         return { success: true, message: 'OTP sent to email via Brevo', messageId: result.messageId };
       } catch (brevoError) {
-        console.error('Brevo error:', brevoError.response?.data || brevoError.message);
-        // Fall back to other services if Brevo fails
-        console.log('⚠️ Brevo failed, trying alternatives...');
+        // Only catch Brevo API errors, not database errors
+        // Check if it's a database error (E11000 is MongoDB duplicate key error)
+        if (brevoError.code === 'E11000' || brevoError.message?.includes('duplicate key')) {
+          // This is a database error, not a Brevo API error
+          // Email was sent successfully, just database save failed
+          console.warn('Database error saving OTP (email was sent successfully):', brevoError.message);
+          return { success: true, message: 'OTP sent to email via Brevo (database save failed but email sent)' };
+        }
+        
+        // Actual Brevo API error
+        console.error('Brevo API error:', brevoError.response?.data || brevoError.message);
+        // Fall back to other services if Brevo API fails
+        console.log('⚠️ Brevo API failed, trying alternatives...');
       }
     }
 
@@ -269,20 +288,26 @@ export const sendEmailOTP = async (email, otp) => {
         console.log(`✅ Email OTP sent via SendGrid to ${email}`);
         
         // Mark old unverified OTPs as used (allow unlimited retries if not verified)
-        await OTP.updateMany(
-          { email, type: 'email', isUsed: false },
-          { $set: { isUsed: true } }
-        );
-        
-        // Save new OTP to database
-        const expiresAt = getOTPExpiry();
-        await OTP.create({
-          email,
-          otp,
-          expiresAt,
-          type: 'email',
-          client: 'brahmakosh'
-        });
+        try {
+          await OTP.updateMany(
+            { email, type: 'email', isUsed: false },
+            { $set: { isUsed: true } }
+          );
+          
+          // Save new OTP to database (optional - OTP is already saved in User model)
+          const expiresAt = getOTPExpiry();
+          await OTP.create({
+            email,
+            otp,
+            expiresAt,
+            type: 'email',
+            client: 'brahmakosh'
+          });
+        } catch (dbError) {
+          // Handle database errors gracefully (e.g., duplicate key, index issues)
+          // OTP is already saved in User model, so this is not critical
+          console.warn('Could not save OTP to database collection (OTP is saved in User model):', dbError.message);
+        }
         
         return { success: true, message: 'OTP sent to email via SendGrid' };
       } catch (sendGridError) {
@@ -408,15 +433,21 @@ export const sendEmailOTP = async (email, otp) => {
     }
     console.log(`✅ Email OTP sent to ${email}. Message ID: ${info.messageId}`);
     
-    // Save OTP to database
-    const expiresAt = getOTPExpiry();
-    await OTP.create({
-      email,
-      otp,
-      expiresAt,
-      type: 'email',
-      client: 'brahmakosh'
-    });
+    // Save OTP to database (optional - OTP is already saved in User model)
+    try {
+      const expiresAt = getOTPExpiry();
+      await OTP.create({
+        email,
+        otp,
+        expiresAt,
+        type: 'email',
+        client: 'brahmakosh'
+      });
+    } catch (dbError) {
+      // Handle database errors gracefully (e.g., duplicate key, index issues)
+      // OTP is already saved in User model, so this is not critical
+      console.warn('Could not save OTP to database collection (OTP is saved in User model):', dbError.message);
+    }
     
     return { success: true, message: 'OTP sent to email', messageId: info.messageId };
   } catch (error) {
@@ -546,19 +577,25 @@ export const sendMobileOTP = async (mobile, otp) => {
         console.log(`✅ WhatsApp OTP sent to ${whatsappTo}. Message ID: ${result.messages?.[0]?.id || 'N/A'}`);
         
       // Mark old unverified OTPs as used (allow unlimited retries if not verified)
-      await OTP.updateMany(
-        { mobile: normalizedMobile, type: { $in: ['whatsapp', 'sms', 'mobile'] }, isUsed: false },
-        { $set: { isUsed: true } }
-      );
-      
-      // Save new OTP to database
-      await OTP.create({
-        mobile: normalizedMobile,
-        otp,
-        expiresAt,
-        type: 'whatsapp',
-        client: 'brahmakosh'
-      });
+      try {
+        await OTP.updateMany(
+          { mobile: normalizedMobile, type: { $in: ['whatsapp', 'sms', 'mobile'] }, isUsed: false },
+          { $set: { isUsed: true } }
+        );
+        
+        // Save new OTP to database (optional - OTP is already saved in User model)
+        await OTP.create({
+          mobile: normalizedMobile,
+          otp,
+          expiresAt,
+          type: 'whatsapp',
+          client: 'brahmakosh'
+        });
+      } catch (dbError) {
+        // Handle database errors gracefully (e.g., duplicate key, index issues)
+        // OTP is already saved in User model, so this is not critical
+        console.warn('Could not save OTP to database collection (OTP is saved in User model):', dbError.message);
+      }
         
         return { 
           success: true, 
@@ -597,19 +634,25 @@ export const sendMobileOTP = async (mobile, otp) => {
       console.log(`✅ SMS OTP sent to ${normalizedMobile}. Message SID: ${message.sid}`);
       
       // Mark old unverified OTPs as used (allow unlimited retries if not verified)
-      await OTP.updateMany(
-        { mobile: normalizedMobile, type: { $in: ['whatsapp', 'sms', 'mobile'] }, isUsed: false },
-        { $set: { isUsed: true } }
-      );
-      
-      // Save new OTP to database
-      await OTP.create({
-        mobile: normalizedMobile,
-        otp,
-        expiresAt,
-        type: 'sms',
-        client: 'brahmakosh'
-      });
+      try {
+        await OTP.updateMany(
+          { mobile: normalizedMobile, type: { $in: ['whatsapp', 'sms', 'mobile'] }, isUsed: false },
+          { $set: { isUsed: true } }
+        );
+        
+        // Save new OTP to database (optional - OTP is already saved in User model)
+        await OTP.create({
+          mobile: normalizedMobile,
+          otp,
+          expiresAt,
+          type: 'sms',
+          client: 'brahmakosh'
+        });
+      } catch (dbError) {
+        // Handle database errors gracefully (e.g., duplicate key, index issues)
+        // OTP is already saved in User model, so this is not critical
+        console.warn('Could not save OTP to database collection (OTP is saved in User model):', dbError.message);
+      }
       
       return { success: true, message: 'OTP sent via SMS', messageSid: message.sid };
     } else {
