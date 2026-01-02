@@ -122,6 +122,107 @@ const createEmailTransporter = () => {
   });
 };
 
+// Send email OTP using Brevo (Sendinblue) API (recommended for cloud environments)
+const sendEmailViaBrevo = async (email, otp) => {
+  const BREVO_API_KEY = process.env.BREVO_API_KEY;
+  const BREVO_FROM_EMAIL = process.env.BREVO_FROM_EMAIL || process.env.EMAIL_FROM || process.env.EMAIL_USER;
+  const BREVO_FROM_NAME = process.env.BREVO_FROM_NAME || process.env.APP_NAME || 'Brahmakosh';
+  const appName = process.env.APP_NAME || 'Brahmakosh';
+
+  if (!BREVO_API_KEY) {
+    throw new Error('Brevo API key not configured');
+  }
+
+  const url = 'https://api.brevo.com/v3/smtp/email';
+  const headers = {
+    'api-key': BREVO_API_KEY,
+    'Content-Type': 'application/json'
+  };
+
+  const emailHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #333;">OTP Verification</h2>
+      <p>Hello,</p>
+      <p>Your OTP for ${appName} registration is:</p>
+      <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0;">
+        <h1 style="color: #007bff; font-size: 32px; margin: 0; letter-spacing: 5px;">${otp}</h1>
+      </div>
+      <p>This OTP will expire in <strong>10 minutes</strong>.</p>
+      <p>If you didn't request this OTP, please ignore this email.</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="color: #999; font-size: 12px;">This is an automated message. Please do not reply.</p>
+    </div>
+  `;
+
+  const data = {
+    sender: {
+      name: BREVO_FROM_NAME,
+      email: BREVO_FROM_EMAIL
+    },
+    to: [
+      {
+        email: email
+      }
+    ],
+    subject: `Your OTP for ${appName} Registration`,
+    htmlContent: emailHtml,
+    textContent: `Your OTP for ${appName} registration is: ${otp}. This OTP will expire in 10 minutes.`
+  };
+
+  const response = await axios.post(url, data, { headers });
+  return response.data;
+};
+
+// Send email OTP using SendGrid API (alternative option)
+const sendEmailViaSendGrid = async (email, otp) => {
+  const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+  const SENDGRID_FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_FROM || process.env.EMAIL_USER;
+  const appName = process.env.APP_NAME || 'Brahmakosh';
+
+  if (!SENDGRID_API_KEY) {
+    throw new Error('SendGrid API key not configured');
+  }
+
+  const url = 'https://api.sendgrid.com/v3/mail/send';
+  const headers = {
+    'Authorization': `Bearer ${SENDGRID_API_KEY}`,
+    'Content-Type': 'application/json'
+  };
+
+  const data = {
+    personalizations: [{
+      to: [{ email: email }],
+      subject: `Your OTP for ${appName} Registration`
+    }],
+    from: {
+      email: SENDGRID_FROM_EMAIL,
+      name: appName
+    },
+    content: [
+      {
+        type: 'text/html',
+        value: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #333;">OTP Verification</h2>
+            <p>Hello,</p>
+            <p>Your OTP for ${appName} registration is:</p>
+            <div style="background-color: #f4f4f4; padding: 20px; text-align: center; margin: 20px 0;">
+              <h1 style="color: #007bff; font-size: 32px; margin: 0; letter-spacing: 5px;">${otp}</h1>
+            </div>
+            <p>This OTP will expire in <strong>10 minutes</strong>.</p>
+            <p>If you didn't request this OTP, please ignore this email.</p>
+            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+            <p style="color: #999; font-size: 12px;">This is an automated message. Please do not reply.</p>
+          </div>
+        `
+      }
+    ]
+  };
+
+  const response = await axios.post(url, data, { headers });
+  return response.data;
+};
+
 // Send email OTP using nodemailer
 export const sendEmailOTP = async (email, otp) => {
   try {
@@ -131,9 +232,59 @@ export const sendEmailOTP = async (email, otp) => {
       return { success: true, message: 'OTP sent to email (logged to console)' };
     }
 
-    // Validate required environment variables
+    // Try Brevo (Sendinblue) first if configured (recommended for cloud environments like Render)
+    if (process.env.USE_BREVO === 'true' || process.env.BREVO_API_KEY) {
+      try {
+        const result = await sendEmailViaBrevo(email, otp);
+        console.log(`✅ Email OTP sent via Brevo to ${email}. Message ID: ${result.messageId || 'N/A'}`);
+        
+        // Save OTP to database
+        const expiresAt = getOTPExpiry();
+        await OTP.create({
+          email,
+          otp,
+          expiresAt,
+          type: 'email',
+          client: 'brahmakosh'
+        });
+        
+        return { success: true, message: 'OTP sent to email via Brevo', messageId: result.messageId };
+      } catch (brevoError) {
+        console.error('Brevo error:', brevoError.response?.data || brevoError.message);
+        // Fall back to other services if Brevo fails
+        console.log('⚠️ Brevo failed, trying alternatives...');
+      }
+    }
+
+    // Try SendGrid as alternative if configured
+    if (process.env.USE_SENDGRID === 'true' || process.env.SENDGRID_API_KEY) {
+      try {
+        const result = await sendEmailViaSendGrid(email, otp);
+        console.log(`✅ Email OTP sent via SendGrid to ${email}`);
+        
+        // Save OTP to database
+        const expiresAt = getOTPExpiry();
+        await OTP.create({
+          email,
+          otp,
+          expiresAt,
+          type: 'email',
+          client: 'brahmakosh'
+        });
+        
+        return { success: true, message: 'OTP sent to email via SendGrid' };
+      } catch (sendGridError) {
+        console.error('SendGrid error:', sendGridError.response?.data || sendGridError.message);
+        // Fall back to SMTP if SendGrid fails
+        console.log('⚠️ SendGrid failed, falling back to SMTP...');
+      }
+    }
+
+    // Validate required environment variables for SMTP
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
       console.error('Email configuration missing. Please set EMAIL_USER and EMAIL_PASSWORD in .env');
+      console.error('💡 TIP: For cloud deployments (Render, Heroku), use SendGrid instead:');
+      console.error('   Set USE_SENDGRID=true and SENDGRID_API_KEY=your-api-key');
       console.log(`📧 Email OTP for ${email}: ${otp} (Email not configured - check console)`);
       return { success: true, message: 'OTP logged to console (email not configured)' };
     }
@@ -258,6 +409,26 @@ export const sendEmailOTP = async (email, otp) => {
     return { success: true, message: 'OTP sent to email', messageId: info.messageId };
   } catch (error) {
     console.error('Error sending email OTP:', error);
+    
+    // Check if it's a connection timeout (common in cloud environments)
+    const isConnectionError = error.code === 'ETIMEDOUT' || 
+                             error.code === 'ECONNREFUSED' || 
+                             error.code === 'ECONNRESET' ||
+                             error.message?.includes('timeout') ||
+                             error.message?.includes('Connection');
+    
+    if (isConnectionError) {
+      console.error('❌ SMTP connection failed. This is common in cloud environments like Render.');
+      console.error('💡 SOLUTION: Use Brevo (HTTP API) instead of SMTP:');
+      console.error('   1. Sign up at https://www.brevo.com (free tier: 300 emails/day)');
+      console.error('   2. Create API Key in Brevo dashboard (Settings → API Keys)');
+      console.error('   3. Verify your sender email in Brevo');
+      console.error('   4. Set in Render environment variables:');
+      console.error('      USE_BREVO=true');
+      console.error('      BREVO_API_KEY=your-api-key');
+      console.error('      BREVO_FROM_EMAIL=your-verified-email@domain.com');
+      console.error('   Alternative: Use SendGrid with USE_SENDGRID=true');
+    }
     
     // Fallback: log to console if email fails
     console.log(`📧 Email OTP for ${email}: ${otp} (Email failed - check console)`);
