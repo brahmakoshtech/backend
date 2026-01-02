@@ -45,24 +45,77 @@ export const validateOTP = (storedOTP, providedOTP, expiryDate) => {
 
 // Create nodemailer transporter
 const createEmailTransporter = () => {
-  return nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false, // MUST be false for 587
+  const emailService = process.env.EMAIL_SERVICE || 'gmail'; // gmail, outlook, yahoo, custom
+  
+  // Common connection options for cloud environments
+  const connectionOptions = {
+    connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '60000'), // 60 seconds
+    greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '30000'), // 30 seconds
+    socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '60000'), // 60 seconds
     auth: {
       user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASSWORD, // Gmail App Password
+      pass: process.env.EMAIL_PASSWORD
     },
-    connectionTimeout: 10000, // 10s
-    socketTimeout: 10000,
-    greetingTimeout: 10000,
+    // Pool connections for better performance in cloud environments
+    pool: process.env.SMTP_POOL === 'true',
+    maxConnections: parseInt(process.env.SMTP_MAX_CONNECTIONS || '5'),
+    maxMessages: parseInt(process.env.SMTP_MAX_MESSAGES || '100')
+  };
+
+  // For Gmail - use explicit SMTP configuration for better cloud compatibility
+  if (emailService.toLowerCase() === 'gmail') {
+    return nodemailer.createTransport({
+      host: 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: false, // true for 465, false for other ports
+      requireTLS: true,
+      ...connectionOptions,
+      tls: {
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false'
+      }
+    });
+  }
+  
+  // For Outlook/Hotmail
+  if (emailService.toLowerCase() === 'outlook') {
+    return nodemailer.createTransport({
+      host: 'smtp-mail.outlook.com',
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: false,
+      requireTLS: true,
+      ...connectionOptions,
+      tls: {
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false'
+      }
+    });
+  }
+  
+  // For Yahoo
+  if (emailService.toLowerCase() === 'yahoo') {
+    return nodemailer.createTransport({
+      host: 'smtp.mail.yahoo.com',
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: false,
+      requireTLS: true,
+      ...connectionOptions,
+      tls: {
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false'
+      }
+    });
+  }
+  
+  // For custom SMTP servers
+  return nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+    requireTLS: process.env.SMTP_REQUIRE_TLS === 'true',
+    ...connectionOptions,
     tls: {
-      servername: "smtp.gmail.com",
-      rejectUnauthorized: false,
-    },
+      rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false'
+    }
   });
 };
-
 
 // Send email OTP using nodemailer
 export const sendEmailOTP = async (email, otp) => {
@@ -81,6 +134,18 @@ export const sendEmailOTP = async (email, otp) => {
     }
 
     const transporter = createEmailTransporter();
+    
+    // Optionally verify connection (can be disabled for faster sends)
+    if (process.env.SMTP_VERIFY_CONNECTION === 'true') {
+      try {
+        await transporter.verify();
+        console.log('✅ SMTP server connection verified');
+      } catch (verifyError) {
+        console.warn('⚠️ SMTP verification failed, but attempting to send anyway:', verifyError.message);
+        // Continue anyway - sometimes verification fails but sending works
+      }
+    }
+    
     const emailFrom = process.env.EMAIL_FROM || process.env.EMAIL_USER;
     const appName = process.env.APP_NAME || 'Brahmakosh';
 
@@ -105,7 +170,40 @@ export const sendEmailOTP = async (email, otp) => {
       text: `Your OTP for ${appName} registration is: ${otp}. This OTP will expire in 10 minutes.`
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    // Retry logic for transient connection errors
+    const maxRetries = parseInt(process.env.SMTP_MAX_RETRIES || '2');
+    let info;
+    let currentTransporter = transporter;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        info = await currentTransporter.sendMail(mailOptions);
+        if (attempt > 0) {
+          console.log(`✅ Email sent successfully on attempt ${attempt + 1}`);
+        }
+        break; // Success, exit retry loop
+      } catch (sendError) {
+        const isTimeoutError = sendError.code === 'ETIMEDOUT' || 
+                               sendError.code === 'ECONNRESET' || 
+                               sendError.code === 'ESOCKETTIMEDOUT' ||
+                               sendError.message?.includes('timeout');
+        
+        if (attempt < maxRetries && isTimeoutError) {
+          const delay = (attempt + 1) * 2000; // Exponential backoff: 2s, 4s, 6s
+          console.warn(`⚠️ Email send attempt ${attempt + 1} failed (${sendError.code || sendError.message}), retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          // Create a new transporter for retry (helps with connection issues)
+          try {
+            currentTransporter.close(); // Close old connection if possible
+          } catch (closeError) {
+            // Ignore close errors
+          }
+          currentTransporter = createEmailTransporter();
+        } else {
+          throw sendError; // Not a retryable error or max retries reached
+        }
+      }
+    }
     console.log(`✅ Email OTP sent to ${email}. Message ID: ${info.messageId}`);
     
     // Save OTP to database
