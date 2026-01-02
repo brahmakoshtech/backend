@@ -277,8 +277,12 @@ router.post('/register/step1', async (req, res) => {
     }
 
     // Send OTP to email
-    await sendEmailOTP(email, otp);
+    const emailResult = await sendEmailOTP(email, otp);
+    if (!emailResult.success) {
+      console.warn('Email OTP sending had issues, but continuing:', emailResult.message);
+    }
 
+    // Always send response - OTP is saved in user model regardless of email delivery
     res.json({
       success: true,
       message: 'OTP sent to your email. Please verify to continue.',
@@ -424,7 +428,10 @@ router.post('/register/step2', async (req, res) => {
     await user.save();
 
     // Send OTP to mobile
-    await sendMobileOTP(mobile, otp);
+    const mobileResult = await sendMobileOTP(mobile, otp);
+    if (!mobileResult.success) {
+      console.warn('Mobile OTP sending had issues, but continuing:', mobileResult.message);
+    }
 
     res.json({
       success: true,
@@ -921,7 +928,10 @@ router.post('/register/resend-email-otp', async (req, res) => {
     await user.save();
 
     // Send OTP to email
-    await sendEmailOTP(email, otp);
+    const emailResult = await sendEmailOTP(email, otp);
+    if (!emailResult.success) {
+      console.warn('Email OTP sending had issues, but continuing:', emailResult.message);
+    }
 
     res.json({
       success: true,
@@ -987,7 +997,10 @@ router.post('/register/resend-mobile-otp', async (req, res) => {
     await user.save();
 
     // Send OTP to mobile
-    await sendMobileOTP(user.mobile, otp);
+    const mobileResult = await sendMobileOTP(user.mobile, otp);
+    if (!mobileResult.success) {
+      console.warn('Mobile OTP sending had issues, but continuing:', mobileResult.message);
+    }
 
     res.json({
       success: true,
