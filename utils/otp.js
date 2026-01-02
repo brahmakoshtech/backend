@@ -48,10 +48,11 @@ const createEmailTransporter = () => {
   const emailService = process.env.EMAIL_SERVICE || 'gmail'; // gmail, outlook, yahoo, custom
   
   // Common connection options for cloud environments
+  // Increased timeouts for cloud environments like Render
   const connectionOptions = {
-    connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '60000'), // 60 seconds
-    greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '30000'), // 30 seconds
-    socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '60000'), // 60 seconds
+    connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '120000'), // 120 seconds (increased)
+    greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '60000'), // 60 seconds (increased)
+    socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '120000'), // 120 seconds (increased)
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASSWORD
@@ -64,14 +65,18 @@ const createEmailTransporter = () => {
 
   // For Gmail - use explicit SMTP configuration for better cloud compatibility
   if (emailService.toLowerCase() === 'gmail') {
+    const port = parseInt(process.env.SMTP_PORT || '587');
+    const useSSL = port === 465 || process.env.SMTP_SECURE === 'true';
+    
     return nodemailer.createTransport({
       host: 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: false, // true for 465, false for other ports
-      requireTLS: true,
+      port: port,
+      secure: useSSL, // true for 465, false for 587
+      requireTLS: !useSSL, // Only require TLS if not using SSL
       ...connectionOptions,
       tls: {
-        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false'
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+        minVersion: 'TLSv1.2'
       }
     });
   }
@@ -170,23 +175,57 @@ export const sendEmailOTP = async (email, otp) => {
       text: `Your OTP for ${appName} registration is: ${otp}. This OTP will expire in 10 minutes.`
     };
 
-    // Retry logic for transient connection errors
-    const maxRetries = parseInt(process.env.SMTP_MAX_RETRIES || '2');
+    // Retry logic with port fallback for cloud environments
+    const maxRetries = parseInt(process.env.SMTP_MAX_RETRIES || '3');
+    const emailService = process.env.EMAIL_SERVICE || 'gmail';
     let info;
     let currentTransporter = transporter;
+    let triedPort465 = false;
+    const originalPort = parseInt(process.env.SMTP_PORT || '587');
     
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
         info = await currentTransporter.sendMail(mailOptions);
         if (attempt > 0) {
-          console.log(`✅ Email sent successfully on attempt ${attempt + 1}`);
+          console.log(`✅ Email sent successfully on attempt ${attempt + 1}${triedPort465 ? ' (using port 465)' : ''}`);
         }
         break; // Success, exit retry loop
       } catch (sendError) {
         const isTimeoutError = sendError.code === 'ETIMEDOUT' || 
                                sendError.code === 'ECONNRESET' || 
                                sendError.code === 'ESOCKETTIMEDOUT' ||
-                               sendError.message?.includes('timeout');
+                               sendError.code === 'ECONNREFUSED' ||
+                               sendError.message?.includes('timeout') ||
+                               sendError.message?.includes('Connection');
+        
+        // Try port 465 (SSL) as fallback if port 587 fails (common in cloud environments)
+        if (attempt === 1 && isTimeoutError && emailService.toLowerCase() === 'gmail' && originalPort === 587 && !triedPort465) {
+          console.warn(`⚠️ Port 587 failed, trying port 465 (SSL) as fallback...`);
+          triedPort465 = true;
+          try {
+            currentTransporter.close();
+          } catch (closeError) {
+            // Ignore close errors
+          }
+          // Create transporter with port 465
+          currentTransporter = nodemailer.createTransport({
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true, // SSL required for port 465
+            auth: {
+              user: process.env.EMAIL_USER,
+              pass: process.env.EMAIL_PASSWORD
+            },
+            connectionTimeout: parseInt(process.env.SMTP_CONNECTION_TIMEOUT || '120000'),
+            greetingTimeout: parseInt(process.env.SMTP_GREETING_TIMEOUT || '60000'),
+            socketTimeout: parseInt(process.env.SMTP_SOCKET_TIMEOUT || '120000'),
+            tls: {
+              rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+              minVersion: 'TLSv1.2'
+            }
+          });
+          continue; // Retry immediately with new port
+        }
         
         if (attempt < maxRetries && isTimeoutError) {
           const delay = (attempt + 1) * 2000; // Exponential backoff: 2s, 4s, 6s
