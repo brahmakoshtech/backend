@@ -221,6 +221,9 @@ router.post('/login/google', async (req, res) => {
  * STEP 1: Email OTP Verification
  * POST /api/mobile/user/register/step1
  * Body: { email, password }
+ * 
+ * Note: Users can request OTP unlimited times if email is not verified.
+ * Old unverified OTPs are automatically invalidated when a new one is sent.
  */
 router.post('/register/step1', async (req, res) => {
   try {
@@ -236,6 +239,7 @@ router.post('/register/step1', async (req, res) => {
     // Check if user already exists
     let user = await User.findOne({ email }).select('+emailOtp +emailOtpExpiry');
     
+    // Only block if user is fully registered (step 3)
     if (user && user.registrationStep === 3) {
       return res.status(400).json({ 
         success: false, 
@@ -243,16 +247,20 @@ router.post('/register/step1', async (req, res) => {
       });
     }
 
-    // Generate OTP
+    // Generate new OTP (allow unlimited retries if previous OTP not verified)
     const otp = generateOTP();
     const otpExpiry = getOTPExpiry();
 
     if (user) {
-      // Update existing user (incomplete registration)
+      // Update existing user (incomplete registration) - always allow new OTP if not verified
       user.emailOtp = otp;
       user.emailOtpExpiry = otpExpiry;
       if (password) {
         user.password = password;
+      }
+      // Reset email verification status if requesting new OTP
+      if (!user.emailVerified) {
+        user.emailVerified = false;
       }
       await user.save();
     } else {
@@ -262,7 +270,8 @@ router.post('/register/step1', async (req, res) => {
         password: password || 'temp_password_' + Date.now(), // Temporary password if Google sign-in
         emailOtp: otp,
         emailOtpExpiry: otpExpiry,
-        registrationStep: 0
+        registrationStep: 0,
+        emailVerified: false
       });
       await user.save();
     }
@@ -401,13 +410,17 @@ router.post('/register/step2', async (req, res) => {
       });
     }
 
-    // Generate OTP
+    // Generate new OTP (allow unlimited retries if previous OTP not verified)
     const otp = generateOTP();
     const otpExpiry = getOTPExpiry();
 
     user.mobile = mobile;
     user.mobileOtp = otp;
     user.mobileOtpExpiry = otpExpiry;
+    // Reset mobile verification status if requesting new OTP
+    if (!user.mobileVerified) {
+      user.mobileVerified = false;
+    }
     await user.save();
 
     // Send OTP to mobile
@@ -868,6 +881,9 @@ router.put('/profile', authenticate, async (req, res) => {
  * Resend Email OTP
  * POST /api/mobile/user/register/resend-email-otp
  * Body: { email }
+ * 
+ * Note: Users can request OTP unlimited times if email is not verified.
+ * Old unverified OTPs are automatically invalidated when a new one is sent.
  */
 router.post('/register/resend-email-otp', async (req, res) => {
   try {
@@ -924,6 +940,9 @@ router.post('/register/resend-email-otp', async (req, res) => {
  * Resend Mobile OTP
  * POST /api/mobile/user/register/resend-mobile-otp
  * Body: { email }
+ * 
+ * Note: Users can request OTP unlimited times if mobile is not verified.
+ * Old unverified OTPs are automatically invalidated when a new one is sent.
  */
 router.post('/register/resend-mobile-otp', async (req, res) => {
   try {

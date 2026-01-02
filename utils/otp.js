@@ -238,7 +238,13 @@ export const sendEmailOTP = async (email, otp) => {
         const result = await sendEmailViaBrevo(email, otp);
         console.log(`✅ Email OTP sent via Brevo to ${email}. Message ID: ${result.messageId || 'N/A'}`);
         
-        // Save OTP to database
+        // Mark old unverified OTPs as used (allow unlimited retries if not verified)
+        await OTP.updateMany(
+          { email, type: 'email', isUsed: false },
+          { $set: { isUsed: true } }
+        );
+        
+        // Save new OTP to database
         const expiresAt = getOTPExpiry();
         await OTP.create({
           email,
@@ -262,7 +268,13 @@ export const sendEmailOTP = async (email, otp) => {
         const result = await sendEmailViaSendGrid(email, otp);
         console.log(`✅ Email OTP sent via SendGrid to ${email}`);
         
-        // Save OTP to database
+        // Mark old unverified OTPs as used (allow unlimited retries if not verified)
+        await OTP.updateMany(
+          { email, type: 'email', isUsed: false },
+          { $set: { isUsed: true } }
+        );
+        
+        // Save new OTP to database
         const expiresAt = getOTPExpiry();
         await OTP.create({
           email,
@@ -536,14 +548,20 @@ export const sendMobileOTP = async (mobile, otp) => {
         
         console.log(`✅ WhatsApp OTP sent to ${whatsappTo}. Message ID: ${result.messages?.[0]?.id || 'N/A'}`);
         
-        // Save OTP to database
-        await OTP.create({
-          mobile: normalizedMobile,
-          otp,
-          expiresAt,
-          type: 'whatsapp',
-          client: 'brahmakosh'
-        });
+      // Mark old unverified OTPs as used (allow unlimited retries if not verified)
+      await OTP.updateMany(
+        { mobile: normalizedMobile, type: { $in: ['whatsapp', 'sms', 'mobile'] }, isUsed: false },
+        { $set: { isUsed: true } }
+      );
+      
+      // Save new OTP to database
+      await OTP.create({
+        mobile: normalizedMobile,
+        otp,
+        expiresAt,
+        type: 'whatsapp',
+        client: 'brahmakosh'
+      });
         
         return { 
           success: true, 
@@ -581,7 +599,13 @@ export const sendMobileOTP = async (mobile, otp) => {
       
       console.log(`✅ SMS OTP sent to ${normalizedMobile}. Message SID: ${message.sid}`);
       
-      // Save OTP to database
+      // Mark old unverified OTPs as used (allow unlimited retries if not verified)
+      await OTP.updateMany(
+        { mobile: normalizedMobile, type: { $in: ['whatsapp', 'sms', 'mobile'] }, isUsed: false },
+        { $set: { isUsed: true } }
+      );
+      
+      // Save new OTP to database
       await OTP.create({
         mobile: normalizedMobile,
         otp,
