@@ -560,7 +560,7 @@ router.post('/register/step2/verify', async (req, res) => {
 });
 
 /**
- * STEP 3: Complete Profile with Image Upload
+ * STEP 3: Complete Profile
  * POST /api/mobile/user/register/step3
  * Body: { 
  *   email, 
@@ -568,9 +568,7 @@ router.post('/register/step2/verify', async (req, res) => {
  *   dob, 
  *   timeOfBirth, 
  *   placeOfBirth, 
- *   gowthra,
- *   imageFileName (optional),
- *   imageContentType (optional)
+ *   gowthra
  * }
  */
 router.post('/register/step3', async (req, res) => {
@@ -581,9 +579,7 @@ router.post('/register/step3', async (req, res) => {
       dob, 
       timeOfBirth, 
       placeOfBirth, 
-      gowthra,
-      imageFileName,
-      imageContentType
+      gowthra
     } = req.body;
 
     // For mobile-only registration, allow finding by mobile if email not provided
@@ -637,22 +633,6 @@ router.post('/register/step3', async (req, res) => {
       ...user.profile // Preserve existing profile fields
     };
 
-    // Handle image upload if provided
-    let imageKey = null;
-    let presignedUrl = null;
-
-    if (imageFileName && imageContentType) {
-      // Generate unique key for the profile image
-      const fileExtension = imageFileName.split('.').pop();
-      imageKey = `images/user/${user._id}/profile/${uuidv4()}.${fileExtension}`;
-      
-      // Generate presigned URL for image upload
-      presignedUrl = await putobject(imageKey, imageContentType);
-      
-      // Store the S3 key in user profile
-      user.profileImage = imageKey;
-    }
-
     // Mark registration as complete when profile is saved
     // Steps are independent, but registrationStep = 3 means profile is complete
     // User can still complete email/mobile verification later if needed
@@ -661,11 +641,15 @@ router.post('/register/step3', async (req, res) => {
     user.isActive = true; // Activate account
     await user.save();
 
-    const response = {
+    // Generate JWT token after profile completion
+    const token = generateToken(user._id, 'user');
+
+    res.json({
       success: true,
       message: 'Profile completed successfully. Registration complete!',
       data: {
         user: { ...user.toObject(), role: 'user' },
+        token, // Return JWT token
         registrationStep: 3,
         registrationComplete: true,
         // Return current status of all steps
@@ -673,22 +657,171 @@ router.post('/register/step3', async (req, res) => {
         mobileVerified: user.mobileVerified || false,
         profileCompleted: true
       }
-    };
-
-    // Include presigned URL if image upload is requested
-    if (presignedUrl) {
-      response.data.imageUpload = {
-        presignedUrl,
-        key: imageKey
-      };
-    }
-
-    res.json(response);
+    });
   } catch (error) {
     console.error('Step 3 registration error:', error);
     res.status(500).json({ 
       success: false, 
       message: error.message || 'Failed to complete profile' 
+    });
+  }
+});
+
+/**
+ * Upload Profile Image
+ * POST /api/mobile/user/profile/image
+ * Body: { email, imageFileName, imageContentType }
+ */
+router.post('/profile/image', async (req, res) => {
+  try {
+    const { email, imageFileName, imageContentType } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    if (!imageFileName || !imageContentType) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'imageFileName and imageContentType are required' 
+      });
+    }
+
+    const user = await User.findOne({ email });
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'User not found' 
+      });
+    }
+
+    // Generate unique key for the profile image
+    const fileExtension = imageFileName.split('.').pop();
+    const imageKey = `images/user/${user._id}/profile/${uuidv4()}.${fileExtension}`;
+    
+    // Generate presigned URL for image upload
+    const presignedUrl = await putobject(imageKey, imageContentType);
+    
+    // Store the S3 key in user profile
+    user.profileImage = imageKey;
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Profile image upload URL generated',
+      data: {
+        imageUpload: {
+          presignedUrl,
+          key: imageKey
+        },
+        profileImage: imageKey
+      }
+    });
+  } catch (error) {
+    console.error('Profile image upload error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to generate image upload URL' 
+    });
+  }
+});
+
+/**
+ * Check Email and Get Auth Token
+ * POST /api/mobile/user/check-email
+ * Body: { email }
+ * 
+ * Returns auth token if email exists and registered, "not registered" if not.
+ * If not registered, automatically marks email as verified in database.
+ */
+router.post('/check-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email is required' 
+      });
+    }
+
+    let user = await User.findOne({ email });
+    
+    if (!user) {
+      // User doesn't exist - create user and mark email as verified (same as email OTP verification)
+      user = new User({
+        email: email,
+        emailVerified: true, // Mark email as verified
+        password: 'temp_password_' + Date.now(), // Temporary password
+        registrationStep: 1, // Set to step 1 (same as after email OTP verification)
+        mobileVerified: false
+      });
+      await user.save();
+      
+      return res.json({
+        success: false,
+        message: 'not registered',
+        data: {
+          registered: false,
+          email: email,
+          emailVerified: true, // Return email verified status
+          registrationStep: 1 // Same as after email OTP verification
+        }
+      });
+    }
+
+    // If user exists but email not verified, mark it as verified (same as email OTP verification)
+    if (!user.emailVerified) {
+      user.emailVerified = true;
+      user.registrationStep = 1; // Set to step 1 (same as after email OTP verification)
+      await user.save();
+    }
+
+    // Check if registration is complete
+    if (user.registrationStep < 3) {
+      return res.json({
+        success: false,
+        message: 'not registered',
+        data: {
+          registered: false,
+          email: email,
+          emailVerified: user.emailVerified, // Return email verified status
+          registrationStep: user.registrationStep,
+          nextStep: user.registrationStep === 1 ? 'mobile_verification' : 'profile_completion'
+        }
+      });
+    }
+
+    // Check if user is active
+    if (!user.isActive) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Account is inactive. Please contact administrator.' 
+      });
+    }
+
+    // Generate JWT token
+    const token = generateToken(user._id, 'user');
+
+    res.json({
+      success: true,
+      message: 'User found',
+      data: {
+        registered: true,
+        user: { ...user.toObject(), role: 'user' },
+        token,
+        emailVerified: user.emailVerified
+      }
+    });
+  } catch (error) {
+    console.error('Check email error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Failed to check email' 
     });
   }
 });

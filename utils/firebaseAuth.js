@@ -108,12 +108,18 @@ export const verifyFirebaseToken = async (idToken) => {
     };
   } catch (error) {
     console.error('Firebase token verification error:', error);
+    
+    // Check if it's a Google ID token (common mistake)
+    if (idToken && idToken.includes('accounts.google.com')) {
+      throw new Error('You sent a Google ID token. Please use Firebase ID token instead. In your mobile app, after signing in with Google, authenticate with Firebase Auth to get the Firebase ID token.');
+    }
+    
     if (error.code === 'auth/id-token-expired') {
-      throw new Error('Firebase token has expired');
+      throw new Error('Firebase token has expired. Please refresh the token in your mobile app.');
     } else if (error.code === 'auth/id-token-revoked') {
       throw new Error('Firebase token has been revoked');
     } else if (error.code === 'auth/argument-error') {
-      throw new Error('Invalid Firebase token format');
+      throw new Error('Invalid Firebase token format. Make sure you are sending a Firebase ID token (from Firebase Auth), not a Google ID token.');
     }
     throw new Error('Invalid Firebase token: ' + error.message);
   }
