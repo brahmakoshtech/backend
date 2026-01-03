@@ -563,13 +563,15 @@ router.post('/register/step2/verify', async (req, res) => {
  * STEP 3: Complete Profile
  * POST /api/mobile/user/register/step3
  * Body: { 
- *   email, 
- *   name, 
- *   dob, 
- *   timeOfBirth, 
- *   placeOfBirth, 
- *   gowthra
+ *   email (required),
+ *   name (optional),
+ *   dob (optional),
+ *   timeOfBirth (optional),
+ *   placeOfBirth (optional),
+ *   gowthra (optional)
  * }
+ * 
+ * Note: All profile fields are optional. Image upload is separate API.
  */
 router.post('/register/step3', async (req, res) => {
   try {
@@ -592,12 +594,7 @@ router.post('/register/step3', async (req, res) => {
       });
     }
 
-    if (!name || !dob || !timeOfBirth || !placeOfBirth || !gowthra) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Name, date of birth, time of birth, place of birth, and gowthra are required' 
-      });
-    }
+    // All profile fields are optional - no validation required
 
     // Find user by email or mobile, or create new user if not found
     // Step 3 is independent - can be done without step 1 or step 2
@@ -623,15 +620,17 @@ router.post('/register/step3', async (req, res) => {
     
     // No dependency checks - step 3 is independent
 
-    // Update profile information
-    user.profile = {
-      name,
-      dob: new Date(dob),
-      timeOfBirth,
-      placeOfBirth,
-      gowthra,
-      ...user.profile // Preserve existing profile fields
-    };
+    // Update profile information (all fields are optional)
+    // Only update fields that are provided
+    if (!user.profile) {
+      user.profile = {};
+    }
+    
+    if (name) user.profile.name = name;
+    if (dob) user.profile.dob = new Date(dob);
+    if (timeOfBirth) user.profile.timeOfBirth = timeOfBirth;
+    if (placeOfBirth) user.profile.placeOfBirth = placeOfBirth;
+    if (gowthra) user.profile.gowthra = gowthra;
 
     // Mark registration as complete when profile is saved
     // Steps are independent, but registrationStep = 3 means profile is complete
@@ -671,6 +670,8 @@ router.post('/register/step3', async (req, res) => {
  * Upload Profile Image
  * POST /api/mobile/user/profile/image
  * Body: { email, imageFileName, imageContentType }
+ * 
+ * Note: Profile must be completed (registrationStep = 3) before uploading image
  */
 router.post('/profile/image', async (req, res) => {
   try {
@@ -696,6 +697,17 @@ router.post('/profile/image', async (req, res) => {
       return res.status(404).json({ 
         success: false, 
         message: 'User not found' 
+      });
+    }
+
+    // Check if profile is completed (registrationStep = 3)
+    if (user.registrationStep < 3) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Please complete profile first before uploading image',
+        data: {
+          registrationStep: user.registrationStep
+        }
       });
     }
 
