@@ -368,10 +368,11 @@ router.post('/register/step2', async (req, res) => {
   try {
     const { email, mobile } = req.body;
 
-    if (!email || !mobile) {
+    // Mobile is required, email is optional (for mobile-only registration)
+    if (!mobile) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Email and mobile number are required' 
+        message: 'Mobile number is required' 
       });
     }
 
@@ -384,21 +385,30 @@ router.post('/register/step2', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email }).select('+mobileOtp +mobileOtpExpiry');
+    // Find user by mobile or email (for mobile-only registration, email is optional)
+    let user = null;
+    if (email) {
+      user = await User.findOne({ email }).select('+mobileOtp +mobileOtpExpiry');
+    }
+    
+    // If not found by email, try to find by mobile
+    if (!user) {
+      user = await User.findOne({ mobile }).select('+mobileOtp +mobileOtpExpiry');
+    }
     
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found. Please complete step 1 first.' 
+      // Create new user for mobile-only registration (skip email verification)
+      user = new User({
+        email: email || `mobile_${mobile}@temp.com`, // Use temp email if not provided
+        password: 'temp_password_' + Date.now(), // Temporary password
+        registrationStep: 0, // Will be updated to 2 after mobile verification
+        emailVerified: false, // Email not verified - mobile-only registration
+        mobileVerified: false
       });
     }
 
-    if (user.registrationStep < 1 || !user.emailVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Please complete email verification first' 
-      });
-    }
+    // Allow mobile verification even if email is not verified
+    // Remove the email verification requirement
 
     // Check if mobile is already registered to another user
     const existingMobileUser = await User.findOne({ 
@@ -424,6 +434,10 @@ router.post('/register/step2', async (req, res) => {
     // Reset mobile verification status if requesting new OTP
     if (!user.mobileVerified) {
       user.mobileVerified = false;
+    }
+    // If email not verified, allow mobile-only registration
+    if (!user.emailVerified) {
+      user.registrationStep = 0; // Allow proceeding to mobile verification
     }
     await user.save();
 
@@ -458,16 +472,24 @@ router.post('/register/step2', async (req, res) => {
  */
 router.post('/register/step2/verify', async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, mobile, otp } = req.body;
 
-    if (!email || !otp) {
+    // OTP is required, email or mobile is required (for mobile-only registration)
+    if (!otp || (!email && !mobile)) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Email and OTP are required' 
+        message: 'OTP and either email or mobile number are required' 
       });
     }
 
-    const user = await User.findOne({ email }).select('+mobileOtp +mobileOtpExpiry');
+    // Find user by email or mobile
+    let user = null;
+    if (email) {
+      user = await User.findOne({ email }).select('+mobileOtp +mobileOtpExpiry');
+    }
+    if (!user && mobile) {
+      user = await User.findOne({ mobile }).select('+mobileOtp +mobileOtpExpiry');
+    }
     
     if (!user) {
       return res.status(404).json({ 
@@ -476,12 +498,8 @@ router.post('/register/step2/verify', async (req, res) => {
       });
     }
 
-    if (user.registrationStep < 1 || !user.emailVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Please complete email verification first' 
-      });
-    }
+    // Allow mobile verification even if email is not verified
+    // Remove email verification requirement for mobile-only registration
 
     // Validate OTP
     const validation = validateOTP(user.mobileOtp, otp, user.mobileOtpExpiry);
@@ -545,10 +563,13 @@ router.post('/register/step3', async (req, res) => {
       imageContentType
     } = req.body;
 
-    if (!email) {
+    // For mobile-only registration, allow finding by mobile if email not provided
+    const { mobile } = req.body;
+    
+    if (!email && !mobile) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Email is required' 
+        message: 'Email or mobile number is required' 
       });
     }
 
@@ -559,7 +580,14 @@ router.post('/register/step3', async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    // Find user by email or mobile (for mobile-only registration)
+    let user = null;
+    if (email) {
+      user = await User.findOne({ email });
+    }
+    if (!user && mobile) {
+      user = await User.findOne({ mobile });
+    }
     
     if (!user) {
       return res.status(404).json({ 
@@ -601,8 +629,11 @@ router.post('/register/step3', async (req, res) => {
       user.profileImage = imageKey;
     }
 
-    // Mark registration as complete
+    // Mark registration as complete and auto-approve for mobile users
+    // Mobile users don't need super admin approval
     user.registrationStep = 3;
+    user.loginApproved = true; // Auto-approve mobile users
+    user.isActive = true; // Activate account
     await user.save();
 
     const response = {
@@ -757,10 +788,15 @@ router.get('/profile', authenticate, async (req, res) => {
       userData.profileImageUrl = profileImageUrl;
     }
 
+    // Generate auth token for the user
+    const token = generateToken(user._id, 'user');
+
     res.json({
       success: true,
+      message: 'Profile retrieved successfully',
       data: {
-        user: { ...userData, role: 'user' }
+        user: { ...userData, role: 'user' },
+        token
       }
     });
   } catch (error) {
@@ -854,11 +890,15 @@ router.put('/profile', authenticate, async (req, res) => {
 
     await user.save();
 
+    // Generate auth token for the user
+    const token = generateToken(user._id, 'user');
+
     const response = {
       success: true,
       message: 'Profile updated successfully',
       data: {
-        user: { ...user.toObject(), role: 'user' }
+        user: { ...user.toObject(), role: 'user' },
+        token
       }
     };
 

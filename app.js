@@ -12,6 +12,8 @@ import clientRoutes from './routes/client.js';
 import superAdminRoutes from './routes/superAdmin.js';
 import clientProfileMobileRoutes from './routes/mobile/clientProfile.js';
 import userProfileMobileRoutes from './routes/mobile/userProfile.js';
+import chatRoutes from './routes/mobile/chat.js';
+import voiceRoutes from './routes/mobile/voice.js';
 import uploadRoutes from './routes/upload.js';
 import { initializeSuperAdmin } from './config/initSuperAdmin.js';
 
@@ -21,8 +23,9 @@ const app = express();
 
 // Middleware
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Increase body parser limit for audio data (50MB)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/brahmakosh';
@@ -52,6 +55,10 @@ app.use('/api/super-admin', superAdminRoutes);
 // Mobile API Routes - Profile Section
 app.use('/api/mobile/client', clientProfileMobileRoutes);
 app.use('/api/mobile/user', userProfileMobileRoutes);
+
+// Mobile API Routes - Chat & Voice
+app.use('/api/mobile/chat', chatRoutes);
+app.use('/api/mobile/voice', voiceRoutes);
 
 // Upload Routes - S3 Image Upload
 app.use('/api/upload', uploadRoutes);

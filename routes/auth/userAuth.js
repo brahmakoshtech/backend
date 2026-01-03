@@ -39,7 +39,9 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    if (!user.loginApproved) {
+    // Mobile users (registrationStep === 3) don't need super admin approval
+    // They are auto-approved during mobile registration
+    if (!user.loginApproved && user.registrationStep !== 3) {
       return res.status(403).json({ 
         success: false, 
         message: 'Login not approved. Please wait for super admin approval.' 
