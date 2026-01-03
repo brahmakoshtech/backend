@@ -5,13 +5,13 @@ This document describes the multi-step registration flow for mobile users.
 ## Registration Flow Overview
 
 The registration process consists of 3 steps:
-1. **Email/Google OTP Verification** - Verify user's email address
+1. **Email/Firebase OTP Verification** - Verify user's email address
 2. **Mobile OTP Verification** - Verify user's mobile number
 3. **Profile Completion** - Collect user details and profile image
 
 ## API Endpoints
 
-### Step 1: Email/Google OTP Verification
+### Step 1: Email/Firebase OTP Verification
 
 #### Initiate Email OTP
 **POST** `/api/mobile/user/register/step1`
@@ -20,7 +20,7 @@ The registration process consists of 3 steps:
 ```json
 {
   "email": "user@example.com",
-  "password": "optional_password" // Optional for Google sign-in
+  "password": "optional_password" // Optional for Firebase sign-in
 }
 ```
 

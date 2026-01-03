@@ -8,54 +8,59 @@ import {
   sendEmailOTP, 
   sendMobileOTP 
 } from '../../utils/otp.js';
-import { verifyGoogleToken, isGoogleOAuthEnabled } from '../../utils/googleAuth.js';
+import { verifyFirebaseToken, isFirebaseAuthEnabled } from '../../utils/firebaseAuth.js';
 import { putobject } from '../../utils/s3.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
 
 // ============================================
-// GOOGLE AUTHENTICATION
+// FIREBASE AUTHENTICATION
 // ============================================
 
 /**
- * Sign Up with Google
- * POST /api/mobile/user/register/google
+ * Sign Up with Firebase
+ * POST /api/mobile/user/register/firebase
  * Body: { idToken }
  */
-router.post('/register/google', async (req, res) => {
+router.post('/register/firebase', async (req, res) => {
   try {
     const { idToken } = req.body;
 
     if (!idToken) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google ID token is required' 
+        message: 'Firebase ID token is required' 
       });
     }
 
-    if (!isGoogleOAuthEnabled()) {
+    if (!isFirebaseAuthEnabled()) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google OAuth is not configured' 
+        message: 'Firebase Authentication is not configured' 
       });
     }
 
-    // Verify Google token and get user info
-    const googleUser = await verifyGoogleToken(idToken);
+    // Verify Firebase token and get user info
+    const firebaseUser = await verifyFirebaseToken(idToken);
 
-    if (!googleUser.email || !googleUser.emailVerified) {
+    // For Google sign in, email might not be verified in Firebase but is trusted
+    // Google accounts are automatically verified
+    if (!firebaseUser.email) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google email is not verified' 
+        message: 'Firebase account must have an email address' 
       });
     }
+    
+    // For Google provider, consider email as verified
+    const isEmailVerified = firebaseUser.emailVerified || firebaseUser.providerId === 'google.com';
 
     // Check if user already exists
     let user = await User.findOne({ 
       $or: [
-        { email: googleUser.email },
-        { googleId: googleUser.googleId }
+        { email: firebaseUser.email },
+        { firebaseId: firebaseUser.firebaseId }
       ]
     });
 
@@ -64,34 +69,34 @@ router.post('/register/google', async (req, res) => {
       if (user.registrationStep === 3) {
         return res.status(400).json({ 
           success: false, 
-          message: 'User already registered. Please use sign in with Google instead.' 
+          message: 'User already registered. Please use sign in with Firebase instead.' 
         });
       }
 
-      // Update existing user with Google info
-      user.googleId = googleUser.googleId;
-      user.authMethod = 'google';
-      user.emailVerified = true;
-      user.registrationStep = 1; // Skip email OTP, go to mobile verification
+      // Update existing user with Firebase info
+      user.firebaseId = firebaseUser.firebaseId;
+      user.authMethod = 'firebase';
+      user.emailVerified = isEmailVerified; // Use verified status
+      // Steps are independent - don't force registrationStep
       
       // Update profile if available
-      if (googleUser.name && !user.profile?.name) {
+      if (firebaseUser.name && !user.profile?.name) {
         user.profile = user.profile || {};
-        user.profile.name = googleUser.name;
+        user.profile.name = firebaseUser.name;
       }
       
       await user.save();
     } else {
-      // Create new user with Google info
+      // Create new user with Firebase info
       user = new User({
-        email: googleUser.email,
-        googleId: googleUser.googleId,
-        authMethod: 'google',
-        emailVerified: true,
+        email: firebaseUser.email,
+        firebaseId: firebaseUser.firebaseId,
+        authMethod: 'firebase',
+        emailVerified: isEmailVerified, // Use verified status (Google accounts are verified)
         password: 'temp_password_' + Date.now(), // Temporary password
-        registrationStep: 1, // Skip email OTP, go to mobile verification
+        registrationStep: 0, // Steps are independent
         profile: {
-          name: googleUser.name || ''
+          name: firebaseUser.name || ''
         }
       });
       await user.save();
@@ -99,62 +104,68 @@ router.post('/register/google', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Google sign up successful. Please proceed to mobile verification.',
+      message: 'Firebase sign up successful. You can proceed with mobile verification or profile completion.',
       data: {
         user: { ...user.toObject(), role: 'user' },
         email: user.email,
-        registrationStep: 1,
-        nextStep: 'mobile_verification',
-        authMethod: 'google'
+        emailVerified: user.emailVerified,
+        mobileVerified: user.mobileVerified || false,
+        profileCompleted: user.registrationStep === 3,
+        authMethod: 'firebase'
       }
     });
   } catch (error) {
-    console.error('Google sign up error:', error);
+    console.error('Firebase sign up error:', error);
     res.status(500).json({ 
       success: false, 
-      message: error.message || 'Google sign up failed' 
+      message: error.message || 'Firebase sign up failed' 
     });
   }
 });
 
 /**
- * Sign In with Google
- * POST /api/mobile/user/login/google
+ * Sign In with Firebase
+ * POST /api/mobile/user/login/firebase
  * Body: { idToken }
  */
-router.post('/login/google', async (req, res) => {
+router.post('/login/firebase', async (req, res) => {
   try {
     const { idToken } = req.body;
 
     if (!idToken) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google ID token is required' 
+        message: 'Firebase ID token is required' 
       });
     }
 
-    if (!isGoogleOAuthEnabled()) {
+    if (!isFirebaseAuthEnabled()) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google OAuth is not configured' 
+        message: 'Firebase Authentication is not configured' 
       });
     }
 
-    // Verify Google token and get user info
-    const googleUser = await verifyGoogleToken(idToken);
+    // Verify Firebase token and get user info
+    const firebaseUser = await verifyFirebaseToken(idToken);
 
-    if (!googleUser.email || !googleUser.emailVerified) {
+    // For Google sign in, email might not be verified in Firebase but is trusted
+    // Google accounts are automatically verified
+    if (!firebaseUser.email) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google email is not verified' 
+        message: 'Firebase account must have an email address' 
       });
     }
+    
+    // For Google provider, consider email as verified
+    const isEmailVerified = firebaseUser.emailVerified || firebaseUser.providerId === 'google.com';
 
-    // Find user by email or Google ID
+    // Find user by email or Firebase ID
     let user = await User.findOne({ 
       $or: [
-        { email: googleUser.email },
-        { googleId: googleUser.googleId }
+        { email: firebaseUser.email },
+        { firebaseId: firebaseUser.firebaseId }
       ]
     });
 
@@ -165,24 +176,24 @@ router.post('/login/google', async (req, res) => {
       });
     }
 
-    // Check if registration is complete
+    // Check if registration is complete (profile must be completed)
     if (user.registrationStep < 3) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Registration incomplete. Please complete all registration steps.',
+        message: 'Registration incomplete. Please complete profile.',
         data: {
           registrationStep: user.registrationStep,
           emailVerified: user.emailVerified,
           mobileVerified: user.mobileVerified,
-          nextStep: user.registrationStep === 1 ? 'mobile_verification' : 'profile_completion'
+          profileCompleted: user.registrationStep === 3
         }
       });
     }
 
-    // Update Google ID if not set
-    if (!user.googleId) {
-      user.googleId = googleUser.googleId;
-      user.authMethod = 'google';
+    // Update Firebase ID if not set
+    if (!user.firebaseId) {
+      user.firebaseId = firebaseUser.firebaseId;
+      user.authMethod = 'firebase';
       await user.save();
     }
 
@@ -197,18 +208,18 @@ router.post('/login/google', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Google sign in successful',
+      message: 'Firebase sign in successful',
       data: {
         user: { ...user.toObject(), role: 'user' },
         token,
-        authMethod: 'google'
+        authMethod: 'firebase'
       }
     });
   } catch (error) {
-    console.error('Google sign in error:', error);
+    console.error('Firebase sign in error:', error);
     res.status(500).json({ 
       success: false, 
-      message: error.message || 'Google sign in failed' 
+      message: error.message || 'Firebase sign in failed' 
     });
   }
 });
@@ -267,7 +278,7 @@ router.post('/register/step1', async (req, res) => {
       // Create new user
       user = new User({
         email,
-        password: password || 'temp_password_' + Date.now(), // Temporary password if Google sign-in
+        password: password || 'temp_password_' + Date.now(), // Temporary password if Firebase sign-in
         emailOtp: otp,
         emailOtpExpiry: otpExpiry,
         registrationStep: 0,
@@ -334,9 +345,10 @@ router.post('/register/step1/verify', async (req, res) => {
       });
     }
 
-    // Mark email as verified and update registration step
+    // Mark email as verified (independent step - no dependency on other steps)
     user.emailVerified = true;
-    user.registrationStep = 1;
+    // Don't update registrationStep - steps are independent
+    // Only set to 3 when all steps are complete
     user.emailOtp = undefined;
     user.emailOtpExpiry = undefined;
     await user.save();
@@ -346,8 +358,10 @@ router.post('/register/step1/verify', async (req, res) => {
       message: 'Email verified successfully',
       data: {
         email: user.email,
-        registrationStep: 1,
-        nextStep: 'mobile_verification'
+        emailVerified: true,
+        // Return current status of all steps
+        mobileVerified: user.mobileVerified || false,
+        profileCompleted: user.registrationStep === 3
       }
     });
   } catch (error) {
@@ -435,10 +449,7 @@ router.post('/register/step2', async (req, res) => {
     if (!user.mobileVerified) {
       user.mobileVerified = false;
     }
-    // If email not verified, allow mobile-only registration
-    if (!user.emailVerified) {
-      user.registrationStep = 0; // Allow proceeding to mobile verification
-    }
+    // Don't update registrationStep - steps are independent
     await user.save();
 
     // Send OTP to mobile
@@ -483,6 +494,7 @@ router.post('/register/step2/verify', async (req, res) => {
     }
 
     // Find user by email or mobile
+    // Step 2 verify is independent of step 1, but user must have sent OTP via step 2 first
     let user = null;
     if (email) {
       user = await User.findOne({ email }).select('+mobileOtp +mobileOtpExpiry');
@@ -494,7 +506,15 @@ router.post('/register/step2/verify', async (req, res) => {
     if (!user) {
       return res.status(404).json({ 
         success: false, 
-        message: 'User not found. Please start registration again.' 
+        message: 'User not found. Please send mobile OTP first (step 2).' 
+      });
+    }
+    
+    // Check if OTP was sent (user must have gone through step 2 to send OTP)
+    if (!user.mobileOtp) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'No OTP found. Please send mobile OTP first (step 2).' 
       });
     }
 
@@ -510,9 +530,10 @@ router.post('/register/step2/verify', async (req, res) => {
       });
     }
 
-    // Mark mobile as verified and update registration step
+    // Mark mobile as verified (independent step - no dependency on other steps)
     user.mobileVerified = true;
-    user.registrationStep = 2;
+    // Don't update registrationStep - steps are independent
+    // Only set to 3 when all steps are complete
     user.mobileOtp = undefined;
     user.mobileOtpExpiry = undefined;
     await user.save();
@@ -523,8 +544,10 @@ router.post('/register/step2/verify', async (req, res) => {
       data: {
         email: user.email,
         mobile: user.mobile,
-        registrationStep: 2,
-        nextStep: 'profile_completion'
+        mobileVerified: true,
+        // Return current status of all steps
+        emailVerified: user.emailVerified || false,
+        profileCompleted: user.registrationStep === 3
       }
     });
   } catch (error) {
@@ -580,7 +603,8 @@ router.post('/register/step3', async (req, res) => {
       });
     }
 
-    // Find user by email or mobile (for mobile-only registration)
+    // Find user by email or mobile, or create new user if not found
+    // Step 3 is independent - can be done without step 1 or step 2
     let user = null;
     if (email) {
       user = await User.findOne({ email });
@@ -589,19 +613,19 @@ router.post('/register/step3', async (req, res) => {
       user = await User.findOne({ mobile });
     }
     
+    // If user doesn't exist, create one (for profile-only registration)
     if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found. Please complete previous steps first.' 
+      user = new User({
+        email: email || `profile_${Date.now()}@temp.com`,
+        mobile: mobile || null,
+        password: 'temp_password_' + Date.now(),
+        registrationStep: 0,
+        emailVerified: false,
+        mobileVerified: false
       });
     }
-
-    if (user.registrationStep < 2 || !user.mobileVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Please complete mobile verification first' 
-      });
-    }
+    
+    // No dependency checks - step 3 is independent
 
     // Update profile information
     user.profile = {
@@ -629,8 +653,9 @@ router.post('/register/step3', async (req, res) => {
       user.profileImage = imageKey;
     }
 
-    // Mark registration as complete and auto-approve for mobile users
-    // Mobile users don't need super admin approval
+    // Mark registration as complete when profile is saved
+    // Steps are independent, but registrationStep = 3 means profile is complete
+    // User can still complete email/mobile verification later if needed
     user.registrationStep = 3;
     user.loginApproved = true; // Auto-approve mobile users
     user.isActive = true; // Activate account
@@ -642,7 +667,11 @@ router.post('/register/step3', async (req, res) => {
       data: {
         user: { ...user.toObject(), role: 'user' },
         registrationStep: 3,
-        registrationComplete: true
+        registrationComplete: true,
+        // Return current status of all steps
+        emailVerified: user.emailVerified || false,
+        mobileVerified: user.mobileVerified || false,
+        profileCompleted: true
       }
     };
 

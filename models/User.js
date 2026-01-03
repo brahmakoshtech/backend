@@ -9,7 +9,7 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true
   },
-  googleId: {
+  firebaseId: {
     type: String,
     unique: true,
     sparse: true, // Allows multiple null values
@@ -17,12 +17,12 @@ const userSchema = new mongoose.Schema({
   },
   authMethod: {
     type: String,
-    enum: ['email', 'google'],
+    enum: ['email', 'firebase'],
     default: 'email'
   },
   password: {
     type: String,
-    required: false, // Optional for Google sign-in
+    required: false, // Optional for Firebase sign-in
     validate: {
       validator: function(v) {
         // If password exists, it must be at least 6 characters
