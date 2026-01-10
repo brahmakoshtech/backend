@@ -1,7 +1,19 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { customAlphabet } from 'nanoid';
+
+// Generate unique client ID (e.g., CLI-ABC123)
+const nanoid = customAlphabet('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', 6);
 
 const clientSchema = new mongoose.Schema({
+  // Unique Client ID for user registration
+  clientId: {
+    type: String,
+    unique: true,
+    required: true,
+    uppercase: true,
+    trim: true
+  },
   email: {
     type: String,
     required: true,
@@ -86,13 +98,30 @@ const clientSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Hash password before saving
+// Generate unique client ID before saving
 clientSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) {
-    return next();
+  // Generate clientId if not exists
+  if (!this.clientId) {
+    let unique = false;
+    let generatedId;
+    
+    while (!unique) {
+      generatedId = `CLI-${nanoid()}`;
+      const existing = await mongoose.model('Client').findOne({ clientId: generatedId });
+      if (!existing) {
+        unique = true;
+      }
+    }
+    
+    this.clientId = generatedId;
   }
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
+  
+  // Hash password
+  if (this.isModified('password')) {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+  }
+  
   next();
 });
 
@@ -111,5 +140,3 @@ clientSchema.methods.toJSON = function() {
 const Client = mongoose.model('Client', clientSchema);
 
 export default Client;
-
-
