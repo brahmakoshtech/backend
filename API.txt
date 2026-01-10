@@ -1,0 +1,344 @@
+# TESTIMONIAL API DOCUMENTATION
+
+Base URL: http://localhost:5000/api
+
+## Authentication Required
+All testimonial APIs require JWT token in Authorization header:
+Authorization: Bearer <your-jwt-token>
+
+---
+
+## 1. GET ALL TESTIMONIALS
+**Endpoint:** GET /api/testimonials
+**Description:** Get all testimonials for authenticated client
+
+### Request:
+```
+GET /api/testimonials
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: application/json
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "_id": "60f7b3b3b3b3b3b3b3b3b3b3",
+      "name": "John Doe",
+      "rating": 5,
+      "message": "Excellent service! Highly recommend to everyone.",
+      "image": "https://aitota.s3.ap-south-1.amazonaws.com/testimonials/1640995200000-profile.jpg",
+      "clientId": "60f7b3b3b3b3b3b3b3b3b3b3",
+      "isActive": true,
+      "createdAt": "2024-01-15T10:30:00.000Z",
+      "updatedAt": "2024-01-15T10:30:00.000Z"
+    }
+  ],
+  "count": 1
+}
+```
+
+---
+
+## 2. GET SINGLE TESTIMONIAL
+**Endpoint:** GET /api/testimonials/:id
+**Description:** Get single testimonial by ID
+
+### Request:
+```
+GET /api/testimonials/60f7b3b3b3b3b3b3b3b3b3b3
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: application/json
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "data": {
+    "_id": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "name": "John Doe",
+    "rating": 5,
+    "message": "Excellent service! Highly recommend to everyone.",
+    "image": "https://aitota.s3.ap-south-1.amazonaws.com/testimonials/1640995200000-profile.jpg",
+    "clientId": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "isActive": true,
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+---
+
+## 3. CREATE TESTIMONIAL
+**Endpoint:** POST /api/testimonials
+**Description:** Create new testimonial
+
+### Request:
+```
+POST /api/testimonials
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: application/json
+
+Body:
+{
+  "name": "John Doe",
+  "rating": 5,
+  "message": "Excellent service! Highly recommend to everyone."
+}
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "message": "Testimonial created successfully",
+  "data": {
+    "_id": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "name": "John Doe",
+    "rating": 5,
+    "message": "Excellent service! Highly recommend to everyone.",
+    "image": null,
+    "clientId": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "isActive": true,
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T10:30:00.000Z"
+  }
+}
+```
+
+---
+
+## 4. UPDATE TESTIMONIAL
+**Endpoint:** PUT /api/testimonials/:id
+**Description:** Update existing testimonial
+
+### Request:
+```
+PUT /api/testimonials/60f7b3b3b3b3b3b3b3b3b3b3
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: application/json
+
+Body:
+{
+  "name": "John Smith",
+  "rating": 4,
+  "message": "Very good service! Would recommend."
+}
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "message": "Testimonial updated successfully",
+  "data": {
+    "_id": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "name": "John Smith",
+    "rating": 4,
+    "message": "Very good service! Would recommend.",
+    "image": null,
+    "clientId": "60f7b3b3b3b3b3b3b3b3b3b3",
+    "isActive": true,
+    "createdAt": "2024-01-15T10:30:00.000Z",
+    "updatedAt": "2024-01-15T11:45:00.000Z"
+  }
+}
+```
+
+---
+
+## 5. DELETE TESTIMONIAL
+**Endpoint:** DELETE /api/testimonials/:id
+**Description:** Delete testimonial (soft delete)
+
+### Request:
+```
+DELETE /api/testimonials/60f7b3b3b3b3b3b3b3b3b3b3
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: application/json
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "message": "Testimonial deleted successfully"
+}
+```
+
+---
+
+## 6. UPLOAD TESTIMONIAL IMAGE
+**Endpoint:** POST /api/testimonials/:id/image
+**Description:** Upload image for testimonial
+
+### Request:
+```
+POST /api/testimonials/60f7b3b3b3b3b3b3b3b3b3b3/image
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: multipart/form-data
+
+Body (Form Data):
+  image: <image-file> (JPG, PNG, GIF - Max 5MB)
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "message": "Image uploaded successfully",
+  "data": {
+    "imageUrl": "https://aitota.s3.ap-south-1.amazonaws.com/testimonials/1640995200000-profile.jpg"
+  }
+}
+```
+
+---
+
+## 7. GET TESTIMONIAL STATISTICS
+**Endpoint:** GET /api/testimonials/stats/summary
+**Description:** Get testimonial statistics and analytics
+
+### Request:
+```
+GET /api/testimonials/stats/summary
+Headers:
+  Authorization: Bearer <jwt-token>
+  Content-Type: application/json
+```
+
+### Response:
+```json
+{
+  "success": true,
+  "data": {
+    "totalTestimonials": 25,
+    "averageRating": 4.2,
+    "ratingDistribution": {
+      "1": 1,
+      "2": 2,
+      "3": 5,
+      "4": 8,
+      "5": 9
+    }
+  }
+}
+```
+
+---
+
+## ERROR RESPONSES
+
+### 400 Bad Request:
+```json
+{
+  "success": false,
+  "message": "Name, rating, and message are required"
+}
+```
+
+### 401 Unauthorized:
+```json
+{
+  "success": false,
+  "message": "Access denied. No token provided."
+}
+```
+
+### 404 Not Found:
+```json
+{
+  "success": false,
+  "message": "Testimonial not found"
+}
+```
+
+### 500 Internal Server Error:
+```json
+{
+  "success": false,
+  "message": "Failed to create testimonial",
+  "error": "Database connection error"
+}
+```
+
+---
+
+## VALIDATION RULES
+
+### Create/Update Testimonial:
+- **name**: Required, string, trimmed
+- **rating**: Required, number, 1-5 range
+- **message**: Required, string, trimmed
+
+### Image Upload:
+- **File Types**: JPG, PNG, GIF
+- **Max Size**: 5MB
+- **Storage**: AWS S3
+
+---
+
+## NOTES
+
+1. All testimonials are client-specific (isolated by clientId)
+2. Delete operation is soft delete (isActive: false)
+3. Images are stored in AWS S3 with automatic cleanup
+4. All timestamps are in ISO 8601 format
+5. Rating must be integer between 1-5
+6. Authentication token must be valid and not expired
+
+
+
+TESTIMONIAL APIs - TOTAL COUNT: 7
+
+File: backend/routes/testimonials.js
+
+Complete API List:
+
+GET /api/testimonials - Get all testimonials
+
+GET /api/testimonials/:id - Get single testimonial
+
+POST /api/testimonials - Create new testimonial
+
+PUT /api/testimonials/:id - Update testimonial
+
+DELETE /api/testimonials/:id - Delete testimonial (soft delete)
+
+POST /api/testimonials/:id/image - Upload testimonial image
+
+GET /api/testimonials/stats/summary - Get testimonial statistics
+
+Features:
+
+✅ Full CRUD operations
+
+✅ Image upload with S3
+
+✅ Statistics dashboard
+
+✅ JWT Authentication required
+
+✅ Client data isolation
+
+✅ Soft delete functionality
+
+✅ Rating system (1-5 stars)
+
+✅ Error handling
+
+✅ Validation
+
+All APIs documented in API.txt file with examples, request/response formats, and error codes.
+
+Total: 7 Complete APIs for testimonial management!
