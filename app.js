@@ -19,6 +19,7 @@ import voiceRoutes from './routes/mobile/voice.js';
 import uploadRoutes from './routes/upload.js';
 import testimonialRoutes from './routes/testimonials.js';
 import founderMessageRoutes from './routes/founderMessages/index.js';
+import brandAssetRoutes from './routes/brandAssets/index.js';
 import { initializeSuperAdmin } from './config/initSuperAdmin.js';
 import realtimeAgentRoutes from './routes/mobile/realtimeAgent.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
@@ -96,6 +97,9 @@ app.use('/api/testimonials', testimonialRoutes);
 
 // Founder Message Routes
 app.use('/api/founder-messages', founderMessageRoutes);
+
+// Brand Asset Routes
+app.use('/api/brand-assets', brandAssetRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
