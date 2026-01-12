@@ -19,6 +19,7 @@ import voiceRoutes from './routes/mobile/voice.js';
 import uploadRoutes from './routes/upload.js';
 import testimonialRoutes from './routes/testimonials.js';
 import founderMessageRoutes from './routes/founderMessages/index.js';
+import brandAssetRoutes from './routes/brandAssets/index.js';
 import { initializeSuperAdmin } from './config/initSuperAdmin.js';
 import realtimeAgentRoutes from './routes/mobile/realtimeAgent.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
@@ -32,7 +33,7 @@ const server = http.createServer(app);
 
 // CORS Configuration - MUST BE BEFORE OTHER MIDDLEWARE
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:5174', 'https://backend-jfg8.onrender.com', 'https://brahmakoshfrontend.vercel.app'],
+  origin: ['http://localhost:5173', 'https://frontend-seven-steel-66.vercel.app', 'http://localhost:5174', 'https://backend-jfg8.onrender.com', 'https://brahmakoshfrontend.vercel.app'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -96,6 +97,9 @@ app.use('/api/testimonials', testimonialRoutes);
 
 // Founder Message Routes
 app.use('/api/founder-messages', founderMessageRoutes);
+
+// Brand Asset Routes
+app.use('/api/brand-assets', brandAssetRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

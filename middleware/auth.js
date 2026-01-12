@@ -35,6 +35,7 @@ export const authenticate = async (req, res, next) => {
       console.log('[Auth Middleware] Token decoded successfully:', {
         userId: decoded.userId,
         role: decoded.role,
+        clientId: decoded.clientId,
         path: req.path,
         tokenIssuedAt: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : null,
         tokenExpiresAt: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : null
@@ -58,12 +59,19 @@ export const authenticate = async (req, res, next) => {
       user = await Client.findById(decoded.userId).select('-password');
       if (user) user.role = 'client';
     } else if (decoded.role === 'user') {
-      user = await User.findById(decoded.userId).select('-password');
+      user = await User.findById(decoded.userId)
+        .select('-password')
+        .populate('clientId', 'clientId businessName email');
       if (user) {
         user.role = 'user'; // Ensure role is set
         // Convert to plain object to ensure role is preserved
         user = user.toObject ? user.toObject() : user;
         user.role = 'user'; // Set role again after conversion
+        
+        // Add clientId from token for backward compatibility
+        if (decoded.clientId) {
+          user.tokenClientId = decoded.clientId;
+        }
       }
     }
     
@@ -71,6 +79,7 @@ export const authenticate = async (req, res, next) => {
       userId: user?._id,
       role: user?.role,
       email: user?.email,
+      clientId: user?.clientId?._id || user?.tokenClientId,
       isActive: user?.isActive,
       path: req.path
     });
@@ -116,13 +125,15 @@ export const authenticate = async (req, res, next) => {
       user.role = decoded.role;
     }
 
-    // Store decoded role in request for additional verification
+    // Store decoded role and clientId in request for additional verification
     req.decodedRole = decoded.role;
+    req.decodedClientId = decoded.clientId;
 
     console.log('[Auth Middleware] Authentication successful:', {
       userId: user._id?.toString(),
       role: user.role,
       tokenRole: decoded.role,
+      clientId: decoded.clientId,
       roleMatch: user.role === decoded.role,
       roleType: typeof user.role,
       path: req.path,
@@ -167,9 +178,16 @@ export const authorize = (...roles) => {
   };
 };
 
-// Generate JWT token
-export const generateToken = (userId, role) => {
-  return jwt.sign({ userId, role }, JWT_SECRET, { expiresIn: '7d' });
+// Generate JWT token with clientId for users
+export const generateToken = (userId, role, clientId = null) => {
+  const payload = { userId, role };
+  
+  // Add clientId to token for users
+  if (role === 'user' && clientId) {
+    payload.clientId = clientId;
+  }
+  
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
 };
 
 // Alias for authenticate function (for backward compatibility)

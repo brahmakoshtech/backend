@@ -48,6 +48,15 @@ router.post('/clients', async (req, res) => {
       pincode
     } = req.body;
 
+    // Validate required fields
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Email and password are required' 
+      });
+    }
+
+    // Check if client already exists
     const existingClient = await Client.findOne({ email });
     if (existingClient) {
       return res.status(400).json({ 
@@ -56,9 +65,10 @@ router.post('/clients', async (req, res) => {
       });
     }
 
+    // Create new client (clientId will be auto-generated)
     const client = new Client({
-      email: email || '',
-      password: password || '',
+      email,
+      password,
       businessName: businessName || '',
       websiteUrl: websiteUrl || '',
       gstNumber: gstNumber || '',
@@ -71,14 +81,49 @@ router.post('/clients', async (req, res) => {
       pincode: pincode || '',
       createdBy: req.user._id,
       adminId: req.user._id,
-      loginApproved: true // Clients created by admin are auto-approved
+      loginApproved: true, // Clients created by admin are auto-approved
+      isActive: true
     });
 
+    // Save client (this will trigger the pre-validate hook to generate clientId)
     await client.save();
+
+    console.log('Client created successfully with ID:', client.clientId);
 
     res.status(201).json({
       success: true,
       message: 'Client created successfully',
+      data: { 
+        client,
+        clientId: client.clientId // Explicitly include the generated ID
+      }
+    });
+  } catch (error) {
+    console.error('Error creating client:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+// Get single client
+router.get('/clients/:id', async (req, res) => {
+  try {
+    const client = await Client.findOne({ 
+      _id: req.params.id, 
+      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
+    }).select('-password');
+
+    if (!client) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Client not found' 
+      });
+    }
+
+    res.json({
+      success: true,
       data: { client }
     });
   } catch (error) {
@@ -94,7 +139,7 @@ router.put('/clients/:id', async (req, res) => {
   try {
     const client = await Client.findOne({ 
       _id: req.params.id, 
-      adminId: req.user._id
+      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
     });
 
     if (!client) {
@@ -104,7 +149,10 @@ router.put('/clients/:id', async (req, res) => {
       });
     }
 
-    Object.assign(client, req.body);
+    // Prevent updating clientId
+    const { clientId, ...updateData } = req.body;
+    
+    Object.assign(client, updateData);
     await client.save();
 
     res.json({
@@ -120,12 +168,12 @@ router.put('/clients/:id', async (req, res) => {
   }
 });
 
-// Delete client
+// Delete client (soft delete)
 router.delete('/clients/:id', async (req, res) => {
   try {
     const client = await Client.findOne({ 
       _id: req.params.id, 
-      adminId: req.user._id
+      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
     });
 
     if (!client) {
@@ -150,11 +198,42 @@ router.delete('/clients/:id', async (req, res) => {
   }
 });
 
+// Activate client
+router.patch('/clients/:id/activate', async (req, res) => {
+  try {
+    const client = await Client.findOne({ 
+      _id: req.params.id, 
+      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
+    });
+
+    if (!client) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Client not found' 
+      });
+    }
+
+    client.isActive = true;
+    await client.save();
+
+    res.json({
+      success: true,
+      message: 'Client activated successfully',
+      data: { client }
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
 // Get users under clients
 router.get('/users', async (req, res) => {
   try {
     const clients = await Client.find({ 
-      adminId: req.user._id
+      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
     }).select('_id');
 
     const clientIds = clients.map(c => c._id);
@@ -163,7 +242,7 @@ router.get('/users', async (req, res) => {
       clientId: { $in: clientIds }
     })
       .select('-password')
-      .populate('clientId', 'email businessName')
+      .populate('clientId', 'email businessName clientId')
       .sort({ createdAt: -1 });
     
     res.json({
@@ -181,24 +260,32 @@ router.get('/users', async (req, res) => {
 // Get dashboard overview
 router.get('/dashboard/overview', async (req, res) => {
   try {
-    const totalClients = await Client.countDocuments({ 
-      adminId: req.user._id
-    });
+    const query = req.user.role === 'super_admin' 
+      ? { adminId: { $exists: true } }
+      : { adminId: req.user._id };
 
-    const clients = await Client.find({ 
-      adminId: req.user._id
-    }).select('_id');
+    const totalClients = await Client.countDocuments(query);
+    const activeClients = await Client.countDocuments({ ...query, isActive: true });
 
+    const clients = await Client.find(query).select('_id');
     const clientIds = clients.map(c => c._id);
+    
     const totalUsers = await User.countDocuments({ 
       clientId: { $in: clientIds }
+    });
+    
+    const activeUsers = await User.countDocuments({ 
+      clientId: { $in: clientIds },
+      isActive: true
     });
 
     res.json({
       success: true,
       data: {
         totalClients,
-        totalUsers
+        activeClients,
+        totalUsers,
+        activeUsers
       }
     });
   } catch (error) {
@@ -233,9 +320,12 @@ router.post('/clients/:id/login-token', async (req, res) => {
 
     res.json({
       success: true,
+      message: 'Login token generated successfully',
       data: {
         token,
-        clientId: client._id
+        clientId: client._id,
+        clientCode: client.clientId,
+        businessName: client.businessName
       }
     });
   } catch (error) {
@@ -247,4 +337,3 @@ router.post('/clients/:id/login-token', async (req, res) => {
 });
 
 export default router;
-
