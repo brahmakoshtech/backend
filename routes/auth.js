@@ -97,6 +97,95 @@ router.post('/register/client', async (req, res) => {
   }
 });
 
+// Google Sign-In Registration/Login
+router.post('/register/google', async (req, res) => {
+  try {
+    const { credential, clientId } = req.body;
+
+    if (!credential || !clientId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Google credential and clientId are required' 
+      });
+    }
+
+    // Verify Google token
+    const { OAuth2Client } = require('google-auth-library');
+    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+    
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    
+    const payload = ticket.getPayload();
+    const email = payload.email;
+    const name = payload.name;
+    const picture = payload.picture;
+
+    // Check if client exists
+    const clientDoc = await Client.findOne({ clientId });
+    if (!clientDoc) {
+      return res.status(404).json({ 
+        success: false, 
+        message: 'Client not found' 
+      });
+    }
+
+    // Check if user already exists
+    let user = await MobileUser.findOne({ email, clientId });
+    
+    if (user) {
+      // User exists - login
+      const token = generateToken(user._id);
+      
+      return res.json({
+        success: true,
+        message: 'Login successful',
+        data: {
+          token,
+          user,
+          clientId,
+          clientName: clientDoc.name
+        }
+      });
+    } else {
+      // Create new user
+      user = new MobileUser({
+        email,
+        name,
+        profileImage: picture,
+        clientId,
+        emailVerified: true, // Google emails are already verified
+        mobileVerified: false,
+        registrationCompleted: false,
+        authProvider: 'google'
+      });
+
+      await user.save();
+
+      const token = generateToken(user._id);
+
+      return res.status(201).json({
+        success: true,
+        message: 'User registered successfully with Google',
+        data: {
+          token,
+          user,
+          clientId,
+          clientName: clientDoc.name
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Google Sign-In Error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message || 'Google authentication failed'
+    });
+  }
+});
+
 // Login
 router.post('/login', async (req, res) => {
   try {
