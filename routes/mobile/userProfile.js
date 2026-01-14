@@ -54,7 +54,7 @@ async function validateClientId(clientCode) {
 // Google Sign-In Registration/Login
 router.post('/register/google', async (req, res) => {
   try {
-    const { credential, clientId } = req.body;
+    const { credential, clientId: clientCode } = req.body;
 
     // Validate required fields
     if (!credential) {
@@ -64,7 +64,7 @@ router.post('/register/google', async (req, res) => {
       });
     }
 
-    if (!clientId) {
+    if (!clientCode) {
       return res.status(400).json({ 
         success: false, 
         message: 'Client ID is required' 
@@ -74,7 +74,6 @@ router.post('/register/google', async (req, res) => {
     // Verify Google token
     let payload;
     try {
-      // Create OAuth2Client instance for this request
       const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
       
       const ticket = await googleClient.verifyIdToken({
@@ -95,8 +94,8 @@ router.post('/register/google', async (req, res) => {
     const picture = payload.picture;
     const emailVerified = payload.email_verified;
 
-    // Check if client exists
-    const clientDoc = await Client.findOne({ clientId });
+    // Find client by clientId string field (NOT by _id)
+    const clientDoc = await Client.findOne({ clientId: clientCode.toUpperCase() });
     if (!clientDoc) {
       return res.status(404).json({ 
         success: false, 
@@ -104,19 +103,48 @@ router.post('/register/google', async (req, res) => {
       });
     }
 
-    // Check if user already exists with this email and clientId
-    let user = await User.findOne({ email, clientId });
+    if (!clientDoc.isActive) {
+      return res.status(403).json({ 
+        success: false, 
+        message: 'Client account is inactive. Please contact administrator.' 
+      });
+    }
+
+    // Check if user already exists with this email and client's ObjectId
+    let user = await User.findOne({ 
+      email, 
+      clientId: clientDoc._id  // Use ObjectId here, not the string
+    });
     
     if (user) {
       // Existing user - perform login
       
-      // Update profile image if changed
+      // Update profile data if changed
+      let updated = false;
+      
       if (picture && user.profileImage !== picture) {
         user.profileImage = picture;
+        updated = true;
+      }
+      
+      if (user.authMethod !== 'google') {
+        user.authMethod = 'google';
+        updated = true;
+      }
+      
+      if (name) {
+        if (!user.profile) user.profile = {};
+        if (!user.profile.name) {
+          user.profile.name = name;
+          updated = true;
+        }
+      }
+      
+      if (updated) {
         await user.save();
       }
 
-      const token = generateToken(user._id);
+      const token = generateToken(user._id, 'user', user.clientId);
       
       return res.json({
         success: true,
@@ -126,32 +154,36 @@ router.post('/register/google', async (req, res) => {
           user: {
             id: user._id,
             email: user.email,
-            name: user.name,
+            name: user.profile?.name || name,
             mobile: user.mobile,
             profileImage: user.profileImage,
             profile: user.profile
           },
-          clientId,
-          clientName: clientDoc.name
+          clientId: clientDoc.clientId,  // Return the string clientId
+          clientName: clientDoc.businessName || clientDoc.name
         }
       });
     } else {
       // New user - create account
       user = new User({
         email,
-        name,
+        password: 'google_auth_' + Date.now(),
+        authMethod: 'google',
+        profile: {
+          name: name
+        },
         profileImage: picture,
-        clientId,
+        clientId: clientDoc._id,  // Store ObjectId here
         emailVerified: emailVerified || true,
         mobileVerified: false,
-        registrationCompleted: false,
-        authProvider: 'google',
+        registrationStep: 3,  // Google users are fully registered
+        loginApproved: true,
         isActive: true
       });
 
       await user.save();
 
-      const token = generateToken(user._id);
+      const token = generateToken(user._id, 'user', user.clientId);
 
       return res.status(201).json({
         success: true,
@@ -161,13 +193,13 @@ router.post('/register/google', async (req, res) => {
           user: {
             id: user._id,
             email: user.email,
-            name: user.name,
+            name: user.profile?.name,
             mobile: user.mobile,
             profileImage: user.profileImage,
             profile: user.profile
           },
-          clientId,
-          clientName: clientDoc.name
+          clientId: clientDoc.clientId,  // Return the string clientId
+          clientName: clientDoc.businessName || clientDoc.name
         }
       });
     }
