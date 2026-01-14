@@ -55,41 +55,66 @@ router.post('/register/google', async (req, res) => {
   try {
     const { credential, clientId } = req.body;
 
-    if (!credential || !clientId) {
+    // Validate required fields
+    if (!credential) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Google credential and clientId are required' 
+        message: 'Google credential is required' 
+      });
+    }
+
+    if (!clientId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Client ID is required' 
       });
     }
 
     // Verify Google token
-    const { OAuth2Client } = require('google-auth-library');
-    const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-    
-    const ticket = await client.verifyIdToken({
-      idToken: credential,
-      audience: process.env.GOOGLE_CLIENT_ID,
-    });
-    
-    const payload = ticket.getPayload();
+    let payload;
+    try {
+      // Create OAuth2Client instance for this request
+      const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+      
+      const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      payload = ticket.getPayload();
+    } catch (verifyError) {
+      console.error('Google token verification failed:', verifyError);
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid Google credential' 
+      });
+    }
+
     const email = payload.email;
     const name = payload.name;
     const picture = payload.picture;
+    const emailVerified = payload.email_verified;
 
     // Check if client exists
     const clientDoc = await Client.findOne({ clientId });
     if (!clientDoc) {
       return res.status(404).json({ 
         success: false, 
-        message: 'Client not found' 
+        message: 'Invalid client ID. Please contact your organization.' 
       });
     }
 
-    // Check if user already exists
+    // Check if user already exists with this email and clientId
     let user = await MobileUser.findOne({ email, clientId });
     
     if (user) {
-      // User exists - login
+      // Existing user - perform login
+      
+      // Update profile image if changed
+      if (picture && user.profileImage !== picture) {
+        user.profileImage = picture;
+        await user.save();
+      }
+
       const token = generateToken(user._id);
       
       return res.json({
@@ -97,22 +122,30 @@ router.post('/register/google', async (req, res) => {
         message: 'Login successful',
         data: {
           token,
-          user,
+          user: {
+            id: user._id,
+            email: user.email,
+            name: user.name,
+            mobile: user.mobile,
+            profileImage: user.profileImage,
+            profile: user.profile
+          },
           clientId,
           clientName: clientDoc.name
         }
       });
     } else {
-      // Create new user
+      // New user - create account
       user = new MobileUser({
         email,
         name,
         profileImage: picture,
         clientId,
-        emailVerified: true, // Google emails are already verified
+        emailVerified: emailVerified || true,
         mobileVerified: false,
         registrationCompleted: false,
-        authProvider: 'google'
+        authProvider: 'google',
+        isActive: true
       });
 
       await user.save();
@@ -121,10 +154,17 @@ router.post('/register/google', async (req, res) => {
 
       return res.status(201).json({
         success: true,
-        message: 'User registered successfully with Google',
+        message: 'Account created successfully with Google',
         data: {
           token,
-          user,
+          user: {
+            id: user._id,
+            email: user.email,
+            name: user.name,
+            mobile: user.mobile,
+            profileImage: user.profileImage,
+            profile: user.profile
+          },
           clientId,
           clientName: clientDoc.name
         }
@@ -134,7 +174,7 @@ router.post('/register/google', async (req, res) => {
     console.error('Google Sign-In Error:', error);
     res.status(500).json({ 
       success: false, 
-      message: error.message || 'Google authentication failed'
+      message: error.message || 'Google authentication failed' 
     });
   }
 });
