@@ -105,7 +105,7 @@ router.post('/register/google', async (req, res) => {
     }
 
     // Check if user already exists with this email and clientId
-    let user = await MobileUser.findOne({ email, clientId });
+    let user = await User.findOne({ email, clientId });
     
     if (user) {
       // Existing user - perform login
@@ -137,7 +137,7 @@ router.post('/register/google', async (req, res) => {
       });
     } else {
       // New user - create account
-      user = new MobileUser({
+      user = new User({
         email,
         name,
         profileImage: picture,
