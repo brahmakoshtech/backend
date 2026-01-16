@@ -146,7 +146,7 @@ export const authenticate = async (req, res, next) => {
       userId: user._id?.toString(),
       role: user.role,
       tokenRole: decoded.role,
-      clientId: user.role === 'client' ? user.clientId : decoded.clientId,
+      clientId: user.role === 'client' ? user.clientId : (user.clientId?.clientId || decoded.clientId),
       roleMatch: user.role === decoded.role,
       roleType: typeof user.role,
       path: req.path,

@@ -22,6 +22,15 @@ const brandAssetSchema = new mongoose.Schema({
     default: null
     // S3 object key for generating presigned URLs
   },
+  backgroundLogoImage: {
+    type: String,
+    default: null
+  },
+  backgroundLogoImageKey: {
+    type: String,
+    default: null
+    // S3 object key for generating presigned URLs
+  },
   webLinkUrl: {
     type: String,
     required: true,

@@ -29,6 +29,7 @@ import founderMessageRoutes from './routes/founderMessages/index.js';
 import brandAssetRoutes from './routes/brandAssets/index.js';
 import meditationRoutes from './routes/meditations.js';
 import chantingRoutes from './routes/chantings.js';
+import prathanaRoutes from './routes/prathanas.js';
 import { initializeSuperAdmin } from './config/initSuperAdmin.js';
 import realtimeAgentRoutes from './routes/mobile/realtimeAgent.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
@@ -115,6 +116,9 @@ app.use('/api/meditations', meditationRoutes);
 
 // Chanting Routes
 app.use('/api/chantings', chantingRoutes);
+
+// Prathana Routes
+app.use('/api/prathanas', prathanaRoutes);
 
 // Founder Message Routes
 app.use('/api/founder-messages', founderMessageRoutes);

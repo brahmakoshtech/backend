@@ -83,12 +83,11 @@ router.get('/', authenticate, async (req, res) => {
     console.log('[Brand Assets GET]', {
       clientId: clientId?.toString(),
       userId: req.user?._id?.toString(),
-      userIdAlt: req.user?.id,
       userRole: req.user?.role,
       userEmail: req.user?.email,
-      hasUser: !!req.user,
-      userType: req.user?.constructor?.name,
-      userKeys: req.user ? Object.keys(req.user).slice(0, 10) : [],
+      readableClientId: req.user.role === 'client' 
+        ? req.user.clientId 
+        : (req.user.clientId?.clientId || req.user.clientId?._id?.toString() || 'N/A'),
       includeInactive: req.query.includeInactive === 'true'
     });
     
@@ -114,6 +113,16 @@ router.get('/', authenticate, async (req, res) => {
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
+          }
+        }
+        if (assetObj.backgroundLogoImageKey || assetObj.backgroundLogoImage) {
+          try {
+            const imageKey = assetObj.backgroundLogoImageKey || extractS3KeyFromUrl(assetObj.backgroundLogoImage);
+            if (imageKey) {
+              assetObj.backgroundLogoImage = await getobject(imageKey, 604800);
+            }
+          } catch (error) {
+            console.error('Error generating background image presigned URL:', error);
           }
         }
         return assetObj;
@@ -157,10 +166,8 @@ router.post('/', authenticate, async (req, res) => {
     console.log('[Brand Assets POST]', {
       clientId: clientId?.toString(),
       userId: req.user?._id?.toString(),
-      userIdAlt: req.user?.id,
       userRole: req.user?.role,
-      userEmail: req.user?.email,
-      hasUser: !!req.user
+      userEmail: req.user?.email
     });
     
     if (!clientId) {
@@ -284,7 +291,8 @@ router.delete('/:id', authenticate, async (req, res) => {
     console.log('[Brand Assets DELETE]', {
       clientId: clientId?.toString(),
       userId: req.user?._id?.toString(),
-      userRole: req.user?.role
+      userRole: req.user?.role,
+      readableClientId: req.user.role === 'client' ? req.user.clientId : (req.user.clientId?.clientId || 'N/A')
     });
     
     if (!clientId) {
@@ -473,6 +481,92 @@ router.post('/:id/upload-image', authenticate, upload.single('brandLogoImage'), 
     res.status(500).json({
       success: false,
       message: 'Failed to upload image',
+      error: error.message
+    });
+  }
+});
+
+// Upload background image for brand asset
+router.post('/:id/upload-background-image', authenticate, upload.single('backgroundLogoImage'), async (req, res) => {
+  try {
+    let clientId;
+    try {
+      clientId = await getClientId(req);
+    } catch (clientIdError) {
+      return res.status(401).json({
+        success: false,
+        message: clientIdError.message || 'Unable to determine client ID. Please ensure your token is valid.'
+      });
+    }
+    
+    if (!['client', 'user'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Client or user role required.'
+      });
+    }
+    
+    if (!clientId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Client ID not found. Please login again.'
+      });
+    }
+    
+    const brandAsset = await BrandAsset.findOne({
+      _id: req.params.id,
+      clientId: clientId,
+      isDeleted: false,
+      isActive: true
+    }).populate('clientId', 'clientId');
+
+    if (!brandAsset) {
+      return res.status(404).json({
+        success: false,
+        message: 'Brand asset not found'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No image file provided'
+      });
+    }
+
+    // Delete old background image if exists
+    if (brandAsset.backgroundLogoImageKey || brandAsset.backgroundLogoImage) {
+      try {
+        await deleteFromS3(brandAsset.backgroundLogoImageKey || brandAsset.backgroundLogoImage);
+      } catch (error) {
+        console.warn('Failed to delete old background image:', error.message);
+      }
+    }
+
+    // Upload new background image to S3
+    const uploadResult = await uploadToS3(req.file, 'brand-assets');
+    const imageUrl = uploadResult.url;
+    const imageKey = uploadResult.key;
+
+    // Update brand asset with new background image URL and key
+    brandAsset.backgroundLogoImage = imageUrl;
+    brandAsset.backgroundLogoImageKey = imageKey;
+    const updatedBrandAsset = await brandAsset.save();
+
+    res.json({
+      success: true,
+      message: 'Background image uploaded successfully',
+      data: {
+        brandAsset: withClientIdString(updatedBrandAsset),
+        imageUrl: imageUrl,
+        clientId: brandAsset.clientId?.clientId || brandAsset.clientId
+      }
+    });
+  } catch (error) {
+    console.error('Error uploading background image:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload background image',
       error: error.message
     });
   }
