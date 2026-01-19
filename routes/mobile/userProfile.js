@@ -1148,13 +1148,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Check if client is active
-    if (!user.clientId || !user.clientId.isActive) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Client account is inactive. Please contact administrator.' 
-      });
-    }
+    
 
     const token = generateToken(user._id, 'user', user.clientId);
 
