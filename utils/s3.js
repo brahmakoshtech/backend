@@ -52,6 +52,12 @@ export const generateUploadUrl = async (fileName, contentType, folder = '') => {
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       ContentType: contentType,
+      CacheControl: 'max-age=31536000',
+      Metadata: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, HEAD',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      }
     });
 
     const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
@@ -79,6 +85,8 @@ export const getobject = async (key, expiresIn = 604800) => {
       Key: actualKey,
       ResponseContentDisposition: 'inline',
       ResponseContentType: actualKey.endsWith('.txt') ? 'text/plain; charset=utf-8' : undefined,
+      ResponseCacheControl: 'max-age=31536000',
+      ResponseExpires: new Date(Date.now() + expiresIn * 1000).toISOString()
     });
 
     const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });

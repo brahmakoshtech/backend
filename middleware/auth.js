@@ -3,7 +3,7 @@ import Admin from '../models/Admin.js';
 import Client from '../models/Client.js';
 import User from '../models/User.js';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
+export const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
 
 // Authentication middleware - works with all models
 export const authenticate = async (req, res, next) => {
@@ -11,18 +11,7 @@ export const authenticate = async (req, res, next) => {
     const authHeader = req.header('Authorization');
     const token = authHeader?.replace('Bearer ', '');
     
-    // Debug logging
-    console.log('[Auth Middleware]', {
-      path: req.path,
-      method: req.method,
-      hasAuthHeader: !!authHeader,
-      hasToken: !!token,
-      tokenLength: token ? token.length : 0,
-      tokenPreview: token ? token.substring(0, 20) + '...' : 'none'
-    });
-    
     if (!token) {
-      console.warn('[Auth Middleware] No token provided for:', req.path);
       return res.status(401).json({ 
         success: false, 
         message: 'No token provided. Authentication required.' 
@@ -32,21 +21,7 @@ export const authenticate = async (req, res, next) => {
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
-      console.log('[Auth Middleware] Token decoded successfully:', {
-        userId: decoded.userId,
-        role: decoded.role,
-        clientId: decoded.clientId,
-        path: req.path,
-        tokenIssuedAt: decoded.iat ? new Date(decoded.iat * 1000).toISOString() : null,
-        tokenExpiresAt: decoded.exp ? new Date(decoded.exp * 1000).toISOString() : null
-      });
     } catch (verifyError) {
-      console.error('[Auth Middleware] Token verification failed:', {
-        error: verifyError.message,
-        errorName: verifyError.name,
-        path: req.path,
-        tokenPreview: token.substring(0, 50) + '...'
-      });
       throw verifyError;
     }
     
@@ -65,7 +40,7 @@ export const authenticate = async (req, res, next) => {
         }
         console.log('[Auth Middleware] Client user loaded:', {
           _id: user._id?.toString(),
-          clientId: user.clientId, // CLI-ABC123 format
+          clientId: user.clientId,
           email: user.email,
           role: user.role,
           isActive: user.isActive
@@ -93,12 +68,10 @@ export const authenticate = async (req, res, next) => {
       role: user?.role,
       email: user?.email,
       clientId: user?.role === 'client' ? user?.clientId : (user?.clientId?._id || user?.tokenClientId),
-      isActive: user?.isActive,
-      path: req.path
+      isActive: user?.isActive
     });
     
     if (!user) {
-      console.error('[Auth Middleware] User not found for userId:', decoded.userId);
       return res.status(401).json({ 
         success: false, 
         message: 'User not found.' 
@@ -106,7 +79,6 @@ export const authenticate = async (req, res, next) => {
     }
 
     if (!user.isActive) {
-      console.warn('[Auth Middleware] User account inactive:', user._id);
       return res.status(401).json({ 
         success: false, 
         message: 'User account is inactive.' 
@@ -114,27 +86,12 @@ export const authenticate = async (req, res, next) => {
     }
 
     // Ensure role is always set - prioritize token role over user object role
-    // This is important because token role is the source of truth
     if (!user.role || user.role !== decoded.role) {
-      console.warn('[Auth Middleware] Role mismatch or missing, using token role:', {
-        tokenRole: decoded.role,
-        userRole: user.role,
-        userId: user._id,
-        path: req.path
-      });
-      // Use role from token (source of truth)
       user.role = decoded.role;
     }
 
     // Final check - ensure role is a string and exactly matches token role
     if (user.role !== decoded.role) {
-      console.error('[Auth Middleware] Critical role mismatch, forcing token role:', {
-        tokenRole: decoded.role,
-        userRole: user.role,
-        userId: user._id,
-        path: req.path
-      });
-      // Force role to match token (token is source of truth)
       user.role = decoded.role;
     }
 
@@ -147,21 +104,12 @@ export const authenticate = async (req, res, next) => {
       role: user.role,
       tokenRole: decoded.role,
       clientId: user.role === 'client' ? user.clientId : (user.clientId?.clientId || decoded.clientId),
-      roleMatch: user.role === decoded.role,
-      roleType: typeof user.role,
-      path: req.path,
-      userModel: user.constructor?.name || 'plain object'
+      roleMatch: user.role === decoded.role
     });
 
     req.user = user;
     next();
   } catch (error) {
-    console.error('[Auth Middleware] Error:', {
-      error: error.message,
-      errorName: error.name,
-      path: req.path,
-      hasToken: !!req.header('Authorization')
-    });
     res.status(401).json({ 
       success: false, 
       message: 'Invalid or expired token.',

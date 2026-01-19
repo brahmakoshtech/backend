@@ -28,9 +28,13 @@ import testimonialRoutes from './routes/testimonials/index.js';
 import founderMessageRoutes from './routes/founderMessages/index.js';
 import brandAssetRoutes from './routes/brandAssets/index.js';
 import sponsorRoutes from './routes/sponsors.js';
+import expertCategoryRoutes from './routes/expertCategories.js';
+import expertRoutes from './routes/experts.js';
 import meditationRoutes from './routes/meditations.js';
+import liveAvatarRoutes from './routes/liveAvatars.js';
 import chantingRoutes from './routes/chantings.js';
 import prathanaRoutes from './routes/prathanas.js';
+import publicRoutes from './routes/public.js';
 import { initializeSuperAdmin } from './config/initSuperAdmin.js';
 import realtimeAgentRoutes from './routes/mobile/realtimeAgent.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
@@ -115,8 +119,17 @@ app.use('/api/testimonials', testimonialRoutes);
 // Sponsor Routes
 app.use('/api/sponsors', sponsorRoutes);
 
+// Expert Category Routes
+app.use('/api/expert-categories', expertCategoryRoutes);
+
+// Expert Routes
+app.use('/api/experts', expertRoutes);
+
 // Meditation Routes
 app.use('/api/meditations', meditationRoutes);
+
+// Live Avatar Routes
+app.use('/api/live-avatars', liveAvatarRoutes);
 
 // Chanting Routes
 app.use('/api/chantings', chantingRoutes);
@@ -129,6 +142,9 @@ app.use('/api/founder-messages', founderMessageRoutes);
 
 // Brand Asset Routes
 app.use('/api/brand-assets', brandAssetRoutes);
+
+// Public Routes (No Authentication Required)
+app.use('/api/public', publicRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
