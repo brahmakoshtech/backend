@@ -1096,11 +1096,11 @@ router.post('/check-email', async (req, res) => {
 /**
  * User Login (Mobile)
  * POST /api/mobile/user/login
- * Body: { email, password }
+ * Body: { email, password, clientId (optional) }
  */
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, clientId: clientCode } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({ 
@@ -1109,8 +1109,15 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Find user by email (across all clients if multiple exist)
-    const user = await User.findOne({ email })
+    // Build query - if clientId provided, filter by it
+    let query = { email };
+    if (clientCode) {
+      const client = await validateClientId(clientCode);
+      query.clientId = client._id;
+    }
+
+    // Find user by email (and optionally by clientId)
+    const user = await User.findOne(query)
       .select('+password')
       .populate('clientId', 'clientId businessName email');
     
@@ -1148,15 +1155,8 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Check if client is active
-    if (!user.clientId || !user.clientId.isActive) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'Client account is inactive. Please contact administrator.' 
-      });
-    }
-
-    const token = generateToken(user._id, 'user', user.clientId);
+    // Generate token with user's clientId (ObjectId)
+    const token = generateToken(user._id, 'user', user.clientId._id);
 
     res.json({
       success: true,
@@ -1164,11 +1164,12 @@ router.post('/login', async (req, res) => {
       data: {
         user: { 
           ...user.toObject(), 
-          role: 'user' 
+          role: 'user',
+          password: undefined // Remove password from response
         },
         token,
-        clientId: user.clientId.clientId,
-        clientName: user.clientId.businessName
+        clientId: user.clientId?.clientId || null,
+        clientName: user.clientId?.businessName || null
       }
     });
   } catch (error) {
