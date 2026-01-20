@@ -83,7 +83,7 @@ router.post('/upload-url', authenticate, async (req, res) => {
 // POST /api/live-avatars/direct - Create live avatar with direct S3 URLs
 router.post('/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, agentId, gender, link, videoUrl, imageUrl } = req.body;
+    const { name, description, agentId, gender, category, link, videoUrl, imageUrl } = req.body;
     
     let clientId;
     try {
@@ -121,6 +121,7 @@ router.post('/direct', authenticate, async (req, res) => {
       description: description.trim(),
       agentId: agentId.trim(),
       gender: gender || 'Male',
+      category: category || 'Deity',
       link: link ? link.trim() : '',
       clientId: clientId,
       videoUrl: videoUrl || undefined,
@@ -302,7 +303,7 @@ router.get('/', authenticate, async (req, res) => {
 // PUT /api/live-avatars/:id/direct - Update live avatar with direct S3 URLs
 router.put('/:id/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, agentId, gender, link, videoUrl, imageUrl } = req.body;
+    const { name, description, agentId, gender, category, link, videoUrl, imageUrl } = req.body;
     
     let clientId;
     try {
@@ -331,6 +332,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     if (description) avatar.description = description.trim();
     if (agentId) avatar.agentId = agentId.trim();
     if (gender) avatar.gender = gender;
+    if (category) avatar.category = category;
     if (link !== undefined) avatar.link = link.trim();
     
     // Update video URL if provided

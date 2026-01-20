@@ -22,6 +22,12 @@ const liveAvatarSchema = new mongoose.Schema({
     enum: ['Male', 'Female'],
     default: 'Male'
   },
+  category: {
+    type: String,
+    required: true,
+    enum: ['Deity', 'Rashami', 'Expert'],
+    default: 'Deity'
+  },
   link: {
     type: String,
     trim: true
