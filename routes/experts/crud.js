@@ -195,7 +195,7 @@ router.get('/:id', authenticate, async (req, res) => {
 // CREATE new expert
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { name, experience, expertise, profileSummary, chatCharge, voiceCharge, videoCharge, status, categoryId } = req.body;
+    const { name, experience, expertise, profileSummary, primaryLanguage, otherLanguages, chatCharge, voiceCharge, videoCharge, status, categoryId } = req.body;
     
     let clientId;
     try {
@@ -226,6 +226,8 @@ router.post('/', authenticate, async (req, res) => {
       experience,
       expertise,
       profileSummary,
+      primaryLanguage: primaryLanguage || 'Hindi',
+      otherLanguages: otherLanguages || '',
       chatCharge: Number(chatCharge),
       voiceCharge: Number(voiceCharge),
       videoCharge: Number(videoCharge),
@@ -363,7 +365,7 @@ router.post('/:id/upload-banner', authenticate, upload.single('backgroundBanner'
 // UPDATE expert
 router.put('/:id', authenticate, async (req, res) => {
   try {
-    const { name, experience, expertise, profileSummary, chatCharge, voiceCharge, videoCharge, status, isActive, categoryId } = req.body;
+    const { name, experience, expertise, profileSummary, primaryLanguage, otherLanguages, chatCharge, voiceCharge, videoCharge, status, isActive, categoryId } = req.body;
     
     let clientId;
     try {
@@ -398,6 +400,8 @@ router.put('/:id', authenticate, async (req, res) => {
     if (experience !== undefined) updateData.experience = experience;
     if (expertise !== undefined) updateData.expertise = expertise;
     if (profileSummary !== undefined) updateData.profileSummary = profileSummary;
+    if (primaryLanguage !== undefined) updateData.primaryLanguage = primaryLanguage;
+    if (otherLanguages !== undefined) updateData.otherLanguages = otherLanguages;
     if (chatCharge !== undefined) updateData.chatCharge = Number(chatCharge);
     if (voiceCharge !== undefined) updateData.voiceCharge = Number(voiceCharge);
     if (videoCharge !== undefined) updateData.videoCharge = Number(videoCharge);

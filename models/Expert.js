@@ -21,6 +21,27 @@ const expertSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  languages: {
+    type: [String],
+    default: ['Hindi', 'English'],
+    validate: {
+      validator: function(v) {
+        return v && v.length > 0;
+      },
+      message: 'At least one language must be selected'
+    }
+  },
+  primaryLanguage: {
+    type: String,
+    required: true,
+    enum: ['Hindi', 'English'],
+    default: 'Hindi'
+  },
+  otherLanguages: {
+    type: String,
+    trim: true,
+    default: ''
+  },
   profilePhoto: {
     type: String,
     default: null

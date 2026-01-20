@@ -134,9 +134,34 @@ export const getExpertCategoryById = async (req, res) => {
       });
     }
 
+    const categoryObj = category.toObject();
+    
+    // Generate presigned URLs for images
+    if (categoryObj.imageKey || categoryObj.image) {
+      try {
+        const imageKey = categoryObj.imageKey || extractS3KeyFromUrl(categoryObj.image);
+        if (imageKey) {
+          categoryObj.image = await getobject(imageKey, 604800);
+        }
+      } catch (error) {
+        console.error('Error generating image presigned URL:', error);
+      }
+    }
+
+    if (categoryObj.backgroundImageKey || categoryObj.backgroundImage) {
+      try {
+        const backgroundImageKey = categoryObj.backgroundImageKey || extractS3KeyFromUrl(categoryObj.backgroundImage);
+        if (backgroundImageKey) {
+          categoryObj.backgroundImage = await getobject(backgroundImageKey, 604800);
+        }
+      } catch (error) {
+        console.error('Error generating background image presigned URL:', error);
+      }
+    }
+
     res.json({
       success: true,
-      data: category
+      data: categoryObj
     });
   } catch (error) {
     console.error('Get expert category error:', error);
