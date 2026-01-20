@@ -23,7 +23,7 @@ const expertSchema = new mongoose.Schema({
   },
   languages: {
     type: [String],
-    default: ['Hindi', 'English'],
+    default: ['Hindi'],
     validate: {
       validator: function(v) {
         return v && v.length > 0;
@@ -31,13 +31,7 @@ const expertSchema = new mongoose.Schema({
       message: 'At least one language must be selected'
     }
   },
-  primaryLanguage: {
-    type: String,
-    required: true,
-    enum: ['Hindi', 'English'],
-    default: 'Hindi'
-  },
-  otherLanguages: {
+  customLanguage: {
     type: String,
     trim: true,
     default: ''
