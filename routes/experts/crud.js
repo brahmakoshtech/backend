@@ -78,9 +78,33 @@ router.get('/', authenticate, async (req, res) => {
       query.isActive = true;
     }
     
+    // Add category filter if provided (support both 'category' and 'categoryId' parameters)
+    const categoryParam = req.query.categoryId || req.query.category;
+    if (categoryParam) {
+      // Handle special cases
+      if (categoryParam === 'null' || categoryParam === 'undefined') {
+        query.categoryId = null;
+      } else if (mongoose.Types.ObjectId.isValid(categoryParam)) {
+        query.categoryId = categoryParam;
+      } else {
+        console.warn('Invalid category parameter format:', categoryParam);
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid category parameter format. Must be a valid ObjectId.'
+        });
+      }
+    }
+    
+    // Debug logging
+    console.log('Query parameters:', req.query);
+    console.log('Category parameter used:', categoryParam);
+    console.log('Final MongoDB query:', query);
+    
     const experts = await Expert.find(query)
       .populate('clientId', 'clientId')
       .sort({ createdAt: -1 });
+    
+    console.log(`Found ${experts.length} experts matching query`);
     
     const expertsWithUrls = await Promise.all(
       experts.map(async (expert) => {
@@ -111,6 +135,7 @@ router.get('/', authenticate, async (req, res) => {
     
     res.json({ success: true, data: expertsWithUrls, count: expertsWithUrls.length });
   } catch (error) {
+    console.error('Get experts error:', error);
     res.status(500).json({ success: false, message: error.message });
   }
 });
@@ -170,7 +195,7 @@ router.get('/:id', authenticate, async (req, res) => {
 // CREATE new expert
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { name, experience, expertise, profileSummary, chatCharge, voiceCharge, videoCharge, status } = req.body;
+    const { name, experience, expertise, profileSummary, chatCharge, voiceCharge, videoCharge, status, categoryId } = req.body;
     
     let clientId;
     try {
@@ -205,7 +230,8 @@ router.post('/', authenticate, async (req, res) => {
       voiceCharge: Number(voiceCharge),
       videoCharge: Number(videoCharge),
       status: status || 'offline',
-      clientId: clientId
+      clientId: clientId,
+      categoryId: categoryId || null
     });
     
     const savedExpert = await newExpert.save();
@@ -337,7 +363,7 @@ router.post('/:id/upload-banner', authenticate, upload.single('backgroundBanner'
 // UPDATE expert
 router.put('/:id', authenticate, async (req, res) => {
   try {
-    const { name, experience, expertise, profileSummary, chatCharge, voiceCharge, videoCharge, status, isActive } = req.body;
+    const { name, experience, expertise, profileSummary, chatCharge, voiceCharge, videoCharge, status, isActive, categoryId } = req.body;
     
     let clientId;
     try {
@@ -377,6 +403,7 @@ router.put('/:id', authenticate, async (req, res) => {
     if (videoCharge !== undefined) updateData.videoCharge = Number(videoCharge);
     if (status !== undefined && status !== null && status !== '') updateData.status = status;
     if (isActive !== undefined) updateData.isActive = Boolean(isActive);
+    if (categoryId !== undefined) updateData.categoryId = categoryId || null;
     
     const updatedExpert = await Expert.findOneAndUpdate(
       {

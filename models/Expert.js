@@ -73,6 +73,11 @@ const expertSchema = new mongoose.Schema({
     ref: 'Client',
     required: true
   },
+  categoryId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ExpertCategory',
+    default: null
+  },
   isActive: {
     type: Boolean,
     default: true
