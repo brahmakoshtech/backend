@@ -258,31 +258,46 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
     let astrologyData = null;
     let astrologyError = null;
 
+    console.log('[Client API] User profile data:', {
+      dob: user.profile?.dob,
+      timeOfBirth: user.profile?.timeOfBirth,
+      latitude: user.profile?.latitude,
+      longitude: user.profile?.longitude,
+      placeOfBirth: user.profile?.placeOfBirth
+    });
+
     const hasRequiredFields = user.profile?.dob && 
                              user.profile?.timeOfBirth && 
-                             user.profile?.latitude && 
-                             user.profile?.longitude;
+                             (user.profile?.latitude !== null && user.profile?.latitude !== undefined && user.profile?.latitude !== '') &&
+                             (user.profile?.longitude !== null && user.profile?.longitude !== undefined && user.profile?.longitude !== '');
 
-    console.log('[Client API] Birth details check:', {
-      userId,
-      hasDob: !!user.profile?.dob,
-      hasTime: !!user.profile?.timeOfBirth,
-      hasLat: !!user.profile?.latitude,
-      hasLon: !!user.profile?.longitude,
-      allPresent: hasRequiredFields
-    });
+    console.log('[Client API] Birth details validation:', hasRequiredFields);
 
     if (hasRequiredFields) {
       try {
-        console.log('[Client API] Fetching astrology data...');
+        console.log('[Client API] Generating astrology data...');
         astrologyData = await astrologyService.getCompleteAstrologyData(user.profile);
-        console.log('[Client API] ✓ Astrology data fetched successfully');
+        console.log('[Client API] Astrology data generated successfully');
       } catch (error) {
-        console.error('[Client API] ✗ Astrology API error:', error.message);
+        console.error('[Client API] Astrology generation error:', error);
         astrologyError = error.message;
       }
     } else {
-      astrologyError = 'Incomplete birth details. Required: DOB, time of birth, and location (latitude/longitude)';
+      // For testing - provide sample data if birth details are missing
+      console.log('[Client API] Using sample astrology data for testing');
+      try {
+        const sampleProfile = {
+          dob: '1990-08-15',
+          timeOfBirth: '14:30',
+          latitude: '28.6139',
+          longitude: '77.2090',
+          placeOfBirth: 'New Delhi, India'
+        };
+        astrologyData = await astrologyService.getCompleteAstrologyData(sampleProfile);
+        astrologyError = 'Using sample data - Please update birth details for accurate calculations';
+      } catch (error) {
+        astrologyError = 'Incomplete birth details required for astrology calculations';
+      }
     }
 
     res.json({

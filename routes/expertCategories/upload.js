@@ -32,7 +32,7 @@ export const upload = multer({
 export const uploadCategoryImage = async (req, res) => {
   try {
     const { categoryId } = req.params;
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
 
     if (!clientId) {
       return res.status(401).json({

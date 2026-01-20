@@ -6,7 +6,7 @@ import { getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
 export const createExpertCategory = async (req, res) => {
   try {
     const { name, description } = req.body;
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
 
     if (!clientId) {
       return res.status(401).json({
@@ -53,7 +53,8 @@ export const createExpertCategory = async (req, res) => {
 // Get All Expert Categories
 export const getAllExpertCategories = async (req, res) => {
   try {
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
+    console.log('Debug - getAllExpertCategories clientId:', clientId);
 
     if (!clientId) {
       return res.status(401).json({
@@ -66,6 +67,8 @@ export const getAllExpertCategories = async (req, res) => {
       clientId,
       isDeleted: false
     }).sort({ createdAt: -1 });
+    
+    console.log('Debug - Found categories:', categories.length, 'for clientId:', clientId);
 
     // Generate presigned URLs for images
     const categoriesWithPresignedUrls = await Promise.all(
@@ -109,7 +112,7 @@ export const getAllExpertCategories = async (req, res) => {
 export const getExpertCategoryById = async (req, res) => {
   try {
     const { id } = req.params;
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
 
     if (!clientId) {
       return res.status(401).json({
@@ -149,7 +152,7 @@ export const updateExpertCategory = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description } = req.body;
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
 
     if (!clientId) {
       return res.status(401).json({
@@ -212,7 +215,7 @@ export const updateExpertCategory = async (req, res) => {
 export const deleteExpertCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
 
     if (!clientId) {
       return res.status(401).json({
@@ -255,7 +258,7 @@ export const deleteExpertCategory = async (req, res) => {
 export const toggleExpertCategoryStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const clientId = getClientIdFromToken(req);
+    const clientId = await getClientIdFromToken(req);
 
     if (!clientId) {
       return res.status(401).json({
