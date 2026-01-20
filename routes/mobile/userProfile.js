@@ -51,12 +51,14 @@ async function validateClientId(clientCode) {
   return client;
 }
 
-// Google Sign-In Registration/Login
+// backend/src/routes/mobile/userProfile.js
+// Update the Google Sign-In endpoint
+
+// Google Sign-In Registration/Login - ONLY VERIFIES STEP 1
 router.post('/register/google', async (req, res) => {
   try {
     const { credential, clientId: clientCode } = req.body;
 
-    // Validate required fields
     if (!credential) {
       return res.status(400).json({ 
         success: false, 
@@ -94,7 +96,7 @@ router.post('/register/google', async (req, res) => {
     const picture = payload.picture;
     const emailVerified = payload.email_verified;
 
-    // Find client by clientId string field (NOT by _id)
+    // Find client
     const clientDoc = await Client.findOne({ clientId: clientCode.toUpperCase() });
     if (!clientDoc) {
       return res.status(404).json({ 
@@ -110,61 +112,68 @@ router.post('/register/google', async (req, res) => {
       });
     }
 
-    // Check if user already exists with this email and client's ObjectId
+    // Check if user exists
     let user = await User.findOne({ 
       email, 
-      clientId: clientDoc._id  // Use ObjectId here, not the string
+      clientId: clientDoc._id
     });
     
     if (user) {
-      // Existing user - perform login
-      
-      // Update profile data if changed
-      let updated = false;
-      
-      if (picture && user.profileImage !== picture) {
-        user.profileImage = picture;
-        updated = true;
-      }
-      
-      if (user.authMethod !== 'google') {
-        user.authMethod = 'google';
-        updated = true;
-      }
-      
-      if (name) {
-        if (!user.profile) user.profile = {};
-        if (!user.profile.name) {
-          user.profile.name = name;
-          updated = true;
-        }
-      }
-      
-      if (updated) {
-        await user.save();
-      }
-
-      const token = generateToken(user._id, 'user', user.clientId);
-      
-      return res.json({
-        success: true,
-        message: 'Login successful',
-        data: {
-          token,
-          user: {
-            id: user._id,
+      // Existing user
+      if (user.registrationStep === 3) {
+        // Fully registered - perform login
+        const token = generateToken(user._id, 'user', user.clientId);
+        
+        return res.json({
+          success: true,
+          message: 'Login successful',
+          registrationComplete: true,
+          data: {
+            token,
             email: user.email,
-            name: user.profile?.name || name,
-            mobile: user.mobile,
-            profileImage: user.profileImage,
-            profile: user.profile
-          },
-          clientId: clientDoc.clientId,  // Return the string clientId
-          clientName: clientDoc.businessName || clientDoc.name
+            user: {
+              id: user._id,
+              email: user.email,
+              name: user.profile?.name || name,
+              mobile: user.mobile,
+              profileImage: user.profileImage,
+              profile: user.profile
+            },
+            clientId: clientDoc.clientId,
+            clientName: clientDoc.businessName || clientDoc.name
+          }
+        });
+      } else {
+        // Registration incomplete - update Step 1 only
+        user.emailVerified = true;
+        user.authMethod = 'google';
+        if (name && !user.profile?.name) {
+          user.profile = user.profile || {};
+          user.profile.name = name;
         }
-      });
+        if (picture) {
+          user.profileImage = picture;
+        }
+        await user.save();
+
+        return res.json({
+          success: true,
+          message: 'Email verified with Google. Please continue with mobile verification (Step 2).',
+          registrationComplete: false,
+          data: {
+            email: user.email,
+            emailVerified: true,
+            registrationStep: user.registrationStep,
+            mobileVerified: user.mobileVerified || false,
+            profileCompleted: false,
+            nextStep: 'mobile_verification',
+            clientId: clientDoc.clientId,
+            clientName: clientDoc.businessName || clientDoc.name
+          }
+        });
+      }
     } else {
-      // New user - create account
+      // New user - create with ONLY Step 1 verified
       user = new User({
         email,
         password: 'google_auth_' + Date.now(),
@@ -173,43 +182,39 @@ router.post('/register/google', async (req, res) => {
           name: name
         },
         profileImage: picture,
-        clientId: clientDoc._id,  // Store ObjectId here
-        emailVerified: emailVerified || true,
-        mobileVerified: false,
-        registrationStep: 3,  // Google users are fully registered
-        loginApproved: true,
-        isActive: true
+        clientId: clientDoc._id,
+        emailVerified: true, // Step 1 verified via Google
+        mobileVerified: false, // Step 2 NOT verified
+        registrationStep: 1, // Only Step 1 complete
+        loginApproved: false, // Not approved until all steps complete
+        isActive: false // Not active until all steps complete
       });
 
       await user.save();
 
-      const token = generateToken(user._id, 'user', user.clientId);
-
       return res.status(201).json({
         success: true,
-        message: 'Account created successfully with Google',
-        data: {
-          token,
-          user: {
-            id: user._id,
-            email: user.email,
-            name: user.profile?.name,
-            mobile: user.mobile,
-            profileImage: user.profileImage,
-            profile: user.profile
-          },
-          clientId: clientDoc.clientId,  // Return the string clientId
-          clientName: clientDoc.businessName || clientDoc.name
-        }
-      });
-    }
-  } catch (error) {
-    console.error('Google Sign-In Error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: error.message || 'Google authentication failed' 
-    });
-  }
+        message: 'Email verified with Google. Please continue withmobile verification (Step 2).',
+registrationComplete: false,
+data: {
+email: user.email,
+emailVerified: true,
+registrationStep: 1,
+mobileVerified: false,
+profileCompleted: false,
+nextStep: 'mobile_verification',
+clientId: clientDoc.clientId,
+clientName: clientDoc.businessName || clientDoc.name
+}
+});
+}
+} catch (error) {
+console.error('Google Sign-In Error:', error);
+res.status(500).json({
+success: false,
+message: error.message || 'Google authentication failed'
+});
+}
 });
 // ============================================
 // FIREBASE AUTHENTICATION
@@ -1494,6 +1499,68 @@ router.post('/register/resend-mobile-otp', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: error.message || 'Failed to resend mobile OTP' 
+    });
+  }
+});
+/**
+ * Search Location using Google Places API
+ * GET /api/mobile/user/search-location?q=mumbai
+ */
+router.get('/search-location', async (req, res) => {
+  console.log('Search location endpoint hit');
+  try {
+    const { q } = req.query;
+
+    if (!q || q.length < 3) {
+      return res.status(400).json({
+        success: false,
+        message: 'Search query must be at least 3 characters'
+      });
+    }
+
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      throw new Error('Google Places API key not configured');
+    }
+
+    // Use Google Geocoding API (no CORS issues from backend)
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${apiKey}`
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch locations from Google');
+    }
+
+    const data = await response.json();
+
+    if (data.status !== 'OK') {
+      return res.json({
+        success: true,
+        data: {
+          locations: []
+        }
+      });
+    }
+
+    const locations = data.results.slice(0, 5).map(place => ({
+      displayName: place.formatted_address,
+      lat: place.geometry.location.lat,
+      lon: place.geometry.location.lng
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        locations
+      }
+    });
+  } catch (error) {
+    console.error('Location search error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to search locations',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
