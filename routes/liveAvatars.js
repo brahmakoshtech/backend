@@ -257,6 +257,16 @@ router.get('/', authenticate, async (req, res) => {
       avatars.map(async (avatar) => {
         const avatarObj = withClientIdString(avatar);
         
+        // Ensure category field exists (backward compatibility)
+        if (!avatarObj.category) {
+          avatarObj.category = 'Deity';
+          // Update in database
+          await LiveAvatar.updateOne(
+            { _id: avatarObj._id },
+            { $set: { category: 'Deity' } }
+          );
+        }
+        
         // Generate presigned URL for video if exists
         if (avatarObj.videoKey || avatarObj.videoUrl) {
           try {

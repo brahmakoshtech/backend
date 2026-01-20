@@ -74,6 +74,14 @@ const liveAvatarSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Static method to get default values
+liveAvatarSchema.statics.getDefaults = function() {
+  return {
+    gender: 'Male',
+    category: 'Deity'
+  };
+};
+
 export default mongoose.model('LiveAvatar', liveAvatarSchema);
 
 
