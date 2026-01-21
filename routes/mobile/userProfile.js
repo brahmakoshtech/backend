@@ -1565,4 +1565,263 @@ router.get('/search-location', async (req, res) => {
   }
 });
 
+// Add this endpoint to your backend/src/routes/mobile/userProfile.js
+
+/**
+ * Reverse Geocode - Get location name from coordinates
+ * GET /api/mobile/user/reverse-geocode?lat=19.0760&lon=72.8777
+ */
+router.get('/reverse-geocode', async (req, res) => {
+  console.log('Reverse geocode endpoint hit');
+  try {
+    const { lat, lon } = req.query;
+
+    // Validate inputs
+    if (!lat || !lon) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required'
+      });
+    }
+
+    const latitude = parseFloat(lat);
+    const longitude = parseFloat(lon);
+
+    // Validate coordinate ranges
+    if (isNaN(latitude) || isNaN(longitude)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid latitude or longitude values'
+      });
+    }
+
+    if (latitude < -90 || latitude > 90) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude must be between -90 and 90'
+      });
+    }
+
+    if (longitude < -180 || longitude > 180) {
+      return res.status(400).json({
+        success: false,
+        message: 'Longitude must be between -180 and 180'
+      });
+    }
+
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      throw new Error('Google Places API key not configured');
+    }
+
+    // Use Google Reverse Geocoding API
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${apiKey}`
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch location from Google');
+    }
+
+    const data = await response.json();
+
+    if (data.status !== 'OK') {
+      return res.json({
+        success: true,
+        data: {
+          location: null,
+          message: 'No location found for these coordinates'
+        }
+      });
+    }
+
+    // Get the most accurate result (usually the first one)
+    const result = data.results[0];
+    
+    // Extract different components
+    const addressComponents = result.address_components;
+    let city = '';
+    let state = '';
+    let country = '';
+    let postalCode = '';
+
+    addressComponents.forEach(component => {
+      if (component.types.includes('locality')) {
+        city = component.long_name;
+      }
+      if (component.types.includes('administrative_area_level_1')) {
+        state = component.long_name;
+      }
+      if (component.types.includes('country')) {
+        country = component.long_name;
+      }
+      if (component.types.includes('postal_code')) {
+        postalCode = component.long_name;
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        location: {
+          formattedAddress: result.formatted_address,
+          city: city,
+          state: state,
+          country: country,
+          postalCode: postalCode,
+          latitude: latitude,
+          longitude: longitude,
+          placeId: result.place_id
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Reverse geocode error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reverse geocode location',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Get Current Location (Mobile-friendly endpoint)
+ * POST /api/mobile/user/get-location
+ * Body: { latitude, longitude }
+ * 
+ * This endpoint is specifically designed for mobile apps
+ * that send coordinates from device GPS
+ */
+router.post('/get-location', async (req, res) => {
+  console.log('Get location endpoint hit');
+  try {
+    const { latitude, longitude } = req.body;
+
+    // Validate inputs
+    if (latitude === undefined || longitude === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude and longitude are required in request body'
+      });
+    }
+
+    const lat = parseFloat(latitude);
+    const lon = parseFloat(longitude);
+
+    // Validate coordinate ranges
+    if (isNaN(lat) || isNaN(lon)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid latitude or longitude values'
+      });
+    }
+
+    if (lat < -90 || lat > 90) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude must be between -90 and 90'
+      });
+    }
+
+    if (lon < -180 || lon > 180) {
+      return res.status(400).json({
+        success: false,
+        message: 'Longitude must be between -180 and 180'
+      });
+    }
+
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      throw new Error('Google Places API key not configured');
+    }
+
+    // Use Google Reverse Geocoding API
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lon}&key=${apiKey}`
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch location from Google');
+    }
+
+    const data = await response.json();
+
+    if (data.status !== 'OK') {
+      return res.json({
+        success: true,
+        data: {
+          location: null,
+          message: 'No location found for these coordinates'
+        }
+      });
+    }
+
+    // Get the most accurate result
+    const result = data.results[0];
+    
+    // Extract address components
+    const addressComponents = result.address_components;
+    let city = '';
+    let state = '';
+    let country = '';
+    let postalCode = '';
+    let locality = '';
+    let subLocality = '';
+
+    addressComponents.forEach(component => {
+      if (component.types.includes('locality')) {
+        city = component.long_name;
+      }
+      if (component.types.includes('sublocality') || component.types.includes('sublocality_level_1')) {
+        subLocality = component.long_name;
+      }
+      if (component.types.includes('administrative_area_level_2')) {
+        locality = component.long_name;
+      }
+      if (component.types.includes('administrative_area_level_1')) {
+        state = component.long_name;
+      }
+      if (component.types.includes('country')) {
+        country = component.long_name;
+      }
+      if (component.types.includes('postal_code')) {
+        postalCode = component.long_name;
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Location retrieved successfully',
+      data: {
+        location: {
+          formattedAddress: result.formatted_address,
+          displayName: result.formatted_address,
+          city: city,
+          subLocality: subLocality,
+          locality: locality,
+          state: state,
+          country: country,
+          postalCode: postalCode,
+          latitude: lat,
+          longitude: lon,
+          placeId: result.place_id,
+          // Additional useful info
+          locationType: result.geometry.location_type,
+          viewport: result.geometry.viewport
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get location error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get location details',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+
 export default router;
