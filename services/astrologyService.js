@@ -80,11 +80,25 @@ class AstrologyService {
         { id: 4, name: 'Mercury', degree: 67.89, normDegree: 67.89, sign: 'Gemini', nakshatra: 'Ardra', house: 11, isRetro: false, isCombust: true, planet_awastha: 'Own', awastha: 'Own' },
         { id: 5, name: 'Jupiter', degree: 156.78, normDegree: 156.78, sign: 'Virgo', nakshatra: 'Hasta', house: 2, isRetro: false, isCombust: false, planet_awastha: 'Debilitated', awastha: 'Debilitated' },
         { id: 6, name: 'Venus', degree: 289.34, normDegree: 289.34, sign: 'Capricorn', nakshatra: 'Shravana', house: 6, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 7, name: 'Saturn', degree: 198.12, normDegree: 198.12, sign: 'Libra', nakshatra: 'Swati', house: 3, isRetro: true, isCombust: false, planet_awastha: 'Exalted', awastha: 'Exalted' }
+        { id: 7, name: 'Saturn', degree: 198.12, normDegree: 198.12, sign: 'Libra', nakshatra: 'Swati', house: 3, isRetro: true, isCombust: false, planet_awastha: 'Exalted', awastha: 'Exalted' },
+        { id: 8, name: 'Uranus', degree: 145.67, normDegree: 145.67, sign: 'Leo', nakshatra: 'Purva Phalguni', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 9, name: 'Neptune', degree: 312.45, normDegree: 312.45, sign: 'Aquarius', nakshatra: 'Dhanishta', house: 7, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 10, name: 'Pluto', degree: 89.23, normDegree: 89.23, sign: 'Cancer', nakshatra: 'Punarvasu', house: 12, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' }
       ],
       planetsExtended: [
-        { id: 8, name: 'Rahu', degree: 78.90, normDegree: 78.90, sign: 'Cancer', nakshatra: 'Pushya', house: 12, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 9, name: 'Ketu', degree: 258.90, normDegree: 258.90, sign: 'Capricorn', nakshatra: 'Uttara Ashadha', house: 6, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' }
+        { id: 11, name: 'Rahu', degree: 78.90, normDegree: 78.90, sign: 'Cancer', nakshatra: 'Pushya', house: 12, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 12, name: 'Ketu', degree: 258.90, normDegree: 258.90, sign: 'Capricorn', nakshatra: 'Uttara Ashadha', house: 6, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 13, name: 'Chiron', degree: 167.89, normDegree: 167.89, sign: 'Virgo', nakshatra: 'Hasta', house: 2, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 14, name: 'Ceres', degree: 234.12, normDegree: 234.12, sign: 'Scorpio', nakshatra: 'Jyeshtha', house: 4, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 15, name: 'Pallas', degree: 56.78, normDegree: 56.78, sign: 'Gemini', nakshatra: 'Mrigashira', house: 11, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 16, name: 'Juno', degree: 298.45, normDegree: 298.45, sign: 'Capricorn', nakshatra: 'Uttara Ashadha', house: 6, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 17, name: 'Vesta', degree: 123.67, normDegree: 123.67, sign: 'Leo', nakshatra: 'Magha', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 18, name: 'Lilith', degree: 189.34, normDegree: 189.34, sign: 'Libra', nakshatra: 'Swati', house: 3, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 19, name: 'Part of Fortune', degree: 267.12, normDegree: 267.12, sign: 'Sagittarius', nakshatra: 'Purva Ashadha', house: 5, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 20, name: 'Vertex', degree: 345.78, normDegree: 345.78, sign: 'Pisces', nakshatra: 'Uttara Bhadrapada', house: 8, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 21, name: 'Midheaven', degree: 98.45, normDegree: 98.45, sign: 'Cancer', nakshatra: 'Ashlesha', house: 10, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 22, name: 'Ascendant', degree: 156.23, normDegree: 156.23, sign: 'Virgo', nakshatra: 'Hasta', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
+        { id: 23, name: 'Descendant', degree: 336.23, normDegree: 336.23, sign: 'Pisces', nakshatra: 'Uttara Bhadrapada', house: 7, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' }
       ],
       birthChart: {
         houses: {
