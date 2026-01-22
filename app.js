@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+import partnerRoutes from './routes/partners.js';
 import superAdminAuthRoutes from './routes/auth/superAdminAuth.js';
 import adminAuthRoutes from './routes/auth/adminAuth.js';
 import clientAuthRoutes from './routes/auth/clientAuth.js';
@@ -73,16 +74,16 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // MongoDB Connection
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/brahmakosh';
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose.connect(MONGODB_URI)
 .then(async () => {
   console.log('MongoDB connected successfully');
   // Initialize super admin after MongoDB connection
   await initializeSuperAdmin();
 })
 .catch((err) => console.error('MongoDB connection error:', err));
+
+// Partner Routes
+app.use('/api/partners', partnerRoutes);
 
 // Auth Routes - Separate endpoints for each role
 app.use('/api/auth/super-admin', superAdminAuthRoutes);

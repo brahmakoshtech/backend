@@ -64,14 +64,14 @@ class AstrologyService {
       astroDetails: {
         ascendant: 'Leo',
         sign: 'Taurus',
-        SignLord: 'Venus',
-        Naksahtra: 'Rohini',
-        NaksahtraLord: 'Moon',
-        Charan: '2',
-        Varna: 'Vaishya',
-        Gan: 'Manushya',
-        Yoni: 'Sarpa',
-        Nadi: 'Madhya'
+        signLord: 'Venus',
+        nakshatra: 'Rohini',
+        nakshatraLord: 'Moon',
+        charan: '2',
+        varna: 'Vaishya',
+        gan: 'Manushya',
+        yoni: 'Sarpa',
+        nadi: 'Madhya'
       },
       planets: [
         { id: 1, name: 'Sun', degree: 45.23, normDegree: 45.23, sign: 'Taurus', nakshatra: 'Rohini', house: 10, isRetro: false, isCombust: false, planet_awastha: 'Exalted', awastha: 'Exalted' },
@@ -85,7 +85,39 @@ class AstrologyService {
       planetsExtended: [
         { id: 8, name: 'Rahu', degree: 78.90, normDegree: 78.90, sign: 'Cancer', nakshatra: 'Pushya', house: 12, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
         { id: 9, name: 'Ketu', degree: 258.90, normDegree: 258.90, sign: 'Capricorn', nakshatra: 'Uttara Ashadha', house: 6, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' }
-      ]
+      ],
+      birthChart: {
+        houses: {
+          1: ['Moon'],
+          2: ['Jupiter'],
+          3: ['Saturn'],
+          4: ['Mars'],
+          5: [],
+          6: ['Venus', 'Ketu'],
+          7: [],
+          8: [],
+          9: [],
+          10: ['Sun'],
+          11: ['Mercury'],
+          12: ['Rahu']
+        }
+      },
+      birthExtendedChart: {
+        houses: {
+          1: ['Moon'],
+          2: ['Jupiter'],
+          3: ['Saturn'],
+          4: ['Mars'],
+          5: [],
+          6: ['Venus', 'Ketu'],
+          7: [],
+          8: [],
+          9: [],
+          10: ['Sun'],
+          11: ['Mercury'],
+          12: ['Rahu']
+        }
+      }
     };
   }
 }

@@ -177,10 +177,40 @@ router.post('/direct', authenticate, async (req, res) => {
     const meditation = new Meditation(meditationData);
     await meditation.save();
     
+    // Generate presigned URLs for response
+    const { getobject } = await import('../utils/s3.js');
+    const meditationObj = withClientIdString(await meditation.populate('clientId', 'clientId'));
+    
+    // Generate presigned URL for video if exists
+    if (meditationObj.videoKey || meditationObj.videoUrl) {
+      try {
+        const videoKey = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
+        if (videoKey) {
+          const presignedVideoUrl = await getobject(videoKey);
+          meditationObj.videoUrl = presignedVideoUrl;
+        }
+      } catch (error) {
+        console.error('Error generating video presigned URL:', error);
+      }
+    }
+    
+    // Generate presigned URL for image if exists
+    if (meditationObj.imageKey || meditationObj.imageUrl) {
+      try {
+        const imageKey = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
+        if (imageKey) {
+          const presignedImageUrl = await getobject(imageKey);
+          meditationObj.imageUrl = presignedImageUrl;
+        }
+      } catch (error) {
+        console.error('Error generating image presigned URL:', error);
+      }
+    }
+    
     res.status(201).json({
       success: true,
       message: 'Meditation created successfully',
-      data: withClientIdString(await meditation.populate('clientId', 'clientId'))
+      data: meditationObj
     });
   } catch (error) {
     console.error('Error creating meditation:', error);
