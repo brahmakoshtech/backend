@@ -1,140 +1,366 @@
 // src/services/astrologyService.js
 
-class AstrologyService {
-  prepareBirthData(profile) {
-    console.log('[Astrology Service] Input profile:', profile);
-    
-    if (!profile.dob || !profile.timeOfBirth || 
-        profile.latitude === null || profile.latitude === undefined || profile.latitude === '' ||
-        profile.longitude === null || profile.longitude === undefined || profile.longitude === '') {
-      
-      console.log('[Astrology Service] Missing fields:', {
-        dob: !profile.dob,
-        timeOfBirth: !profile.timeOfBirth,
-        latitude: profile.latitude === null || profile.latitude === undefined || profile.latitude === '',
-        longitude: profile.longitude === null || profile.longitude === undefined || profile.longitude === ''
-      });
-      
-      throw new Error('Incomplete birth details required for astrology calculations');
-    }
+import axios from 'axios';
+import Astrology from '../models/Astrology.js';
 
+class AstrologyService {
+  constructor() {
+    // Astrology API configuration
+    this.baseUrl = process.env.ASTROLOGY_API_BASE_URL || 'https://json.astrologyapi.com/v1';
+    this.apiUserId = process.env.ASTROLOGY_API_USER_ID;
+    this.apiKey = process.env.ASTROLOGY_API_KEY;
+    
+    // Create axios instance with basic auth
+    this.apiClient = axios.create({
+      baseURL: this.baseUrl,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded'
+      },
+      auth: {
+        username: this.apiUserId,
+        password: this.apiKey
+      },
+      timeout: 30000
+    });
+  }
+
+  /**
+   * Main method: Get complete astrology data
+   * Checks DB first, then fetches from API if needed
+   */
+  async getCompleteAstrologyData(userId, profile, forceRefresh = false) {
+    try {
+      // Step 1: Check if data exists in DB (unless force refresh)
+      if (!forceRefresh) {
+        const existingData = await Astrology.findOne({ userId });
+        if (existingData) {
+          console.log('[Astrology Service] Returning cached data from DB for user:', userId);
+          return this.formatAstrologyResponse(existingData);
+        }
+        console.log('[Astrology Service] No cached data found, fetching from API');
+      } else {
+        console.log('[Astrology Service] Force refresh requested, fetching fresh data from API');
+      }
+
+      // Step 2: Validate profile data
+      this.validateBirthDetails(profile);
+
+      // Step 3: Prepare birth data for API
+      const birthData = this.prepareBirthData(profile);
+
+      // Step 4: Fetch data from all 4 API endpoints in parallel
+      console.log('[Astrology Service] Fetching from 4 API endpoints...');
+      const [birthDetailsData, astroDetailsData, planetsData, planetsExtendedData] = await Promise.all([
+        this.fetchBirthDetails(birthData),
+        this.fetchAstroDetails(birthData),
+        this.fetchPlanets(birthData),
+        this.fetchPlanetsExtended(birthData)
+      ]);
+
+      console.log('[Astrology Service] All API calls completed successfully');
+
+      // Step 5: Process and structure the data
+      const astrologyData = this.processAstrologyData(
+        userId,
+        profile,
+        birthDetailsData,
+        astroDetailsData,
+        planetsData,
+        planetsExtendedData
+      );
+
+      // Step 6: Save to database
+      const savedData = await Astrology.findOneAndUpdate(
+        { userId },
+        astrologyData,
+        { upsert: true, new: true }
+      );
+
+      console.log('[Astrology Service] Data saved to DB for user:', userId);
+
+      // Step 7: Return formatted response
+      return this.formatAstrologyResponse(savedData);
+
+    } catch (error) {
+      console.error('[Astrology Service] Error:', error);
+      throw new Error(`Failed to get astrology data: ${error.message}`);
+    }
+  }
+
+  /**
+   * Validate birth details
+   */
+  validateBirthDetails(profile) {
+    if (!profile?.dob || !profile?.timeOfBirth || 
+        profile?.latitude === null || profile?.latitude === undefined ||
+        profile?.longitude === null || profile?.longitude === undefined) {
+      throw new Error('Incomplete birth details: dob, timeOfBirth, latitude, and longitude are required');
+    }
+  }
+
+  /**
+   * Prepare birth data for API request (x-www-form-urlencoded format)
+   */
+  prepareBirthData(profile) {
     const birthDate = new Date(profile.dob);
     const [hours, minutes] = profile.timeOfBirth.split(':').map(Number);
-    const lat = parseFloat(profile.latitude);
-    const lon = parseFloat(profile.longitude);
-
-    console.log('[Astrology Service] Parsed birth data:', {
-      day: birthDate.getDate(),
-      month: birthDate.getMonth() + 1,
-      year: birthDate.getFullYear(),
-      hour: hours,
-      min: minutes,
-      lat: lat,
-      lon: lon
-    });
-
+    
     return {
       day: birthDate.getDate(),
       month: birthDate.getMonth() + 1,
       year: birthDate.getFullYear(),
       hour: hours,
       min: minutes,
-      lat: lat,
-      lon: lon,
-      tzone: 5.5
+      lat: parseFloat(profile.latitude),
+      lon: parseFloat(profile.longitude),
+      tzone: 5.5 // Indian Standard Time, adjust as needed
     };
   }
 
-  async getCompleteAstrologyData(profile) {
-    const birthData = this.prepareBirthData(profile);
+  /**
+   * Convert object to URL-encoded format
+   */
+  toUrlEncoded(data) {
+    return Object.keys(data)
+      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
+      .join('&');
+  }
+
+  /**
+   * Fetch birth details from API
+   * Endpoint: /v1/birth_details
+   */
+  async fetchBirthDetails(birthData) {
+    try {
+      console.log('[Astrology Service] Fetching birth_details...');
+      const response = await this.apiClient.post('/birth_details', this.toUrlEncoded(birthData));
+      return response.data;
+    } catch (error) {
+      console.error('[Astrology Service] Birth details error:', error.message);
+      throw new Error(`Failed to fetch birth details: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fetch astro details from API
+   * Endpoint: /v1/astro_details
+   */
+  async fetchAstroDetails(birthData) {
+    try {
+      console.log('[Astrology Service] Fetching astro_details...');
+      const response = await this.apiClient.post('/astro_details', this.toUrlEncoded(birthData));
+      return response.data;
+    } catch (error) {
+      console.error('[Astrology Service] Astro details error:', error.message);
+      throw new Error(`Failed to fetch astro details: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fetch planets from API
+   * Endpoint: /v1/planets
+   */
+  async fetchPlanets(birthData) {
+    try {
+      console.log('[Astrology Service] Fetching planets...');
+      const response = await this.apiClient.post('/planets', this.toUrlEncoded(birthData));
+      return response.data;
+    } catch (error) {
+      console.error('[Astrology Service] Planets error:', error.message);
+      throw new Error(`Failed to fetch planets: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fetch extended planets from API
+   * Endpoint: /v1/planets/extended
+   */
+  async fetchPlanetsExtended(birthData) {
+    try {
+      console.log('[Astrology Service] Fetching planets/extended...');
+      const response = await this.apiClient.post('/planets/extended', this.toUrlEncoded(birthData));
+      return response.data;
+    } catch (error) {
+      console.error('[Astrology Service] Extended planets error:', error.message);
+      throw new Error(`Failed to fetch extended planets: ${error.message}`);
+    }
+  }
+
+  /**
+   * Process and structure astrology data from all 4 API responses
+   */
+  processAstrologyData(userId, profile, birthDetailsData, astroDetailsData, planetsData, planetsExtendedData) {
+    const birthDate = new Date(profile.dob);
+    const [hour, minute] = profile.timeOfBirth.split(':').map(Number);
 
     return {
+      userId,
       birthDetails: {
-        day: birthData.day,
-        month: birthData.month,
-        year: birthData.year,
-        hour: birthData.hour,
-        minute: birthData.min,
-        latitude: birthData.lat,
-        longitude: birthData.lon,
-        ayanamsha: 24.1234,
-        sunrise: '06:30',
-        sunset: '18:45'
+        day: birthDetailsData.day || birthDate.getDate(),
+        month: birthDetailsData.month || (birthDate.getMonth() + 1),
+        year: birthDetailsData.year || birthDate.getFullYear(),
+        hour: birthDetailsData.hour || hour,
+        minute: birthDetailsData.minute || minute,
+        latitude: parseFloat(profile.latitude),
+        longitude: parseFloat(profile.longitude),
+        ayanamsha: birthDetailsData.ayanamsha || 0,
+        sunrise: birthDetailsData.sunrise || '06:00',
+        sunset: birthDetailsData.sunset || '18:00'
       },
       astroDetails: {
-        ascendant: 'Leo',
-        sign: 'Taurus',
-        signLord: 'Venus',
-        nakshatra: 'Rohini',
-        nakshatraLord: 'Moon',
-        charan: '2',
-        varna: 'Vaishya',
-        gan: 'Manushya',
-        yoni: 'Sarpa',
-        nadi: 'Madhya'
+        ascendant: astroDetailsData.ascendant || '',
+        sign: astroDetailsData.sign || '',
+        signLord: astroDetailsData.sign_lord || '',
+        nakshatra: astroDetailsData.Naksahtra || astroDetailsData.nakshatra || '',
+        nakshatraLord: astroDetailsData.Naksahtra_lord || astroDetailsData.nakshatra_lord || '',
+        charan: (astroDetailsData.charan || '').toString(),
+        varna: astroDetailsData.varna || '',
+        gan: astroDetailsData.Gan || astroDetailsData.gan || '',
+        yoni: astroDetailsData.Yoni || astroDetailsData.yoni || '',
+        nadi: astroDetailsData.Nadi || astroDetailsData.nadi || ''
       },
-      planets: [
-        { id: 1, name: 'Sun', degree: 45.23, normDegree: 45.23, sign: 'Taurus', nakshatra: 'Rohini', house: 10, isRetro: false, isCombust: false, planet_awastha: 'Exalted', awastha: 'Exalted' },
-        { id: 2, name: 'Moon', degree: 123.45, normDegree: 123.45, sign: 'Leo', nakshatra: 'Magha', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Own', awastha: 'Own' },
-        { id: 3, name: 'Mars', degree: 234.56, normDegree: 234.56, sign: 'Scorpio', nakshatra: 'Anuradha', house: 4, isRetro: true, isCombust: false, planet_awastha: 'Own', awastha: 'Own' },
-        { id: 4, name: 'Mercury', degree: 67.89, normDegree: 67.89, sign: 'Gemini', nakshatra: 'Ardra', house: 11, isRetro: false, isCombust: true, planet_awastha: 'Own', awastha: 'Own' },
-        { id: 5, name: 'Jupiter', degree: 156.78, normDegree: 156.78, sign: 'Virgo', nakshatra: 'Hasta', house: 2, isRetro: false, isCombust: false, planet_awastha: 'Debilitated', awastha: 'Debilitated' },
-        { id: 6, name: 'Venus', degree: 289.34, normDegree: 289.34, sign: 'Capricorn', nakshatra: 'Shravana', house: 6, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 7, name: 'Saturn', degree: 198.12, normDegree: 198.12, sign: 'Libra', nakshatra: 'Swati', house: 3, isRetro: true, isCombust: false, planet_awastha: 'Exalted', awastha: 'Exalted' },
-        { id: 8, name: 'Uranus', degree: 145.67, normDegree: 145.67, sign: 'Leo', nakshatra: 'Purva Phalguni', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 9, name: 'Neptune', degree: 312.45, normDegree: 312.45, sign: 'Aquarius', nakshatra: 'Dhanishta', house: 7, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 10, name: 'Pluto', degree: 89.23, normDegree: 89.23, sign: 'Cancer', nakshatra: 'Punarvasu', house: 12, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' }
-      ],
-      planetsExtended: [
-        { id: 11, name: 'Rahu', degree: 78.90, normDegree: 78.90, sign: 'Cancer', nakshatra: 'Pushya', house: 12, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 12, name: 'Ketu', degree: 258.90, normDegree: 258.90, sign: 'Capricorn', nakshatra: 'Uttara Ashadha', house: 6, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 13, name: 'Chiron', degree: 167.89, normDegree: 167.89, sign: 'Virgo', nakshatra: 'Hasta', house: 2, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 14, name: 'Ceres', degree: 234.12, normDegree: 234.12, sign: 'Scorpio', nakshatra: 'Jyeshtha', house: 4, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 15, name: 'Pallas', degree: 56.78, normDegree: 56.78, sign: 'Gemini', nakshatra: 'Mrigashira', house: 11, isRetro: true, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 16, name: 'Juno', degree: 298.45, normDegree: 298.45, sign: 'Capricorn', nakshatra: 'Uttara Ashadha', house: 6, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 17, name: 'Vesta', degree: 123.67, normDegree: 123.67, sign: 'Leo', nakshatra: 'Magha', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 18, name: 'Lilith', degree: 189.34, normDegree: 189.34, sign: 'Libra', nakshatra: 'Swati', house: 3, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 19, name: 'Part of Fortune', degree: 267.12, normDegree: 267.12, sign: 'Sagittarius', nakshatra: 'Purva Ashadha', house: 5, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 20, name: 'Vertex', degree: 345.78, normDegree: 345.78, sign: 'Pisces', nakshatra: 'Uttara Bhadrapada', house: 8, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 21, name: 'Midheaven', degree: 98.45, normDegree: 98.45, sign: 'Cancer', nakshatra: 'Ashlesha', house: 10, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 22, name: 'Ascendant', degree: 156.23, normDegree: 156.23, sign: 'Virgo', nakshatra: 'Hasta', house: 1, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' },
-        { id: 23, name: 'Descendant', degree: 336.23, normDegree: 336.23, sign: 'Pisces', nakshatra: 'Uttara Bhadrapada', house: 7, isRetro: false, isCombust: false, planet_awastha: 'Neutral', awastha: 'Neutral' }
-      ],
-      birthChart: {
-        houses: {
-          1: ['Moon'],
-          2: ['Jupiter'],
-          3: ['Saturn'],
-          4: ['Mars'],
-          5: [],
-          6: ['Venus', 'Ketu'],
-          7: [],
-          8: [],
-          9: [],
-          10: ['Sun'],
-          11: ['Mercury'],
-          12: ['Rahu']
-        }
-      },
-      birthExtendedChart: {
-        houses: {
-          1: ['Moon'],
-          2: ['Jupiter'],
-          3: ['Saturn'],
-          4: ['Mars'],
-          5: [],
-          6: ['Venus', 'Ketu'],
-          7: [],
-          8: [],
-          9: [],
-          10: ['Sun'],
-          11: ['Mercury'],
-          12: ['Rahu']
+      planets: this.normalizePlanets(planetsData),
+      planetsExtended: this.normalizePlanetsExtended(planetsExtendedData),
+      birthChart: this.generateBirthChart(planetsData),
+      birthExtendedChart: this.generateBirthChart(planetsExtendedData),
+      lastCalculated: new Date(),
+      calculationSource: 'api'
+    };
+  }
+
+  /**
+   * Normalize planets data from API to match schema
+   */
+  normalizePlanets(planetsData) {
+    // Handle both array and object responses
+    const planetsArray = Array.isArray(planetsData) ? planetsData : Object.values(planetsData);
+    
+    return planetsArray
+      .filter(planet => planet && planet.name && !['Ascendant', 'ASCENDANT'].includes(planet.name))
+      .map((planet, index) => ({
+        id: planet.id || index,
+        name: planet.name,
+        fullDegree: planet.fullDegree || planet.full_degree || 0,
+        normDegree: planet.normDegree || planet.norm_degree || 0,
+        speed: planet.speed || 0,
+        isRetro: (planet.isRetro || planet.is_retro || 'false').toString(),
+        sign: planet.sign || '',
+        signLord: planet.signLord || planet.sign_lord || '',
+        nakshatra: planet.nakshatra || '',
+        nakshatraLord: planet.nakshatraLord || planet.nakshatra_lord || '',
+        nakshatra_pad: planet.nakshatra_pad || 0,
+        house: planet.house || 0,
+        is_planet_set: planet.is_planet_set || false,
+        planet_awastha: planet.planet_awastha || 'Neutral'
+      }));
+  }
+
+  /**
+   * Normalize extended planets data from API
+   */
+  normalizePlanetsExtended(planetsData) {
+    // Handle both array and object responses
+    const planetsArray = Array.isArray(planetsData) ? planetsData : Object.values(planetsData);
+    
+    return planetsArray
+      .filter(planet => planet && planet.name)
+      .map((planet, index) => ({
+        id: planet.id || index,
+        name: planet.name,
+        fullDegree: planet.fullDegree || planet.full_degree || 0,
+        normDegree: planet.normDegree || planet.norm_degree || 0,
+        speed: planet.speed || 0,
+        isRetro: (planet.isRetro || planet.is_retro || 'false').toString(),
+        sign: planet.sign || '',
+        signLord: planet.signLord || planet.sign_lord || '',
+        nakshatra: planet.nakshatra || '',
+        nakshatraLord: planet.nakshatraLord || planet.nakshatra_lord || '',
+        nakshatra_pad: planet.nakshatra_pad || 0,
+        house: planet.house || 0,
+        is_planet_set: planet.is_planet_set || false,
+        planet_awastha: planet.planet_awastha || 'Neutral'
+      }));
+  }
+
+  /**
+   * Generate birth chart from planets data
+   */
+  generateBirthChart(planetsData) {
+    const houses = {};
+    
+    // Initialize all 12 houses
+    for (let i = 1; i <= 12; i++) {
+      houses[i] = [];
+    }
+
+    // Handle both array and object responses
+    const planetsArray = Array.isArray(planetsData) ? planetsData : Object.values(planetsData);
+
+    // Place planets in houses
+    planetsArray.forEach(planet => {
+      if (planet && planet.house && planet.house >= 1 && planet.house <= 12) {
+        // Exclude certain points from chart
+        if (!['Ascendant', 'ASCENDANT', 'Descendant', 'Midheaven'].includes(planet.name)) {
+          houses[planet.house].push(planet.name);
         }
       }
+    });
+
+    return { houses };
+  }
+
+  /**
+   * Format astrology response from DB document
+   */
+  formatAstrologyResponse(astrologyDoc) {
+    const obj = astrologyDoc.toObject();
+    
+    // Convert Map to Object for houses
+    const formatHouses = (housesMap) => {
+      if (!housesMap) return {};
+      const formatted = {};
+      for (let i = 1; i <= 12; i++) {
+        formatted[i] = housesMap.get(i.toString()) || [];
+      }
+      return formatted;
     };
+
+    return {
+      birthDetails: obj.birthDetails,
+      astroDetails: obj.astroDetails,
+      planets: obj.planets,
+      planetsExtended: obj.planetsExtended,
+      birthChart: {
+        houses: formatHouses(obj.birthChart?.houses)
+      },
+      birthExtendedChart: {
+        houses: formatHouses(obj.birthExtendedChart?.houses)
+      },
+      lastCalculated: obj.lastCalculated,
+      calculationSource: obj.calculationSource
+    };
+  }
+
+  /**
+   * Delete astrology data for a user
+   */
+  async deleteAstrologyData(userId) {
+    try {
+      await Astrology.findOneAndDelete({ userId });
+      console.log('[Astrology Service] Deleted astrology data for user:', userId);
+    } catch (error) {
+      console.error('[Astrology Service] Delete error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Refresh astrology data (force recalculation from API)
+   */
+  async refreshAstrologyData(userId, profile) {
+    console.log('[Astrology Service] Refreshing data for user:', userId);
+    return this.getCompleteAstrologyData(userId, profile, true);
   }
 }
 
-const astrologyService = new AstrologyService();
-export default astrologyService;
+export default new AstrologyService();
