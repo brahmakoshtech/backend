@@ -208,16 +208,34 @@ class AstrologyService {
         sunset: birthDetailsData.sunset || '18:00'
       },
       astroDetails: {
+        // Primary details
         ascendant: astroDetailsData.ascendant || '',
+        ascendantLord: astroDetailsData.ascendant_lord || '',
         sign: astroDetailsData.sign || '',
-        signLord: astroDetailsData.sign_lord || '',
+        signLord: astroDetailsData.SignLord || astroDetailsData.sign_lord || '',
+        
+        // Nakshatra details
         nakshatra: astroDetailsData.Naksahtra || astroDetailsData.nakshatra || '',
-        nakshatraLord: astroDetailsData.Naksahtra_lord || astroDetailsData.nakshatra_lord || '',
-        charan: (astroDetailsData.charan || '').toString(),
-        varna: astroDetailsData.varna || '',
-        gan: astroDetailsData.Gan || astroDetailsData.gan || '',
+        nakshatraLord: astroDetailsData.NaksahtraLord || astroDetailsData.Naksahtra_lord || astroDetailsData.nakshatra_lord || '',
+        charan: (astroDetailsData.Charan || astroDetailsData.charan || '').toString(),
+        
+        // Vedic classifications
+        varna: astroDetailsData.Varna || astroDetailsData.varna || '',
+        vashya: astroDetailsData.Vashya || astroDetailsData.vashya || '',
         yoni: astroDetailsData.Yoni || astroDetailsData.yoni || '',
-        nadi: astroDetailsData.Nadi || astroDetailsData.nadi || ''
+        gan: astroDetailsData.Gan || astroDetailsData.gan || '',
+        nadi: astroDetailsData.Nadi || astroDetailsData.nadi || '',
+        
+        // Panchang details
+        tithi: astroDetailsData.Tithi || astroDetailsData.tithi || '',
+        yog: astroDetailsData.Yog || astroDetailsData.yog || '',
+        karan: astroDetailsData.Karan || astroDetailsData.karan || '',
+        
+        // Additional attributes
+        yunja: astroDetailsData.yunja || '',
+        tatva: astroDetailsData.tatva || '',
+        nameAlphabet: astroDetailsData.name_alphabet || '',
+        paya: astroDetailsData.paya || ''
       },
       planets: this.normalizePlanets(planetsData),
       planetsExtended: this.normalizePlanetsExtended(planetsExtendedData),
@@ -236,14 +254,14 @@ class AstrologyService {
     const planetsArray = Array.isArray(planetsData) ? planetsData : Object.values(planetsData);
     
     return planetsArray
-      .filter(planet => planet && planet.name && !['Ascendant', 'ASCENDANT'].includes(planet.name))
+      .filter(planet => planet && planet.name)
       .map((planet, index) => ({
-        id: planet.id || index,
+        id: planet.id !== undefined ? planet.id : index,
         name: planet.name,
         fullDegree: planet.fullDegree || planet.full_degree || 0,
         normDegree: planet.normDegree || planet.norm_degree || 0,
         speed: planet.speed || 0,
-        isRetro: (planet.isRetro || planet.is_retro || 'false').toString(),
+        isRetro: (planet.isRetro || planet.is_retro || planet.isRetro === false ? 'false' : 'false').toString(),
         sign: planet.sign || '',
         signLord: planet.signLord || planet.sign_lord || '',
         nakshatra: planet.nakshatra || '',
@@ -296,11 +314,11 @@ class AstrologyService {
     // Handle both array and object responses
     const planetsArray = Array.isArray(planetsData) ? planetsData : Object.values(planetsData);
 
-    // Place planets in houses
+    // Place planets in houses (excluding Ascendant from chart display)
     planetsArray.forEach(planet => {
       if (planet && planet.house && planet.house >= 1 && planet.house <= 12) {
-        // Exclude certain points from chart
-        if (!['Ascendant', 'ASCENDANT', 'Descendant', 'Midheaven'].includes(planet.name)) {
+        // Exclude Ascendant from chart display but keep other planets
+        if (!['Ascendant', 'ASCENDANT'].includes(planet.name)) {
           houses[planet.house].push(planet.name);
         }
       }

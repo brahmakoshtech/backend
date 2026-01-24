@@ -39,16 +39,34 @@ const astrologySchema = new mongoose.Schema({
     sunset: String
   },
   astroDetails: {
+    // Primary details
     ascendant: String,
+    ascendantLord: String,        // Added: Lord of ascendant sign
     sign: String,
     signLord: String,
+    
+    // Nakshatra details
     nakshatra: String,
     nakshatraLord: String,
     charan: String,
-    varna: String,
-    gan: String,
-    yoni: String,
-    nadi: String
+    
+    // Vedic classifications
+    varna: String,                // Added: Vipra, Kshatriya, Vaishya, Shudra
+    vashya: String,               // Added: Keetak, Chatushpad, Manav, Jalachar, Vanchar
+    yoni: String,                 
+    gan: String,                  
+    nadi: String,                 
+    
+    // Panchang details
+    tithi: String,                // Added: Krishna Pratipada, Shukla Tritiya, etc.
+    yog: String,                  // Added: Parigh, Ayushman, etc.
+    karan: String,                // Added: Kaulav, Taitil, etc.
+    
+    // Additional attributes
+    yunja: String,                // Added: Madhya, etc.
+    tatva: String,                // Added: Water, Fire, Earth, Air, Ether
+    nameAlphabet: String,         // Added: Na, To, etc.
+    paya: String                  // Added: Silver, Gold, Copper, Iron
   },
   planets: [planetSchema],
   planetsExtended: [planetSchema],
