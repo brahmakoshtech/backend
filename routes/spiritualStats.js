@@ -7,6 +7,24 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticateToken);
 
+// Helper function to format name from email
+const formatNameFromEmail = (email) => {
+  if (!email) return null;
+  
+  const username = email.split('@')[0];
+  // Remove numbers and special characters, split by common separators
+  const cleanName = username
+    .replace(/[0-9]/g, '') // Remove numbers
+    .replace(/[._-]/g, ' ') // Replace separators with spaces
+    .replace(/([a-z])([A-Z])/g, '$1 $2') // Add space before capital letters
+    .split(' ')
+    .filter(word => word.length > 0)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+  
+  return cleanName || username;
+};
+
 // Get user spiritual stats
 const getUserStats = async (req, res) => {
   try {
@@ -148,7 +166,11 @@ const getUserStats = async (req, res) => {
         chantingName: session.chantingName,
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
-          name: session.userId?.profile?.name || session.userId?.fullName || session.userId?.businessName || `User-${session._id}`,
+          name: session.userId?.profile?.name || 
+                session.userId?.fullName || 
+                session.userId?.businessName || 
+                formatNameFromEmail(session.userId?.email) ||
+                `User-${session._id}`,
           dob: session.userId?.profile?.dob || null
         }
       };
@@ -319,7 +341,11 @@ router.get('/user/:userId', async (req, res) => {
         createdAt: session.createdAt,
         userDetails: {
           email: userDetails?.email || 'Unknown',
-          name: userDetails?.profile?.name || userDetails?.fullName || userDetails?.businessName || 'Unknown User',
+          name: userDetails?.profile?.name || 
+                userDetails?.fullName || 
+                userDetails?.businessName || 
+                formatNameFromEmail(userDetails?.email) ||
+                'Unknown User',
           dob: userDetails?.profile?.dob || null
         }
       };
@@ -371,6 +397,11 @@ router.post('/save-session', async (req, res) => {
     const userId = req.user._id || req.user.userId;
     const { type, title, targetDuration, actualDuration, karmaPoints, emotion, status, completionPercentage, chantCount, chantingName } = req.body;
     
+    console.log('=== SAVE SESSION DEBUG ===');
+    console.log('User ID:', userId);
+    console.log('Session Type:', type);
+    console.log('Session Data:', req.body);
+    
     // For chanting, duration is not required
     if (type === 'chanting') {
       if (!userId || !type || !title) {
@@ -418,8 +449,12 @@ router.post('/save-session', async (req, res) => {
       sessionData.completionPercentage = calculatedCompletion;
     }
     
+    console.log('Final session data to save:', sessionData);
+    
     const newSession = new SpiritualSession(sessionData);
     await newSession.save();
+    
+    console.log('Session saved successfully:', newSession._id);
     
     res.json({
       success: true,
