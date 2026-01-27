@@ -40,20 +40,10 @@ const getClientId = (req) => {
 // GET /api/spiritual-clips - Get all clips for client
 router.get('/', authenticate, async (req, res) => {
   try {
-    const clientId = getClientId(req);
-    
-    if (!clientId) {
-      console.log('No clientId found for user:', req.user);
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
+    console.log('Fetching all clips');
 
-    console.log('Fetching clips for clientId:', clientId);
-
-    // Build query with optional type filter
-    const query = { clientId };
+    // Build query with optional type filter - no client filtering
+    const query = {};
     if (req.query.type) {
       query.type = req.query.type;
     }
@@ -83,7 +73,7 @@ router.get('/', authenticate, async (req, res) => {
       return clipObj;
     }));
 
-    console.log(`Found ${clips.length} clips for client ${clientId}`);
+    console.log(`Found ${clips.length} clips`);
 
     res.json({
       success: true,
@@ -313,17 +303,9 @@ router.post('/', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, { 
 // PUT /api/spiritual-clips/:id - Update clip
 router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'audio', maxCount: 1 }]), async (req, res) => {
   try {
-    const clientId = getClientId(req);
     const clipId = req.params.id;
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
-
-    const clip = await SpiritualClip.findOne({ _id: clipId, clientId });
+    const clip = await SpiritualClip.findById(clipId);
 
     if (!clip) {
       return res.status(404).json({
@@ -419,17 +401,9 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
 // PATCH /api/spiritual-clips/:id/toggle - Toggle clip status
 router.patch('/:id/toggle', authenticate, async (req, res) => {
   try {
-    const clientId = getClientId(req);
     const clipId = req.params.id;
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
-
-    const clip = await SpiritualClip.findOne({ _id: clipId, clientId });
+    const clip = await SpiritualClip.findById(clipId);
 
     if (!clip) {
       return res.status(404).json({
@@ -462,17 +436,9 @@ router.patch('/:id/toggle', authenticate, async (req, res) => {
 // DELETE /api/spiritual-clips/:id - Delete clip
 router.delete('/:id', authenticate, async (req, res) => {
   try {
-    const clientId = getClientId(req);
     const clipId = req.params.id;
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
-
-    const clip = await SpiritualClip.findOne({ _id: clipId, clientId });
+    const clip = await SpiritualClip.findById(clipId);
 
     if (!clip) {
       return res.status(404).json({
@@ -523,17 +489,9 @@ router.delete('/:id', authenticate, async (req, res) => {
 // GET /api/spiritual-clips/:id - Get single clip
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    const clientId = getClientId(req);
     const clipId = req.params.id;
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
-
-    const clip = await SpiritualClip.findOne({ _id: clipId, clientId });
+    const clip = await SpiritualClip.findById(clipId);
 
     if (!clip) {
       return res.status(404).json({

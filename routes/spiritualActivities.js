@@ -219,16 +219,6 @@ router.put('/:id', authenticate, async (req, res) => {
   try {
     const { title, description, isActive } = req.body;
     
-    let clientId;
-    try {
-      clientId = await getClientId(req);
-    } catch (clientIdError) {
-      return res.status(401).json({
-        success: false,
-        message: clientIdError.message || 'Unable to determine client ID. Please ensure your token is valid.'
-      });
-    }
-    
     if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -238,7 +228,6 @@ router.put('/:id', authenticate, async (req, res) => {
     
     const activity = await SpiritualActivity.findOne({
       _id: req.params.id,
-      clientId: clientId,
       isDeleted: false
     });
     
@@ -255,7 +244,6 @@ router.put('/:id', authenticate, async (req, res) => {
     const updatedActivity = await SpiritualActivity.findOneAndUpdate(
       {
         _id: req.params.id,
-        clientId: clientId,
         isDeleted: false
       },
       updateData,
@@ -275,16 +263,6 @@ router.put('/:id', authenticate, async (req, res) => {
 // DELETE spiritual activity (soft delete)
 router.delete('/:id', authenticate, async (req, res) => {
   try {
-    let clientId;
-    try {
-      clientId = await getClientId(req);
-    } catch (clientIdError) {
-      return res.status(401).json({
-        success: false,
-        message: clientIdError.message || 'Unable to determine client ID. Please ensure your token is valid.'
-      });
-    }
-    
     if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -294,7 +272,6 @@ router.delete('/:id', authenticate, async (req, res) => {
     
     const activity = await SpiritualActivity.findOne({
       _id: req.params.id,
-      clientId: clientId,
       isDeleted: false
     });
     
@@ -314,16 +291,6 @@ router.delete('/:id', authenticate, async (req, res) => {
 // TOGGLE enable/disable (isActive)
 router.patch('/:id/toggle', authenticate, async (req, res) => {
   try {
-    let clientId;
-    try {
-      clientId = await getClientId(req);
-    } catch (clientIdError) {
-      return res.status(401).json({
-        success: false,
-        message: clientIdError.message || 'Unable to determine client ID. Please ensure your token is valid.'
-      });
-    }
-    
     if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -333,7 +300,6 @@ router.patch('/:id/toggle', authenticate, async (req, res) => {
     
     const activity = await SpiritualActivity.findOne({
       _id: req.params.id,
-      clientId: clientId,
       isDeleted: false
     }).populate('clientId', 'clientId');
     

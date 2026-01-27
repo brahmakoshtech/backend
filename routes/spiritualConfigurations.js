@@ -69,37 +69,8 @@ const getConfigurations = async (req, res) => {
       clientId: req.user.clientId
     });
     
-    // Get clientId based on user role
-    let clientId;
-    if (req.user.role === 'client') {
-      clientId = req.user.clientId; // For client users
-    } else if (req.user.role === 'user') {
-      // For regular users, get clientId from their profile
-      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
-    } else {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Only clients and users can view configurations.'
-      });
-    }
-
-    console.log('[Spiritual Config] Extracted clientId:', clientId);
-
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found. Please contact support.',
-        debug: {
-          role: req.user.role,
-          userClientId: req.user.clientId,
-          tokenClientId: req.user.tokenClientId
-        }
-      });
-    }
-    
-    // Build query with optional type filter
+    // Build query with optional type filter - no client filtering
     const query = {
-      clientId,
       isDeleted: false
     };
     if (req.query.type) {
@@ -130,29 +101,15 @@ const updateConfiguration = async (req, res) => {
     const { id } = req.params;
     const { title, duration, description, emotion, karmaPoints, chantingType, customChantingType } = req.body;
     
-    // Get clientId based on user role
-    let clientId;
-    if (req.user.role === 'client') {
-      clientId = req.user.clientId; // For client users
-    } else if (req.user.role === 'user') {
-      // For regular users, get clientId from their profile
-      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
-    } else {
+    if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Only clients and users can update configurations.'
       });
     }
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found. Please contact support.'
-      });
-    }
-
     const configuration = await SpiritualConfiguration.findOneAndUpdate(
-      { _id: id, clientId, isDeleted: false },
+      { _id: id, isDeleted: false },
       { 
         title, 
         duration, 
@@ -190,29 +147,15 @@ const deleteConfiguration = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get clientId based on user role
-    let clientId;
-    if (req.user.role === 'client') {
-      clientId = req.user.clientId; // For client users
-    } else if (req.user.role === 'user') {
-      // For regular users, get clientId from their profile
-      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
-    } else {
+    if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Only clients and users can delete configurations.'
       });
     }
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found. Please contact support.'
-      });
-    }
-
     const configuration = await SpiritualConfiguration.findOneAndUpdate(
-      { _id: id, clientId, isDeleted: false },
+      { _id: id, isDeleted: false },
       { isDeleted: true },
       { new: true }
     );
@@ -241,30 +184,15 @@ const toggleConfiguration = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get clientId based on user role
-    let clientId;
-    if (req.user.role === 'client') {
-      clientId = req.user.clientId; // For client users
-    } else if (req.user.role === 'user') {
-      // For regular users, get clientId from their profile
-      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
-    } else {
+    if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: 'Access denied. Only clients and users can toggle configurations.'
       });
     }
 
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found. Please contact support.'
-      });
-    }
-
     const configuration = await SpiritualConfiguration.findOne({
       _id: id, 
-      clientId, 
       isDeleted: false
     });
 
@@ -298,30 +226,8 @@ const getSingleConfiguration = async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get clientId based on user role
-    let clientId;
-    if (req.user.role === 'client') {
-      clientId = req.user.clientId; // For client users
-    } else if (req.user.role === 'user') {
-      // For regular users, get clientId from their profile
-      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
-    } else {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. Only clients and users can view configurations.'
-      });
-    }
-
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found. Please contact support.'
-      });
-    }
-
     const configuration = await SpiritualConfiguration.findOne({
       _id: id,
-      clientId,
       isDeleted: false
     });
 

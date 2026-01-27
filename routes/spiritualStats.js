@@ -155,6 +155,7 @@ const getUserStats = async (req, res) => {
       
       let activityData = {
         id: session._id,
+        userId: session.userId, // Add user ID
         title: session.title || `${session.type} Session`,
         type: session.type || 'meditation',
         status: status,
