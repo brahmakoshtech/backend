@@ -25,11 +25,29 @@ const formatNameFromEmail = (email) => {
   return cleanName || username;
 };
 
-// Get user spiritual stats
+// Get user spiritual stats (for SpiritualStats.jsx - user side)
 const getUserStats = async (req, res) => {
   try {
-    // Get all sessions from all users (for admin view) - try both User models
-    let sessions = await SpiritualSession.find({}).sort({ createdAt: -1 });
+    // Check if user is authenticated
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+
+    // Always show only current user's sessions
+    const userId = req.user._id || req.user.userId;
+    const { category } = req.query;
+    console.log('[User Stats] Getting stats for user:', userId, 'Category:', category);
+    
+    // Query only current user's sessions
+    let query = { userId };
+    if (category && category !== 'all') {
+      query.type = category;
+    }
+    
+    let sessions = await SpiritualSession.find(query).sort({ createdAt: -1 });
     
     // Try to populate with User model first
     try {
@@ -51,7 +69,7 @@ const getUserStats = async (req, res) => {
       }
     }
     
-    // Calculate total stats across all users
+    // Calculate total stats based on role
     const totalSessions = sessions.length;
     const completedSessions = sessions.filter(s => {
       const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
@@ -141,7 +159,7 @@ const getUserStats = async (req, res) => {
       }
     }
     
-    // Get recent activities (last 20) with user details from all users
+    // Get recent activities based on role
     const recentActivities = sessions.slice(0, 20).map(session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
@@ -188,9 +206,9 @@ const getUserStats = async (req, res) => {
       return activityData;
     });
     
-    // Get user details (can be removed since we're showing all users)
+    // Get current user details
     const User = (await import('../models/User.js')).default;
-    const currentUser = await User.findById(req.user._id || req.user.userId).select('email profile.name profile.dob');
+    const currentUser = await User.findById(userId).select('email profile.name profile.dob');
     
     const stats = {
       totalStats: {
@@ -205,8 +223,8 @@ const getUserStats = async (req, res) => {
       categoryStats,
       recentActivities,
       userDetails: {
-        email: currentUser?.email || 'Admin',
-        name: currentUser?.profile?.name || 'Admin User',
+        email: currentUser?.email || 'Unknown',
+        name: currentUser?.profile?.name || 'Unknown User',
         dob: currentUser?.profile?.dob || null
       }
     };
@@ -216,7 +234,191 @@ const getUserStats = async (req, res) => {
       data: stats
     });
   } catch (error) {
-    console.error('Get stats error:', error);
+    console.error('Get user stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get all users spiritual stats (for SpiritualManagement.jsx - client side)
+const getAllUsersStats = async (req, res) => {
+  try {
+    // Check if user is authenticated
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not authenticated'
+      });
+    }
+
+    // Show all users' sessions
+    const { category } = req.query;
+    console.log('[All Users Stats] Getting stats for category:', category);
+    
+    // Query all users' sessions
+    let query = {};
+    if (category && category !== 'all') {
+      query.type = category;
+    }
+    
+    let sessions = await SpiritualSession.find(query).sort({ createdAt: -1 });
+    
+    // Try to populate with User model first
+    try {
+      sessions = await SpiritualSession.populate(sessions, {
+        path: 'userId',
+        select: 'email profile.name profile.dob fullName'
+      });
+    } catch (error) {
+      // If User model fails, try Client model
+      try {
+        const Client = (await import('../models/Client.js')).default;
+        sessions = await SpiritualSession.populate(sessions, {
+          path: 'userId',
+          model: Client,
+          select: 'email fullName businessName'
+        });
+      } catch (clientError) {
+        console.log('Both User and Client model populate failed');
+      }
+    }
+    
+    // Calculate total stats
+    const totalSessions = sessions.length;
+    const completedSessions = sessions.filter(s => {
+      const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
+                            s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
+      return sessionStatus === 'completed';
+    }).length;
+    const incompleteSessions = sessions.filter(s => {
+      const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
+                            s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
+      return sessionStatus === 'incomplete';
+    }).length;
+    const totalMinutes = sessions.reduce((sum, session) => {
+      return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
+    }, 0);
+    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const averageCompletion = sessions.length > 0 ? 
+      sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
+    
+    // Calculate category-wise stats
+    const categoryStats = {};
+    sessions.forEach(session => {
+      const category = session.type || 'meditation';
+      if (!categoryStats[category]) {
+        categoryStats[category] = {
+          sessions: 0,
+          completed: 0,
+          incomplete: 0,
+          minutes: 0,
+          karmaPoints: 0,
+          averageCompletion: 0
+        };
+      }
+      categoryStats[category].sessions++;
+      
+      const sessionStatus = session.status || 
+        (session.completionPercentage >= 100 ? 'completed' : 
+         session.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
+      
+      if (sessionStatus === 'completed') {
+        categoryStats[category].completed++;
+      } else {
+        categoryStats[category].incomplete++;
+      }
+      
+      if (session.type !== 'chanting') {
+        categoryStats[category].minutes += session.actualDuration || 0;
+      }
+      categoryStats[category].karmaPoints += session.karmaPoints || 0;
+    });
+    
+    // Calculate average completion for each category
+    Object.keys(categoryStats).forEach(category => {
+      const categorySessions = sessions.filter(s => s.type === category);
+      if (categorySessions.length > 0) {
+        const totalCompletion = categorySessions.reduce((sum, s) => {
+          const sessionCompletion = s.completionPercentage !== undefined ? s.completionPercentage :
+                                   (s.targetDuration > 0 ? Math.round((s.actualDuration / s.targetDuration) * 100) : 100);
+          return sum + sessionCompletion;
+        }, 0);
+        categoryStats[category].averageCompletion = Math.round(totalCompletion / categorySessions.length);
+      }
+    });
+    
+    // Get recent activities
+    const recentActivities = sessions.slice(0, 20).map(session => {
+      const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
+                                  (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
+      
+      let status = session.status || 'completed';
+      if (!session.status && session.type !== 'chanting') {
+        if (completionPercentage < 100) {
+          status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
+        }
+      }
+      
+      let activityData = {
+        id: session._id,
+        userId: session.userId,
+        title: session.title || `${session.type} Session`,
+        type: session.type || 'meditation',
+        status: status,
+        completionPercentage: completionPercentage,
+        karmaPoints: session.karmaPoints || 0,
+        emotion: session.emotion,
+        isActive: session.isActive !== undefined ? session.isActive : true,
+        createdAt: session.createdAt,
+        chantingName: session.chantingName,
+        userDetails: {
+          email: session.userId?.email || `No-Email-${session._id}`,
+          name: session.userId?.profile?.name || 
+                session.userId?.fullName || 
+                session.userId?.businessName || 
+                formatNameFromEmail(session.userId?.email) ||
+                `User-${session._id}`,
+          dob: session.userId?.profile?.dob || null
+        }
+      };
+      
+      if (session.type !== 'chanting') {
+        activityData.targetDuration = session.targetDuration || 0;
+        activityData.actualDuration = session.actualDuration || 0;
+      } else {
+        activityData.chantCount = session.chantCount || 0;
+      }
+      
+      return activityData;
+    });
+    
+    const stats = {
+      totalStats: {
+        sessions: totalSessions,
+        completed: completedSessions,
+        incomplete: incompleteSessions,
+        minutes: totalMinutes,
+        karmaPoints: totalKarmaPoints,
+        streak: 0, // Not applicable for all users
+        averageCompletion: Math.round(averageCompletion)
+      },
+      categoryStats,
+      recentActivities,
+      userDetails: {
+        email: 'All Users',
+        name: 'All Users Data',
+        dob: null
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Get all users stats error:', error);
     res.status(500).json({
       success: false,
       message: error.message
@@ -225,7 +427,8 @@ const getUserStats = async (req, res) => {
 };
 
 // Routes
-router.get('/', getUserStats);
+router.get('/', getUserStats); // For SpiritualStats.jsx (user side)
+router.get('/all-users', getAllUsersStats); // For SpiritualManagement.jsx (client side)
 router.get('/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
