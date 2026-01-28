@@ -4,24 +4,33 @@ import bcrypt from 'bcryptjs';
 const partnerSchema = new mongoose.Schema({
   name: {
     type: String,
-    required: true,
     trim: true
   },
   email: {
     type: String,
-    required: true,
     unique: true,
     lowercase: true,
     trim: true
   },
   password: {
     type: String,
-    minlength: 6
+    minlength: 6,
+    select: false
+  },
+  authMethod: {
+    type: String,
+    enum: ['password', 'google', 'firebase', 'email'],
+    default: 'password'
   },
   googleId: {
     type: String,
     unique: true,
     sparse: true
+  },
+  firebaseId: {
+    type: String,
+    sparse: true,
+    unique: true
   },
   profilePicture: {
     type: String,
@@ -29,7 +38,7 @@ const partnerSchema = new mongoose.Schema({
   },
   phone: {
     type: String,
-    default: null
+    sparse: true
   },
   specialization: {
     type: String,
@@ -49,6 +58,42 @@ const partnerSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Registration flow fields
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  phoneVerified: {
+    type: Boolean,
+    default: false
+  },
+  emailOtp: {
+    type: String,
+    select: false
+  },
+  emailOtpExpiry: {
+    type: Date,
+    select: false
+  },
+  phoneOtp: {
+    type: String,
+    select: false
+  },
+  phoneOtpExpiry: {
+    type: Date,
+    select: false
+  },
+  phoneOtpMethod: {
+    type: String,
+    enum: ['sms', 'whatsapp', 'gupshup', 'twilio'],
+    select: false
+  },
+  registrationStep: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 4
+  },
   isActive: {
     type: Boolean,
     default: true
@@ -57,7 +102,32 @@ const partnerSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  clientId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Client',
+    required: true
+  },
+  clientCode: {
+    type: String,
+    required: true
+  },
+  passwordResetToken: {
+    type: String,
+    select: false
+  },
+  passwordResetExpires: {
+    type: Date,
+    select: false
+  },
   joinedAt: {
+    type: Date,
+    default: Date.now
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
     type: Date,
     default: Date.now
   }
@@ -70,15 +140,47 @@ partnerSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
   if (this.password) {
-    this.password = await bcrypt.hash(this.password, 12);
+    try {
+      const salt = await bcrypt.genSalt(10);
+      this.password = await bcrypt.hash(this.password, salt);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  } else {
+    next();
   }
+});
+
+// Update timestamp
+partnerSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
   next();
 });
 
 // Compare password method
 partnerSchema.methods.comparePassword = async function(candidatePassword) {
   if (!this.password) return false;
-  return await bcrypt.compare(candidatePassword, this.password);
+  try {
+    return await bcrypt.compare(candidatePassword, this.password);
+  } catch (error) {
+    throw error;
+  }
+};
+
+// Remove sensitive data when converting to JSON
+partnerSchema.methods.toJSON = function() {
+  const obj = this.toObject();
+  delete obj.password;
+  delete obj.emailOtp;
+  delete obj.emailOtpExpiry;
+  delete obj.phoneOtp;
+  delete obj.phoneOtpExpiry;
+  delete obj.phoneOtpMethod;
+  delete obj.passwordResetToken;
+  delete obj.passwordResetExpires;
+  
+  return obj;
 };
 
 export default mongoose.model('Partner', partnerSchema);
