@@ -419,8 +419,14 @@ router.post('/register/step2/verify', async (req, res) => {
  * Body: { 
  *   email (required),
  *   name (required),
- *   specialization (optional),
- *   experience (optional)
+ *   experienceRange (optional) - '0-2', '3-5', '6-10', '10+',
+ *   expertiseCategory (optional) - 'Astrology', 'Vastu', 'Reiki', 'Healer', 'Numerology', 'Others',
+ *   skills (optional) - Array of strings (max 5),
+ *   consultationModes (optional) - Array ['Call', 'Chat', 'Video'],
+ *   languages (optional) - Array of strings,
+ *   bio (optional) - String (max 300 chars),
+ *   availabilityPreference (optional) - Array ['Weekdays', 'Weekends', 'Flexible'],
+ *   location (optional) - { city, country, coordinates: { latitude, longitude } }
  * }
  */
 router.post('/register/step3', async (req, res) => {
@@ -429,8 +435,14 @@ router.post('/register/step3', async (req, res) => {
       email, 
       clientId: clientCode,
       name,
-      specialization,
-      experience
+      experienceRange,
+      expertiseCategory,
+      skills,
+      consultationModes,
+      languages,
+      bio,
+      availabilityPreference,
+      location
     } = req.body;
 
     const { phone } = req.body;
@@ -448,6 +460,9 @@ router.post('/register/step3', async (req, res) => {
         message: 'Name is required' 
       });
     }
+
+    // Validate client
+    const client = await validateClientId(clientCode);
 
     // Find partner by email or phone for this client
     let partner = null;
@@ -480,8 +495,67 @@ router.post('/register/step3', async (req, res) => {
 
     // Update profile information
     partner.name = name;
-    if (specialization) partner.specialization = specialization;
-    if (experience !== undefined) partner.experience = parseInt(experience);
+    
+    // Update optional fields
+    if (experienceRange) {
+      partner.experienceRange = experienceRange;
+      // Also set numeric experience for backward compatibility
+      const expMap = { '0-2': 1, '3-5': 4, '6-10': 8, '10+': 15 };
+      partner.experience = expMap[experienceRange] || 0;
+    }
+    
+    if (expertiseCategory) partner.expertiseCategory = expertiseCategory;
+    
+    if (skills && Array.isArray(skills)) {
+      if (skills.length > 5) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Maximum 5 skills allowed' 
+        });
+      }
+      partner.skills = skills;
+    }
+    
+    if (consultationModes && Array.isArray(consultationModes)) {
+      partner.consultationModes = consultationModes;
+    }
+    
+    if (languages && Array.isArray(languages)) {
+      partner.languages = languages;
+    }
+    
+    if (bio) {
+      if (bio.length > 300) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Bio must be 300 characters or less (approximately 50 words)' 
+        });
+      }
+      partner.bio = bio;
+    }
+    
+    if (availabilityPreference && Array.isArray(availabilityPreference)) {
+      partner.availabilityPreference = availabilityPreference;
+    }
+    
+    if (location) {
+      if (location.city) partner.location.city = location.city;
+      if (location.country) partner.location.country = location.country;
+      if (location.coordinates) {
+        if (location.coordinates.latitude !== undefined) {
+          const lat = parseFloat(location.coordinates.latitude);
+          if (lat >= -90 && lat <= 90) {
+            partner.location.coordinates.latitude = lat;
+          }
+        }
+        if (location.coordinates.longitude !== undefined) {
+          const lng = parseFloat(location.coordinates.longitude);
+          if (lng >= -180 && lng <= 180) {
+            partner.location.coordinates.longitude = lng;
+          }
+        }
+      }
+    }
 
     // Mark registration as complete
     partner.registrationStep = 3;
@@ -503,8 +577,7 @@ router.post('/register/step3', async (req, res) => {
         emailVerified: partner.emailVerified || false,
         phoneVerified: partner.phoneVerified || false,
         profileCompleted: true,
-        isVerified: partner.isVerified
-      ,
+        isVerified: partner.isVerified,
         clientId: client.clientId,
         clientName: client.businessName
       }
@@ -747,8 +820,7 @@ router.post('/check-email', async (req, res) => {
           registered: false,
           email: email,
           emailVerified: true,
-          registrationStep: 1
-        ,
+          registrationStep: 1,
           clientId: client.clientId
         }
       });
@@ -791,8 +863,7 @@ router.post('/check-email', async (req, res) => {
         registered: true,
         partner: { ...partner.toObject(), role: 'partner' },
         token,
-        emailVerified: partner.emailVerified
-      ,
+        emailVerified: partner.emailVerified,
         clientId: client.clientId,
         clientName: client.businessName
       }
@@ -964,7 +1035,11 @@ router.get('/profile', authenticate, async (req, res) => {
  * Update Partner Profile (Mobile)
  * PUT /api/mobile/partner/profile
  * Headers: Authorization: Bearer <token>
- * Body: { name, phone, specialization, experience }
+ * Body: { 
+ *   name, phone, email, password,
+ *   experienceRange, expertiseCategory, skills, consultationModes,
+ *   languages, bio, availabilityPreference, location
+ * }
  */
 router.put('/profile', authenticate, async (req, res) => {
   try {
@@ -984,13 +1059,72 @@ router.put('/profile', authenticate, async (req, res) => {
       });
     }
 
-    // Update fields if provided
+    // Update basic fields
     if (req.body.name) partner.name = req.body.name;
     if (req.body.phone) partner.phone = req.body.phone;
     if (req.body.email) partner.email = req.body.email;
     if (req.body.password) partner.password = req.body.password;
-    if (req.body.specialization) partner.specialization = req.body.specialization;
-    if (req.body.experience !== undefined) partner.experience = parseInt(req.body.experience);
+    
+    // Update professional fields
+    if (req.body.experienceRange) {
+      partner.experienceRange = req.body.experienceRange;
+      const expMap = { '0-2': 1, '3-5': 4, '6-10': 8, '10+': 15 };
+      partner.experience = expMap[req.body.experienceRange] || 0;
+    }
+    
+    if (req.body.expertiseCategory) partner.expertiseCategory = req.body.expertiseCategory;
+    
+    if (req.body.skills && Array.isArray(req.body.skills)) {
+      if (req.body.skills.length > 5) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Maximum 5 skills allowed' 
+        });
+      }
+      partner.skills = req.body.skills;
+    }
+    
+    if (req.body.consultationModes && Array.isArray(req.body.consultationModes)) {
+      partner.consultationModes = req.body.consultationModes;
+    }
+    
+    if (req.body.languages && Array.isArray(req.body.languages)) {
+      partner.languages = req.body.languages;
+    }
+    
+    if (req.body.bio !== undefined) {
+      if (req.body.bio.length > 300) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Bio must be 300 characters or less' 
+        });
+      }
+      partner.bio = req.body.bio;
+    }
+    
+    if (req.body.availabilityPreference && Array.isArray(req.body.availabilityPreference)) {
+      partner.availabilityPreference = req.body.availabilityPreference;
+    }
+    
+    // Update location
+    if (req.body.location) {
+      if (req.body.location.city !== undefined) partner.location.city = req.body.location.city;
+      if (req.body.location.country !== undefined) partner.location.country = req.body.location.country;
+      if (req.body.location.coordinates) {
+        if (req.body.location.coordinates.latitude !== undefined) {
+          const lat = parseFloat(req.body.location.coordinates.latitude);
+          if (lat >= -90 && lat <= 90) {
+            partner.location.coordinates.latitude = lat;
+          }
+        }
+        if (req.body.location.coordinates.longitude !== undefined) {
+          const lng = parseFloat(req.body.location.coordinates.longitude);
+          if (lng >= -180 && lng <= 180) {
+            partner.location.coordinates.longitude = lng;
+          }
+        }
+      }
+    }
 
     await partner.save();
 
