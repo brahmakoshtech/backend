@@ -3,7 +3,11 @@ import Testimonial from '../../models/Testimonial.js';
 import FounderMessage from '../../models/FounderMessage.js';
 import BrandAsset from '../../models/BrandAsset.js';
 import Meditation from '../../models/Meditation.js';
+import SpiritualActivity from '../../models/SpiritualActivity.js';
+import SpiritualSession from '../../models/SpiritualSession.js';
+import { authenticateToken } from '../../middleware/auth.js';
 import mongoose from 'mongoose';
+import { getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
 
 const router = express.Router();
 
@@ -12,6 +16,211 @@ const router = express.Router();
  * These endpoints allow app developers to access content by clientId
  * No authentication required - clientId is passed as query parameter
  */
+
+// ============================================
+// SPIRITUAL CHECK-IN - Mobile Endpoint
+// ============================================
+
+/**
+ * GET /api/mobile/spiritual-checkin
+ * Get complete spiritual check-in page data (activities + user stats)
+ * Requires authentication for user stats
+ */
+router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.userId;
+    
+    // Get spiritual activities
+    const activities = await SpiritualActivity.find({
+      isActive: true,
+      isDeleted: false
+    }).sort({ createdAt: -1 });
+    
+    // Process activities with S3 URLs
+    const activitiesWithUrls = await Promise.all(
+      activities.map(async (activity) => {
+        const activityObj = activity.toObject();
+        if (activityObj.imageKey || activityObj.image) {
+          try {
+            const imageKey = activityObj.imageKey || extractS3KeyFromUrl(activityObj.image);
+            if (imageKey) {
+              activityObj.image = await getobject(imageKey, 604800);
+            }
+          } catch (error) {
+            console.error('Error generating image presigned URL:', error);
+          }
+        }
+        
+        // Map to mobile format with route
+        return {
+          id: activityObj._id,
+          title: activityObj.title,
+          desc: activityObj.description,
+          icon: activityObj.icon || '🌟',
+          image: activityObj.image,
+          route: getActivityRoute(activityObj.title.toLowerCase()),
+          isActive: activityObj.isActive
+        };
+      })
+    );
+    
+    // Get user spiritual stats
+    const sessions = await SpiritualSession.find({ userId }).sort({ createdAt: -1 });
+    
+    // Calculate comprehensive stats
+    const totalSessions = sessions.length;
+    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const completedSessions = sessions.filter(s => {
+      const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
+                            s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
+      return sessionStatus === 'completed';
+    }).length;
+    const totalMinutes = sessions.reduce((sum, session) => {
+      return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
+    }, 0);
+    const averageCompletion = sessions.length > 0 ? 
+      sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
+    
+    // Calculate streak (consecutive days with sessions)
+    let currentStreak = 0;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const uniqueDates = [...new Set(sessions.map(session => {
+      const date = new Date(session.createdAt);
+      date.setHours(0, 0, 0, 0);
+      return date.getTime();
+    }))].sort((a, b) => b - a);
+    
+    for (let i = 0; i < uniqueDates.length; i++) {
+      const sessionDate = new Date(uniqueDates[i]);
+      const daysDiff = Math.floor((today - sessionDate) / (1000 * 60 * 60 * 24));
+      
+      if (daysDiff === i) {
+        currentStreak++;
+      } else {
+        break;
+      }
+    }
+    
+    // Calculate category-wise stats
+    const categoryStats = {};
+    sessions.forEach(session => {
+      const category = session.type || 'meditation';
+      if (!categoryStats[category]) {
+        categoryStats[category] = {
+          sessions: 0,
+          completed: 0,
+          minutes: 0,
+          karmaPoints: 0
+        };
+      }
+      categoryStats[category].sessions++;
+      
+      const sessionStatus = session.status || 
+        (session.completionPercentage >= 100 ? 'completed' : 
+         session.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
+      
+      if (sessionStatus === 'completed') {
+        categoryStats[category].completed++;
+      }
+      
+      if (session.type !== 'chanting') {
+        categoryStats[category].minutes += session.actualDuration || 0;
+      }
+      categoryStats[category].karmaPoints += session.karmaPoints || 0;
+    });
+    
+    // Get recent activities (last 10)
+    const recentActivities = sessions.slice(0, 10).map(session => {
+      const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
+                                  (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
+      
+      let status = session.status || 'completed';
+      if (!session.status && session.type !== 'chanting') {
+        if (completionPercentage < 100) {
+          status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
+        }
+      }
+      
+      let activityData = {
+        id: session._id,
+        title: session.title || `${session.type} Session`,
+        type: session.type || 'meditation',
+        status: status,
+        completionPercentage: completionPercentage,
+        karmaPoints: session.karmaPoints || 0,
+        emotion: session.emotion,
+        createdAt: session.createdAt
+      };
+      
+      if (session.type !== 'chanting') {
+        activityData.targetDuration = session.targetDuration || 0;
+        activityData.actualDuration = session.actualDuration || 0;
+      } else {
+        activityData.chantCount = session.chantCount || 0;
+        activityData.chantingName = session.chantingName;
+      }
+      
+      return activityData;
+    });
+    
+    // Default activities if none exist
+    const defaultActivities = [
+      { id: 'meditate', title: 'Meditate', icon: '🧘♀️', desc: 'Find inner peace', route: '/mobile/user/meditate' },
+      { id: 'pray', title: 'Pray', icon: '🙏', desc: 'Connect spiritually', route: '/mobile/user/pray' },
+      { id: 'chant', title: 'Chant', icon: '🕉️', desc: 'Sacred sounds', route: '/mobile/user/chant' },
+      { id: 'silence', title: 'Silence', icon: '🤫', desc: 'Peaceful stillness', route: '/mobile/user/silence' }
+    ];
+    
+    const finalActivities = activitiesWithUrls.length > 0 ? activitiesWithUrls : defaultActivities;
+    
+    res.json({
+      success: true,
+      data: {
+        activities: finalActivities,
+        stats: {
+          days: currentStreak,
+          points: totalKarmaPoints,
+          sessions: totalSessions,
+          completed: completedSessions,
+          minutes: totalMinutes,
+          averageCompletion: Math.round(averageCompletion)
+        },
+        categoryStats,
+        recentActivities,
+        motivation: {
+          emoji: '🌸 ✨ 🕊️',
+          title: 'Small steps, big transformation',
+          text: 'Every moment of mindfulness counts. Start where you are, with what you have.'
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching spiritual check-in data:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch spiritual check-in data',
+      error: error.message
+    });
+  }
+});
+
+// Helper function to map activity titles to routes
+function getActivityRoute(title) {
+  const routeMap = {
+    'meditate': '/mobile/user/meditate',
+    'meditation': '/mobile/user/meditate',
+    'pray': '/mobile/user/pray',
+    'prayer': '/mobile/user/pray',
+    'chant': '/mobile/user/chant',
+    'chanting': '/mobile/user/chant',
+    'silence': '/mobile/user/silence',
+    'silent': '/mobile/user/silence'
+  };
+  
+  return routeMap[title] || '/mobile/user/meditate';
+}
 
 // ============================================
 // TESTIMONIALS - Mobile Endpoints

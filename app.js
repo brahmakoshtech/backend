@@ -45,6 +45,7 @@ import spiritualClipRoutes from './routes/spiritualClips.js';
 import spiritualStatsRoutes from './routes/spiritualStats.js';
 import publicRoutes from './routes/public.js';
 import realtimeAgentRoutes from './routes/mobile/realtimeAgent.js';
+import mobileContentRoutes from './routes/mobile/content.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -120,6 +121,7 @@ app.use('/api/mobile/realtime-agent', realtimeAgentRoutes);
 app.use('/api/mobile/chat', chatRoutes);
 app.use('/api/mobile/voice', voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
+app.use('/api/mobile/content', mobileContentRoutes);
 
 // Upload & Media Routes
 app.use('/api/upload', uploadRoutes);
