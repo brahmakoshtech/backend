@@ -55,6 +55,10 @@ const spiritualConfigurationSchema = new mongoose.Schema({
   clientId: {
     type: String,
     required: true
+  },
+  categoryId: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true
@@ -64,5 +68,6 @@ const spiritualConfigurationSchema = new mongoose.Schema({
 spiritualConfigurationSchema.index({ type: 1, isActive: 1 });
 spiritualConfigurationSchema.index({ clientId: 1 });
 spiritualConfigurationSchema.index({ clientId: 1, isDeleted: 1 });
+spiritualConfigurationSchema.index({ categoryId: 1 });
 
 export default mongoose.model('SpiritualConfiguration', spiritualConfigurationSchema);
