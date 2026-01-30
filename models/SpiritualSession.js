@@ -48,6 +48,14 @@ const spiritualSessionSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  videoUrl: {
+    type: String,
+    default: ''
+  },
+  audioUrl: {
+    type: String,
+    default: ''
+  },
   isActive: {
     type: Boolean,
     default: true
