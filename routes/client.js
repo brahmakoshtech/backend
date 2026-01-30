@@ -225,6 +225,93 @@ router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_a
 });
 
 /**
+ * Update user's live location
+ * PUT /api/client/users/:userId/live-location
+ * Body: { latitude: 19.076, longitude: 72.8777, formattedAddress: "...", city: "...", state: "...", country: "..." }
+ * Access: client (own users), admin, super_admin, user (own location only)
+ */
+router.put('/users/:userId/live-location', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { latitude, longitude, formattedAddress, city, state, country } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update location for this user'
+      });
+    }
+
+    // Validate coordinates
+    if (latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both latitude and longitude are required'
+      });
+    }
+
+    const lat = parseFloat(latitude);
+    const lon = parseFloat(longitude);
+
+    if (lat < -90 || lat > 90) {
+      return res.status(400).json({
+        success: false,
+        message: 'Latitude must be between -90 and 90'
+      });
+    }
+
+    if (lon < -180 || lon > 180) {
+      return res.status(400).json({
+        success: false,
+        message: 'Longitude must be between -180 and 180'
+      });
+    }
+
+    // Update live location
+    user.liveLocation = {
+      latitude: lat,
+      longitude: lon,
+      formattedAddress: formattedAddress || user.liveLocation?.formattedAddress,
+      city: city || user.liveLocation?.city,
+      state: state || user.liveLocation?.state,
+      country: country || user.liveLocation?.country,
+      lastUpdated: new Date()
+    };
+
+    await user.save();
+
+    const updatedUser = await User.findById(userId)
+      .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')
+      .populate('clientId', 'clientId businessName email')
+      .lean();
+
+    res.json({
+      success: true,
+      message: 'Live location updated successfully',
+      data: {
+        user: updatedUser
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Update live location error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update live location',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
  * Delete a user
  * DELETE /api/client/users/:userId
  * Access: client (own users), admin, super_admin (users cannot delete themselves)
@@ -455,19 +542,20 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
 /**
  * Get panchang data for current date and location
  * POST /api/client/users/:userId/panchang
- * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 }
+ * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 } (all optional)
  * Query params: ?refresh=true to force refresh from API
  * Access: client (own users), admin, super_admin, user (own data only)
+ * Note: currentDate defaults to now, location defaults to user's liveLocation from DB
  */
 router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
-    const { currentDate, latitude, longitude } = req.body;
+    let { currentDate, latitude, longitude } = req.body;
     const forceRefresh = req.query.refresh === 'true';
 
-    // Validate user
+    // Validate user and fetch live location
     const user = await User.findById(userId)
-      .select('clientId')
+      .select('clientId liveLocation')
       .lean();
 
     if (!user) {
@@ -485,26 +573,35 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       });
     }
 
-    // Validate request body
+    // Use current date/time if not provided
     if (!currentDate) {
-      return res.status(400).json({
-        success: false,
-        message: 'currentDate is required in request body'
-      });
+      currentDate = new Date().toISOString();
+      console.log('[Client API] No currentDate provided, using now:', currentDate);
     }
 
+    // Use live location from DB if not provided in request
     if (latitude === null || latitude === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'latitude is required in request body'
-      });
+      if (user.liveLocation?.latitude !== null && user.liveLocation?.latitude !== undefined) {
+        latitude = user.liveLocation.latitude;
+        console.log('[Client API] Using user live location latitude:', latitude);
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Latitude not provided and user has no live location stored'
+        });
+      }
     }
 
     if (longitude === null || longitude === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'longitude is required in request body'
-      });
+      if (user.liveLocation?.longitude !== null && user.liveLocation?.longitude !== undefined) {
+        longitude = user.liveLocation.longitude;
+        console.log('[Client API] Using user live location longitude:', longitude);
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Longitude not provided and user has no live location stored'
+        });
+      }
     }
 
     // Get panchang data with current date and location
@@ -534,16 +631,17 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
 /**
  * Refresh panchang data for a user (force recalculation)
  * POST /api/client/users/:userId/panchang/refresh
- * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 }
+ * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 } (all optional)
  * Access: client (own users), admin, super_admin, user (own data only)
+ * Note: currentDate defaults to now, location defaults to user's liveLocation from DB
  */
 router.post('/users/:userId/panchang/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
-    const { currentDate, latitude, longitude } = req.body;
+    let { currentDate, latitude, longitude } = req.body;
 
     const user = await User.findById(userId)
-      .select('clientId')
+      .select('clientId liveLocation')
       .lean();
 
     if (!user) {
@@ -561,12 +659,35 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
       });
     }
 
-    // Validate request body
-    if (!currentDate || latitude === null || latitude === undefined || longitude === null || longitude === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'currentDate, latitude, and longitude are required in request body'
-      });
+    // Use current date/time if not provided
+    if (!currentDate) {
+      currentDate = new Date().toISOString();
+      console.log('[Client API] No currentDate provided for refresh, using now:', currentDate);
+    }
+
+    // Use live location from DB if not provided in request
+    if (latitude === null || latitude === undefined) {
+      if (user.liveLocation?.latitude !== null && user.liveLocation?.latitude !== undefined) {
+        latitude = user.liveLocation.latitude;
+        console.log('[Client API] Using user live location latitude for refresh:', latitude);
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Latitude not provided and user has no live location stored'
+        });
+      }
+    }
+
+    if (longitude === null || longitude === undefined) {
+      if (user.liveLocation?.longitude !== null && user.liveLocation?.longitude !== undefined) {
+        longitude = user.liveLocation.longitude;
+        console.log('[Client API] Using user live location longitude for refresh:', longitude);
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Longitude not provided and user has no live location stored'
+        });
+      }
     }
 
     const panchangData = await panchangService.refreshPanchangData(userId, currentDate, latitude, longitude);
@@ -891,4 +1012,5 @@ router.get('/dashboard/overview', authenticate, authorize('client', 'admin', 'su
     });
   }
 });
+
 export default router;
