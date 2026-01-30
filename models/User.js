@@ -41,6 +41,27 @@ const userSchema = new mongoose.Schema({
     },
     gowthra: String
   },
+  // Live location (current/last known location)
+  liveLocation: {
+    latitude: {
+      type: Number,
+      min: -90,
+      max: 90
+    },
+    longitude: {
+      type: Number,
+      min: -180,
+      max: 180
+    },
+    formattedAddress: String,
+    city: String,
+    state: String,
+    country: String,
+    lastUpdated: {
+      type: Date,
+      default: Date.now
+    }
+  },
   profileImage: String,
   mobile: {
     type: String,
@@ -95,11 +116,11 @@ const userSchema = new mongoose.Schema({
   },
   passwordResetToken: {
     type: String,
-    select: false  // Hide by default for security
+    select: false
   },
   passwordResetExpires: {
     type: Date,
-    select: false  // Hide by default for security
+    select: false
   },
   createdAt: {
     type: Date,

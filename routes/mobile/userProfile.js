@@ -1685,15 +1685,16 @@ router.get('/reverse-geocode', async (req, res) => {
   }
 });
 
+// Updated /get-location endpoint to save live location in database
 /**
  * Get Current Location (Mobile-friendly endpoint)
  * POST /api/mobile/user/get-location
  * Body: { latitude, longitude }
+ * Headers: Authorization: Bearer <token>
  * 
- * This endpoint is specifically designed for mobile apps
- * that send coordinates from device GPS
+ * This endpoint saves the user's live location in the database
  */
-router.post('/get-location', async (req, res) => {
+router.post('/get-location', authenticate, async (req, res) => {
   console.log('Get location endpoint hit');
   try {
     const { latitude, longitude } = req.body;
@@ -1790,9 +1791,39 @@ router.post('/get-location', async (req, res) => {
       }
     });
 
+    // Save live location to database
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Update or create liveLocation
+    user.liveLocation = {
+      latitude: lat,
+      longitude: lon,
+      formattedAddress: result.formatted_address,
+      city: city,
+      state: state,
+      country: country,
+      lastUpdated: new Date()
+    };
+
+    await user.save();
+
+    console.log(`Live location saved for user ${user._id}:`, {
+      lat,
+      lon,
+      city,
+      state,
+      country
+    });
+
     res.json({
       success: true,
-      message: 'Location retrieved successfully',
+      message: 'Location retrieved and saved successfully',
       data: {
         location: {
           formattedAddress: result.formatted_address,
@@ -1806,10 +1837,11 @@ router.post('/get-location', async (req, res) => {
           latitude: lat,
           longitude: lon,
           placeId: result.place_id,
-          // Additional useful info
           locationType: result.geometry.location_type,
           viewport: result.geometry.viewport
-        }
+        },
+        saved: true,
+        savedAt: user.liveLocation.lastUpdated
       }
     });
   } catch (error) {
