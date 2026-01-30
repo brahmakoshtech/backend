@@ -39,6 +39,11 @@ const spiritualClipSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  suitableConfiguration: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'SpiritualConfiguration',
+    default: null
+  },
   isActive: {
     type: Boolean,
     default: true
@@ -71,5 +76,6 @@ const spiritualClipSchema = new mongoose.Schema({
 spiritualClipSchema.index({ type: 1, isActive: 1 });
 spiritualClipSchema.index({ clientId: 1 });
 spiritualClipSchema.index({ suitableTime: 1 });
+spiritualClipSchema.index({ suitableConfiguration: 1 });
 
 export default mongoose.model('SpiritualClip', spiritualClipSchema);

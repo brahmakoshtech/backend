@@ -29,12 +29,25 @@ const router = express.Router();
 router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
   try {
     const userId = req.user._id || req.user.userId;
+    const clientId = req.user.clientId || req.user.tokenClientId;
     
-    // Get spiritual activities
-    const activities = await SpiritualActivity.find({
-      isActive: true,
-      isDeleted: false
-    }).sort({ createdAt: -1 });
+    // Get spiritual activities for this client
+    let activities = [];
+    if (clientId) {
+      activities = await SpiritualActivity.find({
+        clientId: clientId,
+        isActive: true,
+        isDeleted: false
+      }).sort({ createdAt: -1 });
+    }
+    
+    // If no client-specific activities, get global activities
+    if (activities.length === 0) {
+      activities = await SpiritualActivity.find({
+        isActive: true,
+        isDeleted: false
+      }).sort({ createdAt: -1 });
+    }
     
     // Process activities with S3 URLs
     const activitiesWithUrls = await Promise.all(

@@ -37,6 +37,69 @@ const getClientId = (req) => {
   return null;
 };
 
+// GET /api/spiritual-clips/configuration/:configId - Get all clips for a specific configuration
+router.get('/configuration/:configId', authenticate, async (req, res) => {
+  try {
+    const { configId } = req.params;
+    console.log('Fetching clips for configuration:', configId);
+
+    // Validate configId format
+    if (!mongoose.Types.ObjectId.isValid(configId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid configuration ID format'
+      });
+    }
+
+    // Find clips with the specific suitableConfiguration
+    const clips = await SpiritualClip.find({ 
+      suitableConfiguration: configId,
+      isActive: true 
+    })
+    .populate('suitableConfiguration', 'title description type duration karmaPoints')
+    .sort({ createdAt: -1 });
+
+    // Convert S3 URLs to presigned URLs for access
+    const { getobject } = await import('../utils/s3.js');
+    
+    const clipsWithSignedUrls = await Promise.all(clips.map(async (clip) => {
+      const clipObj = clip.toObject();
+      
+      try {
+        // Generate presigned URLs for video and audio
+        if (clipObj.videoKey) {
+          clipObj.videoUrl = await getobject(clipObj.videoKey, 3600); // 1 hour expiry
+        }
+        if (clipObj.audioKey) {
+          clipObj.audioUrl = await getobject(clipObj.audioKey, 3600); // 1 hour expiry
+        }
+      } catch (error) {
+        console.error('Error generating presigned URLs for clip:', clipObj._id, error);
+        // Keep original URLs if presigned URL generation fails
+      }
+      
+      return clipObj;
+    }));
+
+    console.log(`Found ${clips.length} clips for configuration ${configId}`);
+
+    res.json({
+      success: true,
+      data: clipsWithSignedUrls,
+      count: clips.length,
+      configurationId: configId
+    });
+
+  } catch (error) {
+    console.error('Get clips by configuration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch clips for configuration',
+      error: error.message
+    });
+  }
+});
+
 // GET /api/spiritual-clips - Get all clips for client
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -49,6 +112,7 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     const clips = await SpiritualClip.find(query)
+      .populate('suitableConfiguration', 'title description')
       .sort({ createdAt: -1 });
 
     // Convert S3 URLs to presigned URLs for access
@@ -56,6 +120,11 @@ router.get('/', authenticate, async (req, res) => {
     
     const clipsWithSignedUrls = await Promise.all(clips.map(async (clip) => {
       const clipObj = clip.toObject();
+      
+      // Ensure suitableConfiguration is always present in response
+      if (!clipObj.suitableConfiguration) {
+        clipObj.suitableConfiguration = null;
+      }
       
       try {
         // Generate presigned URLs for video and audio
@@ -133,7 +202,7 @@ router.post('/direct', authenticate, async (req, res) => {
       });
     }
 
-    const { title, description, suitableTime, guided, transcript, type, videoUrl, audioUrl } = req.body;
+    const { title, description, suitableTime, guided, transcript, type, videoUrl, audioUrl, suitableConfiguration } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -153,6 +222,7 @@ router.post('/direct', authenticate, async (req, res) => {
       guided: guided || '',
       transcript: transcript || '',
       type: type || 'meditation',  // Default to meditation if not provided
+      suitableConfiguration: suitableConfiguration || null,
       videoUrl: videoUrl || undefined,
       videoKey: videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined,
       audioUrl: audioUrl || undefined,
@@ -197,6 +267,83 @@ router.post('/direct', authenticate, async (req, res) => {
     });
   }
 });
+// PUT /api/spiritual-clips/:id/direct - Update clip with direct S3 URLs
+router.put('/:id/direct', authenticate, async (req, res) => {
+  try {
+    const { title, description, suitableTime, guided, transcript, suitableConfiguration, videoUrl, audioUrl } = req.body;
+
+    const updateData = {
+      title: title?.trim(),
+      description: description?.trim(),
+      suitableTime: suitableTime || '',
+      guided: guided || '',
+      transcript: transcript || '',
+      suitableConfiguration: suitableConfiguration || null
+    };
+
+    // Add video URL and key if provided
+    if (videoUrl) {
+      const { extractS3KeyFromUrl } = await import('../utils/s3.js');
+      updateData.videoUrl = videoUrl;
+      updateData.videoKey = extractS3KeyFromUrl(videoUrl);
+    }
+
+    // Add audio URL and key if provided
+    if (audioUrl) {
+      const { extractS3KeyFromUrl } = await import('../utils/s3.js');
+      updateData.audioUrl = audioUrl;
+      updateData.audioKey = extractS3KeyFromUrl(audioUrl);
+    }
+
+    const clip = await SpiritualClip.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true, runValidators: true }
+    ).populate('suitableConfiguration', 'title description');
+
+    if (!clip) {
+      return res.status(404).json({
+        success: false,
+        message: 'Clip not found'
+      });
+    }
+
+    // Generate presigned URLs for response
+    const { getobject } = await import('../utils/s3.js');
+    const clipObj = clip.toObject();
+    
+    if (clipObj.videoKey) {
+      try {
+        clipObj.videoUrl = await getobject(clipObj.videoKey, 3600);
+      } catch (error) {
+        console.error('Error generating video presigned URL:', error);
+      }
+    }
+    
+    if (clipObj.audioKey) {
+      try {
+        clipObj.audioUrl = await getobject(clipObj.audioKey, 3600);
+      } catch (error) {
+        console.error('Error generating audio presigned URL:', error);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: clipObj,
+      message: 'Clip updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Update clip direct error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update clip',
+      error: error.message
+    });
+  }
+});
+
 router.post('/', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, { name: 'audio', maxCount: 1 }]), async (req, res) => {
   try {
     const clientId = getClientId(req);
@@ -208,7 +355,7 @@ router.post('/', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, { 
       });
     }
 
-    const { title, description, suitableTime, guided, transcript } = req.body;
+    const { title, description, suitableTime, guided, transcript, suitableConfiguration } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -238,7 +385,8 @@ router.post('/', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, { 
       description: description.trim(),
       suitableTime: suitableTime || '',
       guided: guided || '',
-      transcript: transcript || ''
+      transcript: transcript || '',
+      suitableConfiguration: suitableConfiguration || null
     };
 
     // Handle video upload to S3
@@ -314,7 +462,7 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
       });
     }
 
-    const { title, description, suitableTime, guided, transcript } = req.body;
+    const { title, description, suitableTime, guided, transcript, suitableConfiguration } = req.body;
 
     // Validation
     if (title && title.length > 100) {
@@ -337,6 +485,7 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
     if (suitableTime !== undefined) clip.suitableTime = suitableTime;
     if (guided !== undefined) clip.guided = guided;
     if (transcript !== undefined) clip.transcript = transcript;
+    if (suitableConfiguration !== undefined) clip.suitableConfiguration = suitableConfiguration || null;
 
     // Handle new video upload to S3
     if (req.files && req.files.video) {
@@ -378,12 +527,34 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
 
     console.log('Clip updated successfully:', clipId);
 
-    // S3 URLs are already full URLs
-    const responseClip = clip.toObject();
+    // Populate suitableConfiguration for response
+    await clip.populate('suitableConfiguration', 'title description');
+
+    // Generate presigned URLs for response
+    const { getobject } = await import('../utils/s3.js');
+    const clipObj = clip.toObject();
+    
+    // Ensure suitableConfiguration is always present in response
+    if (!clipObj.suitableConfiguration) {
+      clipObj.suitableConfiguration = null;
+    }
+    
+    try {
+      // Generate presigned URLs for video and audio
+      if (clipObj.videoKey) {
+        clipObj.videoUrl = await getobject(clipObj.videoKey, 3600); // 1 hour expiry
+      }
+      if (clipObj.audioKey) {
+        clipObj.audioUrl = await getobject(clipObj.audioKey, 3600); // 1 hour expiry
+      }
+    } catch (error) {
+      console.error('Error generating presigned URLs for clip:', clipObj._id, error);
+      // Keep original URLs if presigned URL generation fails
+    }
 
     res.json({
       success: true,
-      data: responseClip,
+      data: clipObj,
       message: 'Clip updated successfully'
     });
 
@@ -491,7 +662,8 @@ router.get('/:id', authenticate, async (req, res) => {
   try {
     const clipId = req.params.id;
 
-    const clip = await SpiritualClip.findById(clipId);
+    const clip = await SpiritualClip.findById(clipId)
+      .populate('suitableConfiguration', 'title description');
 
     if (!clip) {
       return res.status(404).json({
@@ -503,6 +675,11 @@ router.get('/:id', authenticate, async (req, res) => {
     // Generate presigned URLs for response
     const { getobject } = await import('../utils/s3.js');
     const clipObj = clip.toObject();
+    
+    // Ensure suitableConfiguration is always present in response
+    if (!clipObj.suitableConfiguration) {
+      clipObj.suitableConfiguration = null;
+    }
     
     try {
       // Generate presigned URLs for video and audio
@@ -531,5 +708,7 @@ router.get('/:id', authenticate, async (req, res) => {
     });
   }
 });
+
+
 
 export default router;

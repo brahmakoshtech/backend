@@ -10,7 +10,7 @@ router.use(authenticateToken);
 // Create new spiritual configuration
 const createConfiguration = async (req, res) => {
   try {
-    const { title, duration, description, emotion, type, karmaPoints, chantingType, customChantingType } = req.body;
+    const { title, duration, description, emotion, type, karmaPoints, chantingType, customChantingType, categoryId } = req.body;
     
     // Get clientId based on user role
     let clientId;
@@ -42,6 +42,7 @@ const createConfiguration = async (req, res) => {
       karmaPoints: karmaPoints || 10,
       chantingType: chantingType || '',
       customChantingType: customChantingType || '',
+      categoryId: categoryId || '',
       clientId
     });
 
@@ -68,14 +69,22 @@ const getConfigurations = async (req, res) => {
       role: req.user.role,
       clientId: req.user.clientId
     });
+    console.log('[Spiritual Config] Query params:', req.query);
     
-    // Build query with optional type filter - no client filtering
+    // Build query with optional filters
     const query = {
       isDeleted: false
     };
+    
     if (req.query.type) {
       query.type = req.query.type;
     }
+    
+    if (req.query.categoryId) {
+      query.categoryId = req.query.categoryId;
+    }
+    
+    console.log('[Spiritual Config] Query:', query);
     
     const configurations = await SpiritualConfiguration.find(query).sort({ createdAt: -1 });
 
@@ -99,7 +108,7 @@ const getConfigurations = async (req, res) => {
 const updateConfiguration = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, duration, description, emotion, karmaPoints, chantingType, customChantingType } = req.body;
+    const { title, duration, description, emotion, karmaPoints, chantingType, customChantingType, categoryId } = req.body;
     
     if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
@@ -108,17 +117,19 @@ const updateConfiguration = async (req, res) => {
       });
     }
 
+    const updateData = {};
+    if (title !== undefined) updateData.title = title;
+    if (duration !== undefined) updateData.duration = duration;
+    if (description !== undefined) updateData.description = description;
+    if (emotion !== undefined) updateData.emotion = emotion;
+    if (karmaPoints !== undefined) updateData.karmaPoints = karmaPoints;
+    if (chantingType !== undefined) updateData.chantingType = chantingType;
+    if (customChantingType !== undefined) updateData.customChantingType = customChantingType;
+    if (categoryId !== undefined) updateData.categoryId = categoryId;
+
     const configuration = await SpiritualConfiguration.findOneAndUpdate(
       { _id: id, isDeleted: false },
-      { 
-        title, 
-        duration, 
-        description, 
-        emotion, 
-        karmaPoints: karmaPoints || 10,
-        chantingType: chantingType || '',
-        customChantingType: customChantingType || ''
-      },
+      updateData,
       { new: true, runValidators: true }
     );
 

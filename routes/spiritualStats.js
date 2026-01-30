@@ -229,10 +229,10 @@ const getUserStats = async (req, res) => {
       }
     };
 
-    res.status(200).json({
+    res.status(200).set('Content-Type', 'application/json').send(JSON.stringify({
       success: true,
       data: stats
-    });
+    }, null, 2));
   } catch (error) {
     console.error('Get user stats error:', error);
     res.status(500).json({
@@ -413,10 +413,10 @@ const getAllUsersStats = async (req, res) => {
       }
     };
 
-    res.status(200).json({
+    res.status(200).set('Content-Type', 'application/json').send(JSON.stringify({
       success: true,
       data: stats
-    });
+    }, null, 2));
   } catch (error) {
     console.error('Get all users stats error:', error);
     res.status(500).json({
@@ -582,10 +582,10 @@ router.get('/user/:userId', async (req, res) => {
       }
     };
 
-    res.status(200).json({
+    res.status(200).set('Content-Type', 'application/json').send(JSON.stringify({
       success: true,
       data: stats
-    });
+    }, null, 2));
   } catch (error) {
     console.error('Get user stats error:', error);
     res.status(500).json({
