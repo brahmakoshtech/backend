@@ -1,4 +1,5 @@
-// src/routes/client.js
+// src/routes/client.js - UPDATED VERSION
+// Now supports user token authentication for all endpoints
 
 import express from 'express';
 import { authenticate, authorize } from '../middleware/auth.js';
@@ -13,17 +14,61 @@ import numerologyService from '../services/numerologyService.js';
 const router = express.Router();
 
 /**
+ * Helper function to get client ID based on user role
+ */
+const getClientIdForQuery = (user) => {
+  if (user.role === 'client') {
+    return user._id;
+  }
+  if (user.role === 'user') {
+    // For users, get clientId from populated field or token
+    return user.clientId?._id || user.clientId || user.tokenClientId;
+  }
+  // Admin and super_admin don't filter by clientId
+  return null;
+};
+
+/**
+ * Helper function to check if user has access to a specific user record
+ */
+const checkUserAccess = (requestingUser, targetUser) => {
+  // Super admin and admin have access to all users
+  if (requestingUser.role === 'super_admin' || requestingUser.role === 'admin') {
+    return true;
+  }
+
+  // Client can only access their own users
+  if (requestingUser.role === 'client') {
+    const targetClientId = targetUser.clientId?._id?.toString() || targetUser.clientId?.toString();
+    return targetClientId === requestingUser._id.toString();
+  }
+
+  // User can only access their own record
+  if (requestingUser.role === 'user') {
+    return targetUser._id.toString() === requestingUser._id.toString();
+  }
+
+  return false;
+};
+
+/**
  * Get client's own users
  * GET /api/client/users
+ * Access: client, admin, super_admin, user (user can only see themselves)
  */
-router.get('/users', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.get('/users', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     let query = {};
 
     if (req.user.role === 'client') {
       console.log('[Client API] Fetching users for client:', req.user._id.toString());
       query.clientId = req.user._id;
+    } else if (req.user.role === 'user') {
+      // Users can only see themselves
+      console.log('[Client API] User fetching own record:', req.user._id.toString());
+      query._id = req.user._id;
     }
+    // admin and super_admin see all users
 
     const users = await User.find(query)
       .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')
@@ -53,6 +98,7 @@ router.get('/users', authenticate, authorize('client', 'admin', 'super_admin'), 
 /**
  * Create a new user under this client
  * POST /api/client/users
+ * Access: client, admin, super_admin (users cannot create other users)
  */
 router.post('/users', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
   try {
@@ -113,8 +159,9 @@ router.post('/users', authenticate, authorize('client', 'admin', 'super_admin'),
 /**
  * Update a user
  * PUT /api/client/users/:userId
+ * Access: client (own users), admin, super_admin, user (own profile only)
  */
-router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const { profile, isActive } = req.body;
@@ -127,11 +174,20 @@ router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_a
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this user'
+      });
+    }
+
+    // Users can only update their own profile, not isActive status
+    if (req.user.role === 'user') {
+      if (isActive !== undefined) {
         return res.status(403).json({
           success: false,
-          message: 'You can only update your own users'
+          message: 'You cannot change your active status'
         });
       }
     }
@@ -139,7 +195,7 @@ router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_a
     if (profile) {
       user.profile = { ...user.profile, ...profile };
     }
-    if (typeof isActive === 'boolean') {
+    if (typeof isActive === 'boolean' && req.user.role !== 'user') {
       user.isActive = isActive;
     }
 
@@ -170,6 +226,7 @@ router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_a
 /**
  * Delete a user
  * DELETE /api/client/users/:userId
+ * Access: client (own users), admin, super_admin (users cannot delete themselves)
  */
 router.delete('/users/:userId', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
   try {
@@ -217,8 +274,9 @@ router.delete('/users/:userId', authenticate, authorize('client', 'admin', 'supe
  * Get user's complete details including astrology data
  * GET /api/client/users/:userId/complete-details
  * Query params: ?refresh=true to force refresh from API
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.get('/users/:userId/complete-details', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.get('/users/:userId/complete-details', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const forceRefresh = req.query.refresh === 'true';
@@ -237,13 +295,12 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId._id.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only view your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view this user'
+      });
     }
 
     let astrologyData = null;
@@ -290,8 +347,9 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
  * Get only astrology data for a user
  * GET /api/client/users/:userId/astrology
  * Query params: ?refresh=true to force refresh from API
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const forceRefresh = req.query.refresh === 'true';
@@ -307,13 +365,12 @@ router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin'
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only view astrology data for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view astrology data for this user'
+      });
     }
 
     if (!user.profile?.dob || !user.profile?.timeOfBirth || 
@@ -351,8 +408,9 @@ router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin'
 /**
  * Refresh astrology data for a user (force recalculation)
  * POST /api/client/users/:userId/astrology/refresh
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.post('/users/:userId/astrology/refresh', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.post('/users/:userId/astrology/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -367,13 +425,12 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only refresh astrology data for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to refresh astrology data for this user'
+      });
     }
 
     const astrologyData = await astrologyService.refreshAstrologyData(userId, user.profile);
@@ -399,8 +456,9 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
  * POST /api/client/users/:userId/panchang
  * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 }
  * Query params: ?refresh=true to force refresh from API
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const { currentDate, latitude, longitude } = req.body;
@@ -418,14 +476,12 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       });
     }
 
-    // Check ownership for client role
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only view panchang data for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view panchang data for this user'
+      });
     }
 
     // Validate request body
@@ -478,8 +534,9 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
  * Refresh panchang data for a user (force recalculation)
  * POST /api/client/users/:userId/panchang/refresh
  * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 }
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.post('/users/:userId/panchang/refresh', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.post('/users/:userId/panchang/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const { currentDate, latitude, longitude } = req.body;
@@ -495,13 +552,12 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only refresh panchang data for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to refresh panchang data for this user'
+      });
     }
 
     // Validate request body
@@ -531,53 +587,13 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
 });
 
 /**
- * Get client dashboard overview
- * GET /api/client/dashboard/overview
- */
-router.get('/dashboard/overview', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
-  try {
-    let query = {};
-    
-    if (req.user.role === 'client') {
-      query.clientId = req.user._id;
-    }
-
-    const totalUsers = await User.countDocuments(query);
-    const activeUsers = await User.countDocuments({ ...query, isActive: true });
-    const inactiveUsers = await User.countDocuments({ ...query, isActive: false });
-
-    res.json({
-      success: true,
-      data: {
-        totalUsers,
-        activeUsers,
-        inactiveUsers,
-        clientInfo: req.user.role === 'client' ? {
-          businessName: req.user.businessName,
-          email: req.user.email,
-          clientId: req.user.clientId || 'Not assigned'
-        } : undefined
-      }
-    });
-  } catch (error) {
-    console.error('[Client API] Dashboard error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch dashboard data',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-// Add these routes to your client.js file or create a separate numerology routes file
-
-/**
  * Get numerology data for a user
  * POST /api/client/users/:userId/numerology
  * Body: { date: "2026-01-24" or { day: 24, month: 1, year: 2026 }, name: "John Doe" }
  * Query params: ?refresh=true to force refresh from API
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.post('/users/:userId/numerology', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.post('/users/:userId/numerology', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const { date, name } = req.body;
@@ -595,14 +611,12 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
       });
     }
 
-    // Check ownership for client role
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only access numerology data for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access numerology data for this user'
+      });
     }
 
     // Validate request body
@@ -622,9 +636,6 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
         message: 'name is required either in request body or user profile'
       });
     }
-
-    // Import numerologyService at the top of the file
-    // import numerologyService from '../services/numerologyService.js';
 
     const result = await numerologyService.getNumerologyData(
       userId,
@@ -653,8 +664,9 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
  * Refresh numerology data for a user (force recalculation)
  * POST /api/client/users/:userId/numerology/refresh
  * Body: { date: "2026-01-24", name: "John Doe" }
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.post('/users/:userId/numerology/refresh', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.post('/users/:userId/numerology/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const { date, name } = req.body;
@@ -670,13 +682,12 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only refresh numerology data for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to refresh numerology data for this user'
+      });
     }
 
     if (!date) {
@@ -711,8 +722,9 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
  * Get numerology history for a user
  * GET /api/client/users/:userId/numerology/history
  * Query params: ?limit=10&skip=0
+ * Access: client (own users), admin, super_admin, user (own data only)
  */
-router.get('/users/:userId/numerology/history', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+router.get('/users/:userId/numerology/history', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     const limit = parseInt(req.query.limit) || 10;
@@ -729,13 +741,12 @@ router.get('/users/:userId/numerology/history', authenticate, authorize('client'
       });
     }
 
-    if (req.user.role === 'client') {
-      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
-        return res.status(403).json({
-          success: false,
-          message: 'You can only access numerology history for your own users'
-        });
-      }
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access numerology history for this user'
+      });
     }
 
     const result = await numerologyService.getNumerologyHistory(userId, limit, skip);
@@ -759,6 +770,7 @@ router.get('/users/:userId/numerology/history', authenticate, authorize('client'
  * Delete numerology data for a specific date
  * DELETE /api/client/users/:userId/numerology
  * Body: { date: "2026-01-24" }
+ * Access: client (own users), admin, super_admin (users cannot delete their own data)
  */
 router.delete('/users/:userId/numerology', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
   try {
@@ -809,5 +821,59 @@ router.delete('/users/:userId/numerology', authenticate, authorize('client', 'ad
   }
 });
 
+/**
+ * Get client dashboard overview
+ * GET /api/client/dashboard/overview
+ * Access: client, admin, super_admin, user (limited view)
+ */
+router.get('/dashboard/overview', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    let query = {};
+    
+    if (req.user.role === 'client') {
+      query.clientId = req.user._id;
+    } else if (req.user.role === 'user') {
+      // Users only see their own stats
+      query._id = req.user._id;
+    }
+
+    const totalUsers = await User.countDocuments(query);
+    const activeUsers = await User.countDocuments({ ...query, isActive: true });
+    const inactiveUsers = await User.countDocuments({ ...query, isActive: false });
+
+    const response = {
+      success: true,
+      data: {
+        totalUsers,
+        activeUsers,
+        inactiveUsers
+      }
+    };
+
+    // Add additional info based on role
+    if (req.user.role === 'client') {
+      response.data.clientInfo = {
+        businessName: req.user.businessName,
+        email: req.user.email,
+        clientId: req.user.clientId || 'Not assigned'
+      };
+    } else if (req.user.role === 'user') {
+      response.data.userInfo = {
+        email: req.user.email,
+        name: req.user.profile?.name || req.user.profile?.firstName,
+        registrationStep: req.user.registrationStep
+      };
+    }
+
+    res.json(response);
+  } catch (error) {
+    console.error('[Client API] Dashboard error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch dashboard data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
 export default router;

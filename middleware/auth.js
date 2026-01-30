@@ -119,7 +119,7 @@ export const authenticate = async (req, res, next) => {
 };
 
 // Role-based authorization middleware
-export const authorize = (roles) => {
+export const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ 
