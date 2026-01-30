@@ -183,6 +183,8 @@ const getUserStats = async (req, res) => {
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
         chantingName: session.chantingName,
+        videoUrl: session.videoUrl || '',
+        audioUrl: session.audioUrl || '',
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
           name: session.userId?.profile?.name || 
@@ -373,6 +375,8 @@ const getAllUsersStats = async (req, res) => {
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
         chantingName: session.chantingName,
+        videoUrl: session.videoUrl || '',
+        audioUrl: session.audioUrl || '',
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
           name: session.userId?.profile?.name || 
@@ -543,6 +547,8 @@ router.get('/user/:userId', async (req, res) => {
         emotion: session.emotion,
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
+        videoUrl: session.videoUrl || '',
+        audioUrl: session.audioUrl || '',
         userDetails: {
           email: userDetails?.email || 'Unknown',
           name: userDetails?.profile?.name || 
@@ -599,12 +605,14 @@ router.get('/user/:userId', async (req, res) => {
 router.post('/save-session', async (req, res) => {
   try {
     const userId = req.user._id || req.user.userId;
-    const { type, title, targetDuration, actualDuration, karmaPoints, emotion, status, completionPercentage, chantCount, chantingName } = req.body;
+    const { type, title, targetDuration, actualDuration, karmaPoints, emotion, status, completionPercentage, chantCount, chantingName, videoUrl, audioUrl } = req.body;
     
     console.log('=== SAVE SESSION DEBUG ===');
     console.log('User ID:', userId);
     console.log('Session Type:', type);
     console.log('Session Data:', req.body);
+    console.log('Video URL:', videoUrl);
+    console.log('Audio URL:', audioUrl);
     
     // For chanting, duration is not required
     if (type === 'chanting') {
@@ -629,7 +637,9 @@ router.post('/save-session', async (req, res) => {
       type,
       title,
       karmaPoints: karmaPoints || 0,
-      emotion
+      emotion,
+      videoUrl: videoUrl || '',
+      audioUrl: audioUrl || ''
     };
     
     if (type === 'chanting') {
