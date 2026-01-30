@@ -1,5 +1,6 @@
 // src/routes/client.js - UPDATED VERSION
 // Now supports user token authentication for all endpoints
+// Numerology endpoints updated: name always from DB, date defaults to today
 
 import express from 'express';
 import { authenticate, authorize } from '../middleware/auth.js';
@@ -589,14 +590,15 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
 /**
  * Get numerology data for a user
  * POST /api/client/users/:userId/numerology
- * Body: { date: "2026-01-24" or { day: 24, month: 1, year: 2026 }, name: "John Doe" }
+ * Body: { date: "2026-01-24" or { day: 24, month: 1, year: 2026 } } (optional - defaults to today)
  * Query params: ?refresh=true to force refresh from API
  * Access: client (own users), admin, super_admin, user (own data only)
+ * Note: Name is always taken from user profile in database
  */
 router.post('/users/:userId/numerology', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
-    const { date, name } = req.body;
+    let { date } = req.body;
     const forceRefresh = req.query.refresh === 'true';
 
     // Validate user
@@ -619,22 +621,24 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
       });
     }
 
-    // Validate request body
-    if (!date) {
-      return res.status(400).json({
-        success: false,
-        message: 'date is required in request body (format: "YYYY-MM-DD" or { day, month, year })'
-      });
-    }
-
-    // Use provided name or fall back to user profile name
-    const userName = name || user.profile?.name || user.profile?.firstName || 'User';
-
+    // Get name from user profile (required)
+    const userName = user.profile?.name || user.profile?.firstName;
     if (!userName) {
       return res.status(400).json({
         success: false,
-        message: 'name is required either in request body or user profile'
+        message: 'User profile must have a name to generate numerology data'
       });
+    }
+
+    // Use provided date or default to today
+    if (!date) {
+      const today = new Date();
+      date = {
+        day: today.getDate(),
+        month: today.getMonth() + 1,
+        year: today.getFullYear()
+      };
+      console.log('[Client API] No date provided, using today:', date);
     }
 
     const result = await numerologyService.getNumerologyData(
@@ -663,13 +667,14 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
 /**
  * Refresh numerology data for a user (force recalculation)
  * POST /api/client/users/:userId/numerology/refresh
- * Body: { date: "2026-01-24", name: "John Doe" }
+ * Body: { date: "2026-01-24" } (optional - defaults to today)
  * Access: client (own users), admin, super_admin, user (own data only)
+ * Note: Name is always taken from user profile in database
  */
 router.post('/users/:userId/numerology/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
-    const { date, name } = req.body;
+    let { date } = req.body;
 
     const user = await User.findById(userId)
       .select('profile clientId')
@@ -690,14 +695,25 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
       });
     }
 
-    if (!date) {
+    // Get name from user profile (required)
+    const userName = user.profile?.name || user.profile?.firstName;
+    if (!userName) {
       return res.status(400).json({
         success: false,
-        message: 'date is required in request body'
+        message: 'User profile must have a name to refresh numerology data'
       });
     }
 
-    const userName = name || user.profile?.name || user.profile?.firstName || 'User';
+    // Use provided date or default to today
+    if (!date) {
+      const today = new Date();
+      date = {
+        day: today.getDate(),
+        month: today.getMonth() + 1,
+        year: today.getFullYear()
+      };
+      console.log('[Client API] No date provided for refresh, using today:', date);
+    }
 
     const result = await numerologyService.refreshNumerologyData(userId, date, userName);
 
