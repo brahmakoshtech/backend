@@ -259,13 +259,15 @@ const getAllUsersStats = async (req, res) => {
     const { category } = req.query;
     console.log('[All Users Stats] Getting stats for category:', category);
     
-    // Query all users' sessions
+    // Query all users' sessions with proper category filtering
     let query = {};
     if (category && category !== 'all') {
       query.type = category;
+      console.log('[All Users Stats] Filtering by type:', category);
     }
     
     let sessions = await SpiritualSession.find(query).sort({ createdAt: -1 });
+    console.log('[All Users Stats] Found sessions:', sessions.length, 'for query:', query);
     
     // Try to populate with User model first
     try {
@@ -351,8 +353,8 @@ const getAllUsersStats = async (req, res) => {
       }
     });
     
-    // Get recent activities
-    const recentActivities = sessions.slice(0, 20).map(session => {
+    // Get recent activities - all for the current category
+    const recentActivities = sessions.slice(0, 50).map(session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -397,6 +399,8 @@ const getAllUsersStats = async (req, res) => {
       
       return activityData;
     });
+    
+    console.log('[All Users Stats] Returning', recentActivities.length, 'activities for category:', category);
     
     const stats = {
       totalStats: {
