@@ -614,22 +614,12 @@ router.post('/save-session', async (req, res) => {
     console.log('Video URL:', videoUrl);
     console.log('Audio URL:', audioUrl);
     
-    // For chanting, duration is not required
-    if (type === 'chanting') {
-      if (!userId || !type || !title) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required fields for chanting: userId, type, title'
-        });
-      }
-    } else {
-      // For other activities, duration is required
-      if (!userId || !type || !title || targetDuration === undefined || actualDuration === undefined) {
-        return res.status(400).json({
-          success: false,
-          message: 'Missing required fields: userId, type, title, targetDuration, actualDuration'
-        });
-      }
+    // Basic validation - all activities need userId, type, title
+    if (!userId || !type || !title) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required fields: userId, type, title'
+      });
     }
     
     let sessionData = {
@@ -643,13 +633,19 @@ router.post('/save-session', async (req, res) => {
     };
     
     if (type === 'chanting') {
-      // For chanting, use completion percentage and chant count
-      sessionData.status = status || 'completed';
-      sessionData.completionPercentage = completionPercentage || 100;
+      // For chanting: use chantCount, chantingName, status, completionPercentage
+      // Duration fields will be null/undefined
       sessionData.chantCount = chantCount || 0;
       sessionData.chantingName = chantingName || title;
+      sessionData.status = status || 'completed';
+      sessionData.completionPercentage = completionPercentage || 100;
+      sessionData.targetDuration = null;
+      sessionData.actualDuration = null;
     } else {
-      // For other activities, calculate completion based on duration
+      // For other activities: use duration fields, calculate status
+      sessionData.targetDuration = targetDuration || 0;
+      sessionData.actualDuration = actualDuration || 0;
+      
       const calculatedCompletion = targetDuration > 0 ? Math.round((actualDuration / targetDuration) * 100) : 100;
       let calculatedStatus = 'completed';
       
@@ -657,10 +653,9 @@ router.post('/save-session', async (req, res) => {
         calculatedStatus = calculatedCompletion >= 50 ? 'incomplete' : 'interrupted';
       }
       
-      sessionData.targetDuration = targetDuration;
-      sessionData.actualDuration = actualDuration;
       sessionData.status = calculatedStatus;
       sessionData.completionPercentage = calculatedCompletion;
+      sessionData.chantCount = 0;
     }
     
     console.log('Final session data to save:', sessionData);
