@@ -128,8 +128,14 @@ export const authorize = (...roles) => {
       });
     }
 
-    // Handle both array and spread arguments
-    const allowedRoles = Array.isArray(roles) ? roles : [roles];
+    // Handle both array and spread arguments - FIX THE BUG
+    const allowedRoles = Array.isArray(roles[0]) ? roles[0] : roles;
+
+    console.log('[Authorization Check]', {
+      userRole: req.user.role,
+      allowedRoles: allowedRoles,
+      isAuthorized: allowedRoles.includes(req.user.role)
+    });
 
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({ 
