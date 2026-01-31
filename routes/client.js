@@ -693,20 +693,24 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
  *   - date: YYYY-MM-DD format (optional, defaults to today) e.g., "2026-01-31"
  * Access: client (own users), admin, super_admin, user (own data only)
  * 
- * Returns panchang data if exists in DB, otherwise returns message to use POST endpoint
- * Supports: current date, past dates, and future dates (if previously fetched)
+ * Location Logic:
+ * 1. First checks if panchang exists in DB for the date
+ * 2. If not found, tries to fetch using user's current liveLocation
+ * 3. If user has no liveLocation, returns 404 with helpful message
+ * 
+ * Returns panchang data if exists, or auto-fetches using liveLocation if available
  * 
  * Examples:
  *   GET /api/client/users/:userId/panchang                     // Today's panchang
  *   GET /api/client/users/:userId/panchang?date=2026-01-31     // Specific date
- *   GET /api/client/users/:userId/panchang?date=2026-02-15     // Future date (if exists)
+ *   GET /api/client/users/:userId/panchang?date=2026-02-15     // Future date
  */
 router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     let { date } = req.query;
 
-    // Validate user
+    // Validate user and fetch live location
     const user = await User.findById(userId)
       .select('clientId liveLocation')
       .lean();
@@ -745,7 +749,7 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
       });
     }
 
-    // Check if panchang data exists in DB for this date
+    // STEP 1: Check if panchang data exists in DB for this date
     const panchangData = await Panchang.findOne({
       userId,
       dateKey: date
@@ -754,11 +758,11 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
     if (panchangData) {
       console.log('[Client API] Panchang data found in DB for date:', date);
       
-      // Format the response
+      // Format the response - location from panchang table
       const formattedData = {
         dateKey: panchangData.dateKey,
         requestDate: panchangData.requestDate,
-        location: panchangData.location,
+        location: panchangData.location, // Location from panchang table
         basicPanchang: panchangData.basicPanchang,
         advancedPanchang: panchangData.advancedPanchang,
         chaughadiyaMuhurta: panchangData.chaughadiyaMuhurta,
@@ -772,24 +776,70 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
         source: 'database',
         data: formattedData
       });
-    } else {
-      // Data not found in DB
-      console.log('[Client API] No panchang data found in DB for date:', date);
-      
-      // Check if user has live location for helpful message
-      const hasLocation = user.liveLocation?.latitude !== null && 
-                         user.liveLocation?.latitude !== undefined &&
-                         user.liveLocation?.longitude !== null && 
-                         user.liveLocation?.longitude !== undefined;
+    }
 
+    // STEP 2: Panchang not found in DB - try to fetch using user's liveLocation
+    console.log('[Client API] No panchang data found in DB for date:', date);
+    
+    // Check if user has live location
+    const hasLocation = user.liveLocation?.latitude !== null && 
+                       user.liveLocation?.latitude !== undefined &&
+                       user.liveLocation?.longitude !== null && 
+                       user.liveLocation?.longitude !== undefined;
+
+    if (!hasLocation) {
+      // No live location - cannot auto-fetch
       return res.status(404).json({
         success: false,
         message: `No panchang data found for date: ${date}`,
-        suggestion: hasLocation 
-          ? `Use POST /api/client/users/${userId}/panchang with date in body to fetch and save panchang data for this date`
-          : `Update user's live location first, then use POST endpoint to fetch panchang data`,
+        reason: 'User has no live location stored',
+        suggestion: 'Update user live location first, then the panchang will be automatically fetched',
         dateRequested: date,
-        hasLocation
+        hasLocation: false
+      });
+    }
+
+    // STEP 3: User has liveLocation - auto-fetch panchang data
+    console.log('[Client API] Auto-fetching panchang using user liveLocation for date:', date);
+    
+    try {
+      // Parse the date string to create proper date object
+      const requestDate = new Date(date);
+      
+      if (isNaN(requestDate.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date value provided'
+        });
+      }
+
+      // Fetch panchang data using user's live location
+      const fetchedPanchangData = await panchangService.getCompletePanchangData(
+        userId,
+        requestDate.toISOString(),
+        user.liveLocation.latitude,
+        user.liveLocation.longitude,
+        false // Don't force refresh
+      );
+
+      console.log('[Client API] Successfully auto-fetched and saved panchang for date:', date);
+
+      return res.json({
+        success: true,
+        source: 'api',
+        message: 'Panchang data fetched and saved automatically using user live location',
+        autoFetched: true,
+        data: fetchedPanchangData
+      });
+
+    } catch (fetchError) {
+      console.error('[Client API] Auto-fetch panchang error:', fetchError);
+      
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to auto-fetch panchang data',
+        error: process.env.NODE_ENV === 'development' ? fetchError.message : undefined,
+        suggestion: `You can try using POST /api/client/users/${userId}/panchang with date: ${date} to manually fetch`
       });
     }
 
@@ -803,7 +853,6 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
   }
 });
 
-/**
  * POST - Fetch and save panchang data for any date (current, past, or future)
  * POST /api/client/users/:userId/panchang
  * Body: { 
@@ -982,21 +1031,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
   }
 });
 
-/**
- * GET panchang data for multiple dates (batch retrieval)
- * GET /api/client/users/:userId/panchang/batch
- * Query params: 
- *   - startDate: YYYY-MM-DD format (required)
- *   - endDate: YYYY-MM-DD format (required)
- *   - limit: maximum number of records (optional, default 30, max 90)
- * Access: client (own users), admin, super_admin, user (own data only)
- * 
- * Returns all panchang data available in DB for the date range
- * Useful for calendar views or date range queries
- * 
- * Example:
- *   GET /api/client/users/:userId/panchang/batch?startDate=2026-01-01&endDate=2026-01-31
- */
+
 router.get('/users/:userId/panchang/batch', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
