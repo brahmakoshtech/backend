@@ -358,6 +358,9 @@ router.delete('/users/:userId', authenticate, authorize('client', 'admin', 'supe
   }
 });
 
+// FIX FOR: /api/client/users/:userId/complete-details endpoint
+// Replace the existing endpoint in your client.js with this updated version
+
 /**
  * Get user's complete details including astrology data
  * GET /api/client/users/:userId/complete-details
@@ -394,22 +397,42 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
     let astrologyData = null;
     let astrologyError = null;
 
+    // FIXED: Check for required fields including liveLocation for coordinates
     const hasRequiredFields = user.profile?.dob && 
                              user.profile?.timeOfBirth && 
-                             (user.profile?.latitude !== null && user.profile?.latitude !== undefined) &&
-                             (user.profile?.longitude !== null && user.profile?.longitude !== undefined);
+                             (user.liveLocation?.latitude !== null && user.liveLocation?.latitude !== undefined) &&
+                             (user.liveLocation?.longitude !== null && user.liveLocation?.longitude !== undefined);
 
     if (hasRequiredFields) {
       try {
         console.log('[Client API] Fetching astrology data from service...');
-        astrologyData = await astrologyService.getCompleteAstrologyData(userId, user.profile, forceRefresh);
+        
+        // FIXED: Merge liveLocation coordinates into profile for astrology calculation
+        const profileWithLocation = {
+          ...user.profile,
+          latitude: user.liveLocation.latitude,
+          longitude: user.liveLocation.longitude
+        };
+        
+        astrologyData = await astrologyService.getCompleteAstrologyData(
+          userId, 
+          profileWithLocation, 
+          forceRefresh
+        );
         console.log('[Client API] Astrology data retrieved successfully');
       } catch (error) {
         console.error('[Client API] Astrology generation error:', error);
         astrologyError = error.message;
       }
     } else {
-      astrologyError = 'Incomplete birth details: dob, timeOfBirth, latitude, and longitude are required';
+      // Detailed error message
+      const missing = [];
+      if (!user.profile?.dob) missing.push('dob');
+      if (!user.profile?.timeOfBirth) missing.push('timeOfBirth');
+      if (user.liveLocation?.latitude === null || user.liveLocation?.latitude === undefined) missing.push('latitude (liveLocation)');
+      if (user.liveLocation?.longitude === null || user.liveLocation?.longitude === undefined) missing.push('longitude (liveLocation)');
+      
+      astrologyError = `Incomplete birth details. Missing: ${missing.join(', ')}`;
     }
 
     res.json({
@@ -426,6 +449,127 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
     res.status(500).json({
       success: false,
       message: 'Failed to fetch user details',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ALSO UPDATE: /api/client/users/:userId/astrology endpoint
+router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const forceRefresh = req.query.refresh === 'true';
+
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation') // ADDED: liveLocation
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view astrology data for this user'
+      });
+    }
+
+    // FIXED: Check liveLocation for coordinates
+    if (!user.profile?.dob || !user.profile?.timeOfBirth || 
+        user.liveLocation?.latitude === null || user.liveLocation?.latitude === undefined ||
+        user.liveLocation?.longitude === null || user.liveLocation?.longitude === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'User has incomplete birth details',
+        missingFields: {
+          dob: !user.profile?.dob,
+          timeOfBirth: !user.profile?.timeOfBirth,
+          latitude: user.liveLocation?.latitude === null || user.liveLocation?.latitude === undefined,
+          longitude: user.liveLocation?.longitude === null || user.liveLocation?.longitude === undefined
+        }
+      });
+    }
+
+    // FIXED: Merge liveLocation coordinates into profile
+    const profileWithLocation = {
+      ...user.profile,
+      latitude: user.liveLocation.latitude,
+      longitude: user.liveLocation.longitude
+    };
+
+    const astrologyData = await astrologyService.getCompleteAstrologyData(
+      userId, 
+      profileWithLocation, 
+      forceRefresh
+    );
+
+    res.json({
+      success: true,
+      data: astrologyData
+    });
+
+  } catch (error) {
+    console.error('[Client API] Get astrology data error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch astrology data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ALSO UPDATE: /api/client/users/:userId/astrology/refresh endpoint
+router.post('/users/:userId/astrology/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation') // ADDED: liveLocation
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to refresh astrology data for this user'
+      });
+    }
+
+    // FIXED: Merge liveLocation coordinates into profile
+    const profileWithLocation = {
+      ...user.profile,
+      latitude: user.liveLocation?.latitude,
+      longitude: user.liveLocation?.longitude
+    };
+
+    const astrologyData = await astrologyService.refreshAstrologyData(
+      userId, 
+      profileWithLocation
+    );
+
+    res.json({
+      success: true,
+      message: 'Astrology data refreshed successfully',
+      data: astrologyData
+    });
+
+  } catch (error) {
+    console.error('[Client API] Refresh astrology data error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to refresh astrology data',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

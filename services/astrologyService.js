@@ -10,11 +10,11 @@ class AstrologyService {
     this.apiUserId = process.env.ASTROLOGY_API_USER_ID;
     this.apiKey = process.env.ASTROLOGY_API_KEY;
     
-    // Create axios instance with basic auth
+    // Create axios instance with basic auth - FIXED: Use JSON content-type
     this.apiClient = axios.create({
       baseURL: this.baseUrl,
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded'
+        'Content-Type': 'application/json'
       },
       auth: {
         username: this.apiUserId,
@@ -101,11 +101,31 @@ class AstrologyService {
   }
 
   /**
-   * Prepare birth data for API request (x-www-form-urlencoded format)
+   * Prepare birth data for API request (JSON format)
    */
   prepareBirthData(profile) {
     const birthDate = new Date(profile.dob);
-    const [hours, minutes] = profile.timeOfBirth.split(':').map(Number);
+    
+    // Parse time - handle both "4:45 AM" and "04:45" formats
+    let hours, minutes;
+    const timeStr = profile.timeOfBirth.trim();
+    
+    if (timeStr.includes('AM') || timeStr.includes('PM')) {
+      // 12-hour format: "4:45 AM" or "11:30 PM"
+      const [time, period] = timeStr.split(' ');
+      const [h, m] = time.split(':').map(Number);
+      
+      hours = h;
+      if (period === 'PM' && hours !== 12) {
+        hours += 12;
+      } else if (period === 'AM' && hours === 12) {
+        hours = 0;
+      }
+      minutes = m;
+    } else {
+      // 24-hour format: "16:30"
+      [hours, minutes] = timeStr.split(':').map(Number);
+    }
     
     return {
       day: birthDate.getDate(),
@@ -120,70 +140,62 @@ class AstrologyService {
   }
 
   /**
-   * Convert object to URL-encoded format
-   */
-  toUrlEncoded(data) {
-    return Object.keys(data)
-      .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`)
-      .join('&');
-  }
-
-  /**
    * Fetch birth details from API
-   * Endpoint: /v1/birth_details
+   * Endpoint: /birth_details
    */
   async fetchBirthDetails(birthData) {
     try {
       console.log('[Astrology Service] Fetching birth_details...');
-      const response = await this.apiClient.post('/birth_details', this.toUrlEncoded(birthData));
+      console.log('[Astrology Service] Request data:', JSON.stringify(birthData));
+      const response = await this.apiClient.post('/birth_details', birthData);
       return response.data;
     } catch (error) {
-      console.error('[Astrology Service] Birth details error:', error.message);
+      console.error('[Astrology Service] Birth details error:', error.response?.data || error.message);
       throw new Error(`Failed to fetch birth details: ${error.message}`);
     }
   }
 
   /**
    * Fetch astro details from API
-   * Endpoint: /v1/astro_details
+   * Endpoint: /astro_details
    */
   async fetchAstroDetails(birthData) {
     try {
       console.log('[Astrology Service] Fetching astro_details...');
-      const response = await this.apiClient.post('/astro_details', this.toUrlEncoded(birthData));
+      const response = await this.apiClient.post('/astro_details', birthData);
       return response.data;
     } catch (error) {
-      console.error('[Astrology Service] Astro details error:', error.message);
+      console.error('[Astrology Service] Astro details error:', error.response?.data || error.message);
       throw new Error(`Failed to fetch astro details: ${error.message}`);
     }
   }
 
   /**
    * Fetch planets from API
-   * Endpoint: /v1/planets
+   * Endpoint: /planets
    */
   async fetchPlanets(birthData) {
     try {
       console.log('[Astrology Service] Fetching planets...');
-      const response = await this.apiClient.post('/planets', this.toUrlEncoded(birthData));
+      const response = await this.apiClient.post('/planets', birthData);
       return response.data;
     } catch (error) {
-      console.error('[Astrology Service] Planets error:', error.message);
+      console.error('[Astrology Service] Planets error:', error.response?.data || error.message);
       throw new Error(`Failed to fetch planets: ${error.message}`);
     }
   }
 
   /**
    * Fetch extended planets from API
-   * Endpoint: /v1/planets/extended
+   * Endpoint: /planets/extended
    */
   async fetchPlanetsExtended(birthData) {
     try {
       console.log('[Astrology Service] Fetching planets/extended...');
-      const response = await this.apiClient.post('/planets/extended', this.toUrlEncoded(birthData));
+      const response = await this.apiClient.post('/planets/extended', birthData);
       return response.data;
     } catch (error) {
-      console.error('[Astrology Service] Extended planets error:', error.message);
+      console.error('[Astrology Service] Extended planets error:', error.response?.data || error.message);
       throw new Error(`Failed to fetch extended planets: ${error.message}`);
     }
   }
@@ -193,7 +205,25 @@ class AstrologyService {
    */
   processAstrologyData(userId, profile, birthDetailsData, astroDetailsData, planetsData, planetsExtendedData) {
     const birthDate = new Date(profile.dob);
-    const [hour, minute] = profile.timeOfBirth.split(':').map(Number);
+    
+    // Parse time - handle both "4:45 AM" and "04:45" formats
+    let hour, minute;
+    const timeStr = profile.timeOfBirth.trim();
+    
+    if (timeStr.includes('AM') || timeStr.includes('PM')) {
+      const [time, period] = timeStr.split(' ');
+      const [h, m] = time.split(':').map(Number);
+      
+      hour = h;
+      if (period === 'PM' && hour !== 12) {
+        hour += 12;
+      } else if (period === 'AM' && hour === 12) {
+        hour = 0;
+      }
+      minute = m;
+    } else {
+      [hour, minute] = timeStr.split(':').map(Number);
+    }
 
     return {
       userId,
