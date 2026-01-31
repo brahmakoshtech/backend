@@ -574,7 +574,6 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
     });
   }
 });
-
 /**
  * Get only astrology data for a user
  * GET /api/client/users/:userId/astrology
