@@ -682,21 +682,31 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
   }
 });
 
+// ==========================================
+// PANCHANG API ENDPOINTS - Add to client.js
+// ==========================================
+
 /**
- * Get panchang data for current date and location
- * POST /api/client/users/:userId/panchang
- * Body: { currentDate: "2026-01-24T10:30:00Z", latitude: 19.076, longitude: 72.8777 } (all optional)
- * Query params: ?refresh=true to force refresh from API
+ * GET panchang data by date from database
+ * GET /api/client/users/:userId/panchang
+ * Query params: 
+ *   - date: YYYY-MM-DD format (optional, defaults to today) e.g., "2026-01-31"
  * Access: client (own users), admin, super_admin, user (own data only)
- * Note: currentDate defaults to now, location defaults to user's liveLocation from DB
+ * 
+ * Returns panchang data if exists in DB, otherwise returns message to use POST endpoint
+ * Supports: current date, past dates, and future dates (if previously fetched)
+ * 
+ * Examples:
+ *   GET /api/client/users/:userId/panchang                     // Today's panchang
+ *   GET /api/client/users/:userId/panchang?date=2026-01-31     // Specific date
+ *   GET /api/client/users/:userId/panchang?date=2026-02-15     // Future date (if exists)
  */
-router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
-    let { currentDate, latitude, longitude } = req.body;
-    const forceRefresh = req.query.refresh === 'true';
+    let { date } = req.query;
 
-    // Validate user and fetch live location
+    // Validate user
     const user = await User.findById(userId)
       .select('clientId liveLocation')
       .lean();
@@ -716,10 +726,171 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       });
     }
 
-    // Use current date/time if not provided
-    if (!currentDate) {
-      currentDate = new Date().toISOString();
-      console.log('[Client API] No currentDate provided, using now:', currentDate);
+    // If no date provided, use today
+    if (!date) {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      date = `${year}-${month}-${day}`;
+      console.log('[Client API] No date provided, using today:', date);
+    }
+
+    // Validate date format (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Please use YYYY-MM-DD format (e.g., 2026-01-31)'
+      });
+    }
+
+    // Check if panchang data exists in DB for this date
+    const panchangData = await Panchang.findOne({
+      userId,
+      dateKey: date
+    }).lean();
+
+    if (panchangData) {
+      console.log('[Client API] Panchang data found in DB for date:', date);
+      
+      // Format the response
+      const formattedData = {
+        dateKey: panchangData.dateKey,
+        requestDate: panchangData.requestDate,
+        location: panchangData.location,
+        basicPanchang: panchangData.basicPanchang,
+        advancedPanchang: panchangData.advancedPanchang,
+        chaughadiyaMuhurta: panchangData.chaughadiyaMuhurta,
+        dailyNakshatraPrediction: panchangData.dailyNakshatraPrediction,
+        lastCalculated: panchangData.lastCalculated,
+        calculationSource: panchangData.calculationSource
+      };
+
+      return res.json({
+        success: true,
+        source: 'database',
+        data: formattedData
+      });
+    } else {
+      // Data not found in DB
+      console.log('[Client API] No panchang data found in DB for date:', date);
+      
+      // Check if user has live location for helpful message
+      const hasLocation = user.liveLocation?.latitude !== null && 
+                         user.liveLocation?.latitude !== undefined &&
+                         user.liveLocation?.longitude !== null && 
+                         user.liveLocation?.longitude !== undefined;
+
+      return res.status(404).json({
+        success: false,
+        message: `No panchang data found for date: ${date}`,
+        suggestion: hasLocation 
+          ? `Use POST /api/client/users/${userId}/panchang with date in body to fetch and save panchang data for this date`
+          : `Update user's live location first, then use POST endpoint to fetch panchang data`,
+        dateRequested: date,
+        hasLocation
+      });
+    }
+
+  } catch (error) {
+    console.error('[Client API] Get panchang by date error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch panchang data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * POST - Fetch and save panchang data for any date (current, past, or future)
+ * POST /api/client/users/:userId/panchang
+ * Body: { 
+ *   date: "2026-01-31" or { day: 31, month: 1, year: 2026 }, 
+ *   latitude: 28.5842 (optional),
+ *   longitude: 77.3150 (optional)
+ * }
+ * Access: client (own users), admin, super_admin, user (own data only)
+ * 
+ * This endpoint:
+ * 1. Fetches panchang data from API for the specified date
+ * 2. Saves it to database
+ * 3. Returns the panchang data
+ * 4. Future GET requests for this date will return saved data
+ * 
+ * If date not provided, defaults to current date
+ * If location not provided, uses user's liveLocation from DB
+ * 
+ * Examples:
+ *   POST /api/client/users/:userId/panchang
+ *   Body: { date: "2026-02-15" }  // Fetch and save for future date
+ *   
+ *   POST /api/client/users/:userId/panchang
+ *   Body: { date: "2026-01-20" }  // Fetch and save for past date
+ *   
+ *   POST /api/client/users/:userId/panchang
+ *   Body: {}  // Fetch and save for today
+ */
+router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    let { date, latitude, longitude } = req.body;
+
+    // Validate user and fetch live location
+    const user = await User.findById(userId)
+      .select('clientId liveLocation')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to fetch panchang data for this user'
+      });
+    }
+
+    // Process date - convert string format to object if needed
+    let currentDate;
+    if (!date) {
+      // No date provided - use today
+      currentDate = new Date();
+      console.log('[Client API] No date provided, using today');
+    } else if (typeof date === 'string') {
+      // String format: "2026-01-31"
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(date)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid date format. Please use YYYY-MM-DD format (e.g., 2026-01-31) or object format { day, month, year }'
+        });
+      }
+      currentDate = new Date(date);
+      console.log('[Client API] Using provided date string:', date);
+    } else if (typeof date === 'object' && date.day && date.month && date.year) {
+      // Object format: { day: 31, month: 1, year: 2026 }
+      currentDate = new Date(date.year, date.month - 1, date.day);
+      console.log('[Client API] Using provided date object:', date);
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Provide either string "YYYY-MM-DD" or object { day, month, year }'
+      });
+    }
+
+    // Validate that date is valid
+    if (isNaN(currentDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date value provided'
+      });
     }
 
     // Use live location from DB if not provided in request
@@ -730,7 +901,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       } else {
         return res.status(400).json({
           success: false,
-          message: 'Latitude not provided and user has no live location stored'
+          message: 'Latitude not provided and user has no live location stored. Please update live location first.'
         });
       }
     }
@@ -742,27 +913,67 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       } else {
         return res.status(400).json({
           success: false,
-          message: 'Longitude not provided and user has no live location stored'
+          message: 'Longitude not provided and user has no live location stored. Please update live location first.'
         });
       }
     }
 
-    // Get panchang data with current date and location
+    // Get date key for this request
+    const dateKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}-${String(currentDate.getDate()).padStart(2, '0')}`;
+    
+    // Check if data already exists for this date
+    const existingData = await Panchang.findOne({
+      userId,
+      dateKey
+    });
+
+    if (existingData) {
+      console.log('[Client API] Panchang data already exists for date:', dateKey);
+      
+      // Return existing data
+      const formattedData = {
+        dateKey: existingData.dateKey,
+        requestDate: existingData.requestDate,
+        location: existingData.location,
+        basicPanchang: existingData.basicPanchang,
+        advancedPanchang: existingData.advancedPanchang,
+        chaughadiyaMuhurta: existingData.chaughadiyaMuhurta,
+        dailyNakshatraPrediction: existingData.dailyNakshatraPrediction,
+        lastCalculated: existingData.lastCalculated,
+        calculationSource: existingData.calculationSource
+      };
+
+      return res.json({
+        success: true,
+        message: 'Panchang data already exists in database for this date',
+        source: 'database',
+        dateRequested: dateKey,
+        data: formattedData
+      });
+    }
+
+    // Data doesn't exist - fetch from API and save
+    console.log('[Client API] Fetching new panchang data from API for date:', dateKey);
+    
+    // Fetch panchang data from service (forceRefresh = true to ensure fresh data)
     const panchangData = await panchangService.getCompletePanchangData(
-      userId, 
-      currentDate, 
-      latitude, 
-      longitude, 
-      forceRefresh
+      userId,
+      currentDate.toISOString(),
+      latitude,
+      longitude,
+      false // Don't force refresh, let service handle caching
     );
 
     res.json({
       success: true,
+      message: 'Panchang data fetched and saved successfully',
+      source: 'api',
+      dateRequested: dateKey,
       data: panchangData
     });
 
   } catch (error) {
-    console.error('[Client API] Get panchang data error:', error);
+    console.error('[Client API] Fetch panchang data error:', error);
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch panchang data',
@@ -770,6 +981,214 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
     });
   }
 });
+
+/**
+ * GET panchang data for multiple dates (batch retrieval)
+ * GET /api/client/users/:userId/panchang/batch
+ * Query params: 
+ *   - startDate: YYYY-MM-DD format (required)
+ *   - endDate: YYYY-MM-DD format (required)
+ *   - limit: maximum number of records (optional, default 30, max 90)
+ * Access: client (own users), admin, super_admin, user (own data only)
+ * 
+ * Returns all panchang data available in DB for the date range
+ * Useful for calendar views or date range queries
+ * 
+ * Example:
+ *   GET /api/client/users/:userId/panchang/batch?startDate=2026-01-01&endDate=2026-01-31
+ */
+router.get('/users/:userId/panchang/batch', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { startDate, endDate, limit = 30 } = req.query;
+
+    // Validate user
+    const user = await User.findById(userId)
+      .select('clientId')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view panchang data for this user'
+      });
+    }
+
+    // Validate required params
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both startDate and endDate are required (YYYY-MM-DD format)'
+      });
+    }
+
+    // Validate date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Please use YYYY-MM-DD format'
+      });
+    }
+
+    // Validate limit
+    const maxLimit = Math.min(parseInt(limit), 90);
+
+    // Parse dates
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date values provided'
+      });
+    }
+
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: 'startDate must be before or equal to endDate'
+      });
+    }
+
+    // Fetch panchang data for date range
+    const panchangRecords = await Panchang.find({
+      userId,
+      dateKey: {
+        $gte: startDate,
+        $lte: endDate
+      }
+    })
+    .sort({ dateKey: 1 })
+    .limit(maxLimit)
+    .lean();
+
+    console.log('[Client API] Found', panchangRecords.length, 'panchang records for date range:', startDate, 'to', endDate);
+
+    // Format response
+    const formattedRecords = panchangRecords.map(record => ({
+      dateKey: record.dateKey,
+      requestDate: record.requestDate,
+      location: record.location,
+      basicPanchang: record.basicPanchang,
+      advancedPanchang: record.advancedPanchang,
+      chaughadiyaMuhurta: record.chaughadiyaMuhurta,
+      dailyNakshatraPrediction: record.dailyNakshatraPrediction,
+      lastCalculated: record.lastCalculated,
+      calculationSource: record.calculationSource
+    }));
+
+    res.json({
+      success: true,
+      count: formattedRecords.length,
+      dateRange: {
+        start: startDate,
+        end: endDate
+      },
+      data: formattedRecords
+    });
+
+  } catch (error) {
+    console.error('[Client API] Get batch panchang data error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch panchang data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * DELETE panchang data for a specific date
+ * DELETE /api/client/users/:userId/panchang
+ * Body: { date: "2026-01-31" }
+ * Access: client (own users), admin, super_admin (users cannot delete)
+ * 
+ * Deletes panchang data for the specified date
+ */
+router.delete('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { date } = req.body;
+
+    const user = await User.findById(userId)
+      .select('clientId')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check permissions for clients
+    if (req.user.role === 'client') {
+      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only delete panchang data for your own users'
+        });
+      }
+    }
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'date is required in request body (YYYY-MM-DD format)'
+      });
+    }
+
+    // Validate date format
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid date format. Please use YYYY-MM-DD format'
+      });
+    }
+
+    const result = await Panchang.findOneAndDelete({
+      userId,
+      dateKey: date
+    });
+
+    if (!result) {
+      return res.status(404).json({
+        success: false,
+        message: `No panchang data found for date: ${date}`
+      });
+    }
+
+    console.log('[Client API] Deleted panchang data for user:', userId, 'date:', date);
+
+    res.json({
+      success: true,
+      message: 'Panchang data deleted successfully',
+      dateDeleted: date
+    });
+
+  } catch (error) {
+    console.error('[Client API] Delete panchang data error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete panchang data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Keep the existing refresh endpoint (POST /users/:userId/panchang/refresh)
+// This endpoint remains unchanged and continues to work as before
 
 /**
  * Refresh panchang data for a user (force recalculation)
