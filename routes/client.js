@@ -1187,9 +1187,6 @@ router.delete('/users/:userId/panchang', authenticate, authorize('client', 'admi
   }
 });
 
-// Keep the existing refresh endpoint (POST /users/:userId/panchang/refresh)
-// This endpoint remains unchanged and continues to work as before
-
 /**
  * Refresh panchang data for a user (force recalculation)
  * POST /api/client/users/:userId/panchang/refresh
