@@ -853,6 +853,7 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
   }
 });
 
+/**
  * POST - Fetch and save panchang data for any date (current, past, or future)
  * POST /api/client/users/:userId/panchang
  * Body: { 

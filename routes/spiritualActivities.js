@@ -177,7 +177,6 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
 
     const activity = await SpiritualActivity.findOne({
       _id: req.params.id,
-      clientId: clientId,
       isDeleted: false
     }).populate('clientId', 'clientId');
     
@@ -196,16 +195,20 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
     activity.imageKey = imageKey;
     await activity.save();
 
+    // Generate presigned URL for immediate use
+    const presignedUrl = await getobject(imageKey, 604800);
+
     res.json({
       success: true,
       message: 'Image uploaded successfully',
       data: {
-        imageUrl: imageUrl,
+        imageUrl: presignedUrl,
         imageKey: imageKey,
         clientId: activity.clientId?.clientId || activity.clientId
       }
     });
   } catch (error) {
+    console.error('Upload image error:', error);
     res.status(500).json({
       success: false,
       message: 'Failed to upload image',
