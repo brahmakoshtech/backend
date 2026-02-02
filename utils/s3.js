@@ -242,8 +242,13 @@ export const uploadToS3 = async (file, folder = '') => {
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       Body: file.buffer,
-      ContentType: file.mimetype
-      // Remove ACL - bucket policy should handle public access
+      ContentType: file.mimetype,
+      CacheControl: 'max-age=31536000',
+      // Add metadata for better handling
+      Metadata: {
+        'uploaded-by': 'brahmkosh-app',
+        'upload-timestamp': Date.now().toString()
+      }
     });
     console.log('S3 command created, sending...');
 
@@ -256,6 +261,7 @@ export const uploadToS3 = async (file, folder = '') => {
     
     return {
       key: key,
+      Location: fileUrl,  // Add Location for backward compatibility
       url: fileUrl
     };
   } catch (error) {
