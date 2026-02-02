@@ -23,6 +23,7 @@ import superAdminRoutes from './routes/superAdmin.js';
 import clientProfileMobileRoutes from './routes/mobile/clientProfile.js';
 import userProfileMobileRoutes from './routes/mobile/userProfile.js';
 import partnerProfileMobileRoutes from './routes/mobile/partnerProfile.js';
+import mobileContentRoutes from './routes/mobile/content.js';
 import chatRoutes from './routes/mobile/chat.js';
 import voiceRoutes from './routes/mobile/voice.js';
 import uploadRoutes from './routes/upload.js';
@@ -119,7 +120,7 @@ app.use('/api/mobile/user', userProfileMobileRoutes);
 app.use('/api/mobile/chat', chatRoutes);
 app.use('/api/mobile/voice', voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
-// app.use('/api/mobile/content', mobileContentRoutes);
+app.use('/api/mobile/content', mobileContentRoutes);
 
 // Upload & Media Routes
 app.use('/api/upload', uploadRoutes);
