@@ -45,6 +45,7 @@ import spiritualConfigurationRoutes from './routes/spiritualConfigurations.js';
 import spiritualClipRoutes from './routes/spiritualClips.js';
 import spiritualStatsRoutes from './routes/spiritualStats.js';
 import chapterRoutes from './routes/chapters.js';
+import shlokaRoutes from './routes/shlokas.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -144,6 +145,7 @@ app.use('/api/founder-messages', founderMessageRoutes);
 app.use('/api/brand-assets', brandAssetRoutes);
 app.use('/api/spiritual-stats', spiritualStatsRoutes);
 app.use('/api/chapters', chapterRoutes);
+app.use('/api/shlokas', shlokaRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -12,17 +12,66 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB limit
 });
 
+// Helper to get actual clientId
+const getClientId = async (user, decodedClientId) => {
+  let clientId;
+  
+  if (user.role === 'client') {
+    clientId = user.clientId; // For client role, use the clientId field directly
+  } else if (user.role === 'user') {
+    clientId = user.clientId?.clientId || user.tokenClientId || decodedClientId;
+    
+    // Convert ObjectId to actual clientId
+    if (clientId && clientId.length === 24 && /^[0-9a-fA-F]{24}$/.test(clientId)) {
+      const Client = (await import('../models/Client.js')).default;
+      const client = await Client.findById(clientId);
+      if (client?.clientId) clientId = client.clientId;
+    }
+  } else {
+    clientId = user._id;
+  }
+  
+  return clientId;
+};
+
 // GET all chapters
 router.get('/', authenticate, async (req, res) => {
   try {
     const { includeInactive } = req.query;
-    const filter = { clientId: req.user._id };
     
-    if (!includeInactive || includeInactive !== 'true') {
-      filter.status = 'active';
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
+    // Check all chapters in database first
+    const allChapters = await Chapter.find({});
+    
+    // TEMPORARY FIX: If no chapters found with string clientId, try ObjectId
+    let filter = { clientId: actualClientId };
+    let chapters = await Chapter.find(filter).sort({ chapterNumber: 1 });
+    
+    if (chapters.length === 0 && actualClientId) {
+      // Try to find client by clientId and use their ObjectId
+      const Client = (await import('../models/Client.js')).default;
+      const client = await Client.findOne({ clientId: actualClientId });
+      if (client) {
+        // Query with ObjectId but convert to string for comparison
+        const chaptersWithObjectId = await Chapter.find({ clientId: client._id }).sort({ chapterNumber: 1 });
+        
+        // Update chapters to use correct clientId format
+        if (chaptersWithObjectId.length > 0) {
+          const updateResult = await Chapter.updateMany(
+            { clientId: client._id },
+            { clientId: actualClientId }
+          );
+          // Reload chapters with updated clientId
+          chapters = await Chapter.find({ clientId: actualClientId }).sort({ chapterNumber: 1 });
+        }
+      }
     }
     
-    const chapters = await Chapter.find(filter).sort({ chapterNumber: 1 });
+    // Apply status filter
+    if (!includeInactive || includeInactive !== 'true') {
+      chapters = chapters.filter(ch => ch.status === 'active');
+    }
     
     // Generate presigned URLs for images
     const chaptersWithSignedUrls = await Promise.all(
@@ -54,16 +103,71 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
+// GET single chapter by ID
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
+    const chapter = await Chapter.findOne({ 
+      _id: req.params.id, 
+      clientId: actualClientId 
+    });
+    
+    if (!chapter) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chapter not found'
+      });
+    }
+    
+    // Generate presigned URL for image
+    const chapterObj = chapter.toObject();
+    if (chapterObj.imageUrl) {
+      try {
+        const { getobject } = await import('../utils/s3.js');
+        chapterObj.imageUrl = await getobject(chapterObj.imageUrl);
+      } catch (error) {
+        console.error('Error generating presigned URL:', error);
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: chapterObj
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch chapter',
+      error: error.message
+    });
+  }
+});
+
 // POST create chapter
 router.post('/', authenticate, upload.single('image'), async (req, res) => {
   try {
     const { name, chapterNumber, description, shlokaCount, status } = req.body;
     
-    // Check if chapter number already exists
-    const existingChapter = await Chapter.findOne({ 
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
+    // Check if chapter number already exists (check both string and ObjectId formats)
+    let existingChapter = await Chapter.findOne({ 
       chapterNumber: parseInt(chapterNumber),
-      clientId: req.user._id 
+      clientId: actualClientId 
     });
+    
+    // If not found with string clientId, try ObjectId format
+    if (!existingChapter && actualClientId) {
+      const Client = (await import('../models/Client.js')).default;
+      const client = await Client.findOne({ clientId: actualClientId });
+      if (client) {
+        existingChapter = await Chapter.findOne({ 
+          chapterNumber: parseInt(chapterNumber),
+          clientId: client._id 
+        });
+      }
+    }
     
     if (existingChapter) {
       return res.status(400).json({
@@ -85,7 +189,7 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
       shlokaCount: parseInt(shlokaCount),
       imageUrl,
       status,
-      clientId: req.user._id
+      clientId: actualClientId
     });
     
     await chapter.save();
@@ -118,9 +222,11 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
 // DELETE chapter
 router.delete('/:id', authenticate, async (req, res) => {
   try {
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
     const chapter = await Chapter.findOneAndDelete({ 
       _id: req.params.id, 
-      clientId: req.user._id 
+      clientId: actualClientId 
     });
     
     if (!chapter) {
@@ -148,6 +254,8 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
   try {
     const { name, chapterNumber, description, shlokaCount, status } = req.body;
     
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
     const updateData = {
       name,
       chapterNumber: parseInt(chapterNumber),
@@ -161,10 +269,9 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
       const uploadResult = await uploadToS3(req.file, 'chapters');
       updateData.imageUrl = uploadResult.url;
     }
-    // Don't update imageUrl if no new image is provided - keep existing one
     
     const chapter = await Chapter.findOneAndUpdate(
-      { _id: req.params.id, clientId: req.user._id },
+      { _id: req.params.id, clientId: actualClientId },
       updateData,
       { new: true }
     );
@@ -176,10 +283,21 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
       });
     }
     
+    // Generate presigned URL for response
+    const responseChapter = chapter.toObject();
+    if (responseChapter.imageUrl) {
+      try {
+        const { getobject } = await import('../utils/s3.js');
+        responseChapter.imageUrl = await getobject(responseChapter.imageUrl);
+      } catch (error) {
+        console.error('Error generating presigned URL for response:', error);
+      }
+    }
+    
     res.json({
       success: true,
       message: 'Chapter updated successfully',
-      data: chapter
+      data: responseChapter
     });
   } catch (error) {
     res.status(500).json({
@@ -193,9 +311,11 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
 // PATCH toggle chapter status
 router.patch('/:id/toggle-status', authenticate, async (req, res) => {
   try {
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
     const chapter = await Chapter.findOne({ 
       _id: req.params.id, 
-      clientId: req.user._id 
+      clientId: actualClientId 
     });
     
     if (!chapter) {
@@ -208,10 +328,21 @@ router.patch('/:id/toggle-status', authenticate, async (req, res) => {
     chapter.status = chapter.status === 'active' ? 'inactive' : 'active';
     await chapter.save();
     
+    // Generate presigned URL for response
+    const responseChapter = chapter.toObject();
+    if (responseChapter.imageUrl) {
+      try {
+        const { getobject } = await import('../utils/s3.js');
+        responseChapter.imageUrl = await getobject(responseChapter.imageUrl);
+      } catch (error) {
+        console.error('Error generating presigned URL for toggle response:', error);
+      }
+    }
+    
     res.json({
       success: true,
       message: `Chapter ${chapter.status === 'active' ? 'enabled' : 'disabled'} successfully`,
-      data: chapter
+      data: responseChapter
     });
   } catch (error) {
     res.status(500).json({
@@ -232,10 +363,12 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
       });
     }
     
+    const actualClientId = await getClientId(req.user, req.decodedClientId);
+    
     const uploadResult = await uploadToS3(req.file, 'chapters');
     
     const chapter = await Chapter.findOneAndUpdate(
-      { _id: req.params.id, clientId: req.user._id },
+      { _id: req.params.id, clientId: actualClientId },
       { imageUrl: uploadResult.url },
       { new: true }
     );

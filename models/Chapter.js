@@ -10,8 +10,7 @@ const chapterSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 1,
-    max: 18,
-    unique: true
+    max: 18
   },
   description: {
     type: String,
@@ -32,14 +31,16 @@ const chapterSchema = new mongoose.Schema({
     enum: ['active', 'inactive'],
     default: 'active'
   },
-  clientId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Client',
-    required: true
-  }
+   clientId: {
+      type: String,
+      required: true
+    },
 }, {
   timestamps: true
 });
+
+// Compound unique index - chapterNumber unique per client
+chapterSchema.index({ chapterNumber: 1, clientId: 1 }, { unique: true });
 
 const Chapter = mongoose.model('Chapter', chapterSchema);
 
