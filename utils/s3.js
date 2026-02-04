@@ -39,18 +39,11 @@ export const putobject = async (key, contentType) => {
 };
 
 // Generate presigned URL for direct browser upload
-export const generateUploadUrl = async (fileName, contentType, folder = '') => {
+export const generateUploadUrl = async (fileName, contentType, key) => {
   try {
-    const cleanFileName = fileName
-      .replace(/\s+/g, '_')
-      .replace(/[^a-zA-Z0-9._-]/g, '')
-      .toLowerCase();
-    
-    const key = folder ? `${folder}/${Date.now()}-${cleanFileName}` : `${Date.now()}-${cleanFileName}`;
-    
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
-      Key: key,
+      Key: key, // Use the key directly instead of generating a new one
       ContentType: contentType,
       CacheControl: 'max-age=31536000',
       Metadata: {

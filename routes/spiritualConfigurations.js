@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken } from '../middleware/authMiddleware.js';
 import SpiritualConfiguration from '../models/SpiritualConfiguration.js';
 
 const router = express.Router();
@@ -15,7 +15,7 @@ const createConfiguration = async (req, res) => {
     // Get clientId based on user role
     let clientId;
     if (req.user.role === 'client') {
-      clientId = req.user.clientId; // For client users
+      clientId = req.user.clientId; // Already in CLI-XXXXXX format
     } else if (req.user.role === 'user') {
       // For regular users, get clientId from their profile
       clientId = req.user.clientId?.clientId || req.user.tokenClientId;
@@ -82,12 +82,39 @@ const getConfigurations = async (req, res) => {
       query.clientId = clientId;
     }
     
-    if (req.query.type) {
-      query.type = req.query.type;
+    // Handle categoryId to type mapping for backward compatibility
+    if (req.query.categoryId) {
+      // Map categoryId to type for existing configurations
+      const categoryToTypeMap = {
+        '69787dfbbeaf7e42675a221d': 'meditation',
+        '69787dcbbeaf7e42675a2212': 'chanting', 
+        '69787d8bbeaf7e42675a2207': 'silence',
+        '69787d32beaf7e42675a21f8': 'prayer'
+      };
+      
+      const mappedType = categoryToTypeMap[req.query.categoryId];
+      if (mappedType) {
+        // First try with categoryId, if no results then try with type
+        const categoryQuery = { ...query, categoryId: req.query.categoryId };
+        const categoryConfigs = await SpiritualConfiguration.find(categoryQuery).sort({ createdAt: -1 });
+        
+        if (categoryConfigs.length > 0) {
+          return res.status(200).json({
+            success: true,
+            data: categoryConfigs,
+            count: categoryConfigs.length
+          });
+        } else {
+          // Fallback to type filter
+          query.type = mappedType;
+        }
+      } else {
+        query.categoryId = req.query.categoryId;
+      }
     }
     
-    if (req.query.categoryId) {
-      query.categoryId = req.query.categoryId;
+    if (req.query.type) {
+      query.type = req.query.type;
     }
     
     const configurations = await SpiritualConfiguration.find(query).sort({ createdAt: -1 });
