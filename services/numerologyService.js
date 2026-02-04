@@ -2,10 +2,11 @@
 
 import axios from 'axios';
 import Numerology from '../models/Numerology.js';
+import NumerologyUserProfile from '../models/NumerologyUserProfile.js';
 
 class NumerologyService {
   constructor() {
-    this.baseUrl = 'https://json.astrologyapi.com/v1';
+    this.baseUrl = process.env.ASTROLOGY_API_BASE_URL || 'https://json.astrologyapi.com/v1';
     this.apiUserId = process.env.ASTROLOGY_API_USER_ID;
     this.apiKey = process.env.ASTROLOGY_API_KEY;
     
@@ -18,8 +19,25 @@ class NumerologyService {
       },
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded'
-      }
+      },
+      timeout: 30000
     });
+  }
+
+  /**
+   * Retry helper for AWS/first-hit warmup - some APIs need an initial request
+   */
+  async withRetry(fn, retries = 2) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (retries > 0 && (err.message?.includes('first') || err.code === 'ECONNREFUSED' || err.response?.status >= 500)) {
+        console.log('[Numerology Service] Retrying after initial failure...');
+        await new Promise(r => setTimeout(r, 1500));
+        return this.withRetry(fn, retries - 1);
+      }
+      throw err;
+    }
   }
 
   /**
@@ -48,118 +66,113 @@ class NumerologyService {
   }
 
   /**
-   * Call the numerology API endpoints
+   * Call the numerology API endpoints (with retry for AWS first-hit)
    */
   async callNumeroAPI(endpoint, day, month, year, name) {
+    const formData = new URLSearchParams();
+    formData.append('day', day.toString());
+    formData.append('month', month.toString());
+    formData.append('year', year.toString());
+    formData.append('name', name);
+
+    console.log(`[Numerology Service] Calling ${endpoint} with params:`, { day, month, year, name });
+
     try {
-      const formData = new URLSearchParams();
-      formData.append('day', day.toString());
-      formData.append('month', month.toString());
-      formData.append('year', year.toString());
-      formData.append('name', name);
-
-      console.log(`[Numerology Service] Calling ${endpoint} with params:`, { day, month, year, name });
-
-      const response = await this.axiosInstance.post(endpoint, formData);
-      
-      console.log(`[Numerology Service] ${endpoint} API response received`);
-      return response.data;
+      return await this.withRetry(async () => {
+        const response = await this.axiosInstance.post(endpoint, formData);
+        console.log(`[Numerology Service] ${endpoint} API response received`);
+        return response.data;
+      });
     } catch (error) {
       console.error(`[Numerology Service] Error calling ${endpoint}:`, error.message);
-      throw new Error(`Failed to fetch ${endpoint}: ${error.message}`);
+      const msg = error.response?.data?.message || error.message;
+      throw new Error(`Failed to fetch ${endpoint}: ${msg}`);
     }
   }
 
   /**
-   * Fetch all three numerology endpoints
+   * Get or create numeroReport + numeroTable (static - based on name + DOB, fetch ONCE per user)
+   * Returns null if userDob not provided
    */
-  async fetchAllNumerologyData(day, month, year, name) {
-    try {
-      console.log('[Numerology Service] Fetching all numerology data...');
+  async getNumerologyStaticData(userId, userName, userDob, forceRefresh = false) {
+    if (!userDob) return null;
 
-      const [numeroReport, numeroTable, dailyPrediction] = await Promise.all([
-        this.callNumeroAPI('/numero_report', day, month, year, name),
-        this.callNumeroAPI('/numero_table', day, month, year, name),
-        this.callNumeroAPI('/numero_prediction/daily', day, month, year, name)
-      ]);
+    const { day, month, year } = this.extractDateComponents(userDob);
 
-      console.log('[Numerology Service] All numerology data fetched successfully');
-
-      return {
-        numeroReport,
-        numeroTable,
-        dailyPrediction
-      };
-    } catch (error) {
-      console.error('[Numerology Service] Error fetching numerology data:', error);
-      throw error;
+    if (!forceRefresh) {
+      const existing = await NumerologyUserProfile.findOne({ userId }).lean();
+      if (existing && existing.numeroReport && existing.numeroTable) {
+        console.log('[Numerology Service] Returning cached numeroReport + numeroTable for user:', userId);
+        return { source: 'database', data: existing };
+      }
     }
+
+    console.log('[Numerology Service] Fetching numeroReport + numeroTable (once per user)...');
+    const [numeroReport, numeroTable] = await Promise.all([
+      this.callNumeroAPI('/numero_report', day, month, year, userName),
+      this.callNumeroAPI('/numero_table', day, month, year, userName)
+    ]);
+
+    const profile = await NumerologyUserProfile.findOneAndUpdate(
+      { userId },
+      { userId, name: userName, day, month, year, numeroReport, numeroTable, lastUpdated: new Date() },
+      { upsert: true, new: true }
+    ).lean();
+
+    return { source: 'api', data: profile };
   }
 
   /**
-   * Get or create numerology data for a user
+   * Get daily prediction only (changes daily - cached per user per date)
    */
-  async getNumerologyData(userId, dateInput, userName, forceRefresh = false) {
+  async getDailyPredictionOnly(userId, dateInput, userName, forceRefresh = false) {
+    const { day, month, year } = this.extractDateComponents(dateInput);
+    const normalizedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+
+    if (!forceRefresh) {
+      const existing = await Numerology.findOne({ userId, day, month, year }).lean();
+      if (existing?.dailyPrediction) {
+        return { source: 'database', data: existing.dailyPrediction };
+      }
+    }
+
+    console.log('[Numerology Service] Fetching daily prediction for date:', `${year}-${month}-${day}`);
+    const dailyPrediction = await this.callNumeroAPI('/numero_prediction/daily', day, month, year, userName);
+
+    await Numerology.findOneAndUpdate(
+      { userId, day, month, year },
+      { userId, date: normalizedDate, day, month, year, name: userName, dailyPrediction },
+      { upsert: true, new: true }
+    );
+
+    return { source: 'api', data: dailyPrediction };
+  }
+
+  /**
+   * Get full numerology data: static (report+table) once + daily prediction for date
+   */
+  async getNumerologyData(userId, dateInput, userName, userDob, forceRefresh = false) {
     try {
       const { day, month, year } = this.extractDateComponents(dateInput);
-      
-      // Create a normalized date for comparison (start of day in UTC)
-      const normalizedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+      console.log(`[Numerology Service] Getting numerology for user ${userId} on ${year}-${month}-${day}`);
 
-      console.log(`[Numerology Service] Getting numerology data for user ${userId} on ${year}-${month}-${day}`);
-
-      // Check if data exists in database for this user and date
-      if (!forceRefresh) {
-        const existingData = await Numerology.findOne({
-          userId,
-          day,
-          month,
-          year
-        }).lean();
-
-        if (existingData) {
-          console.log('[Numerology Service] Found existing numerology data in database');
-          return {
-            source: 'database',
-            data: existingData
-          };
-        }
+      // 1. Get static data (numeroReport, numeroTable) - uses user DOB, fetched once. Skip if no DOB.
+      let staticResult = null;
+      if (userDob) {
+        staticResult = await this.getNumerologyStaticData(userId, userName, userDob, forceRefresh);
       }
 
-      console.log('[Numerology Service] No existing data found, fetching from API...');
+      // 2. Get daily prediction - uses request date, cached per date
+      const dailyResult = await this.getDailyPredictionOnly(userId, dateInput, userName, forceRefresh);
 
-      // Fetch fresh data from API
-      const apiData = await this.fetchAllNumerologyData(day, month, year, userName);
-
-      // Save or update in database
-      const numerologyData = await Numerology.findOneAndUpdate(
-        { userId, day, month, year },
-        {
-          userId,
-          date: normalizedDate,
-          day,
-          month,
-          year,
-          name: userName,
-          numeroReport: apiData.numeroReport,
-          numeroTable: apiData.numeroTable,
-          dailyPrediction: apiData.dailyPrediction,
-          apiCallDate: new Date()
-        },
-        {
-          upsert: true,
-          new: true,
-          setDefaultsOnInsert: true
-        }
-      ).lean();
-
-      console.log('[Numerology Service] Numerology data saved to database');
+      const combined = staticResult?.data
+        ? { ...staticResult.data, dailyPrediction: dailyResult.data }
+        : { numeroReport: null, numeroTable: null, dailyPrediction: dailyResult.data };
 
       return {
-        source: 'api',
-        data: numerologyData
+        source: (staticResult?.source === 'api') || dailyResult.source === 'api' ? 'api' : 'database',
+        data: combined
       };
-
     } catch (error) {
       console.error('[Numerology Service] Error in getNumerologyData:', error);
       throw error;
@@ -169,9 +182,9 @@ class NumerologyService {
   /**
    * Force refresh numerology data from API
    */
-  async refreshNumerologyData(userId, dateInput, userName) {
+  async refreshNumerologyData(userId, dateInput, userName, userDob = null) {
     console.log('[Numerology Service] Force refreshing numerology data...');
-    return this.getNumerologyData(userId, dateInput, userName, true);
+    return this.getNumerologyData(userId, dateInput, userName, userDob || dateInput, true);
   }
 
   /**

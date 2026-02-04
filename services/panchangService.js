@@ -25,6 +25,22 @@ class PanchangService {
   }
 
   /**
+   * Retry helper for AWS/first-hit warmup
+   */
+  async withRetry(fn, retries = 2) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (retries > 0 && (err.message?.includes('first') || err.code === 'ECONNREFUSED' || err.response?.status >= 500)) {
+        console.log('[Panchang Service] Retrying after initial failure...');
+        await new Promise(r => setTimeout(r, 1500));
+        return this.withRetry(fn, retries - 1);
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Main method: Get complete panchang data
    * Uses current date and user's live location from request
    * Checks DB first (for today's date), then fetches from API if needed
@@ -166,63 +182,47 @@ class PanchangService {
   }
 
   /**
-   * Fetch basic panchang from API
-   * Endpoint: /v1/basic_panchang
+   * Fetch basic panchang from API (with retry for AWS first-hit)
    */
   async fetchBasicPanchang(requestData) {
-    try {
+    return this.withRetry(async () => {
       console.log('[Panchang Service] Fetching basic_panchang...');
       const response = await this.apiClient.post('/basic_panchang', this.toUrlEncoded(requestData));
       return response.data;
-    } catch (error) {
-      console.error('[Panchang Service] Basic panchang error:', error.message);
-      throw new Error(`Failed to fetch basic panchang: ${error.message}`);
-    }
+    });
   }
 
   /**
    * Fetch advanced panchang sunrise from API
-   * Endpoint: /v1/advanced_panchang/sunrise
    */
   async fetchAdvancedPanchangSunrise(requestData) {
-    try {
+    return this.withRetry(async () => {
       console.log('[Panchang Service] Fetching advanced_panchang/sunrise...');
       const response = await this.apiClient.post('/advanced_panchang/sunrise', this.toUrlEncoded(requestData));
       return response.data;
-    } catch (error) {
-      console.error('[Panchang Service] Advanced panchang error:', error.message);
-      throw new Error(`Failed to fetch advanced panchang: ${error.message}`);
-    }
+    });
   }
 
   /**
    * Fetch chaughadiya muhurta from API
-   * Endpoint: /v1/chaughadiya_muhurta
    */
   async fetchChaughadiyaMuhurta(requestData) {
-    try {
+    return this.withRetry(async () => {
       console.log('[Panchang Service] Fetching chaughadiya_muhurta...');
       const response = await this.apiClient.post('/chaughadiya_muhurta', this.toUrlEncoded(requestData));
       return response.data;
-    } catch (error) {
-      console.error('[Panchang Service] Chaughadiya muhurta error:', error.message);
-      throw new Error(`Failed to fetch chaughadiya muhurta: ${error.message}`);
-    }
+    });
   }
 
   /**
    * Fetch daily nakshatra prediction from API
-   * Endpoint: /v1/daily_nakshatra_prediction
    */
   async fetchDailyNakshatraPrediction(requestData) {
-    try {
+    return this.withRetry(async () => {
       console.log('[Panchang Service] Fetching daily_nakshatra_prediction...');
       const response = await this.apiClient.post('/daily_nakshatra_prediction', this.toUrlEncoded(requestData));
       return response.data;
-    } catch (error) {
-      console.error('[Panchang Service] Nakshatra prediction error:', error.message);
-      throw new Error(`Failed to fetch nakshatra prediction: ${error.message}`);
-    }
+    });
   }
 
   /**

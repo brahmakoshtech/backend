@@ -574,113 +574,6 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
     });
   }
 });
-/**
- * Get only astrology data for a user
- * GET /api/client/users/:userId/astrology
- * Query params: ?refresh=true to force refresh from API
- * Access: client (own users), admin, super_admin, user (own data only)
- */
-router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const forceRefresh = req.query.refresh === 'true';
-
-    const user = await User.findById(userId)
-      .select('profile clientId')
-      .lean();
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Check access permissions
-    if (!checkUserAccess(req.user, user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'You do not have permission to view astrology data for this user'
-      });
-    }
-
-    if (!user.profile?.dob || !user.profile?.timeOfBirth || 
-        user.profile?.latitude === null || user.profile?.latitude === undefined ||
-        user.profile?.longitude === null || user.profile?.longitude === undefined) {
-      return res.status(400).json({
-        success: false,
-        message: 'User has incomplete birth details',
-        missingFields: {
-          dob: !user.profile?.dob,
-          timeOfBirth: !user.profile?.timeOfBirth,
-          latitude: user.profile?.latitude === null || user.profile?.latitude === undefined,
-          longitude: user.profile?.longitude === null || user.profile?.longitude === undefined
-        }
-      });
-    }
-
-    const astrologyData = await astrologyService.getCompleteAstrologyData(userId, user.profile, forceRefresh);
-
-    res.json({
-      success: true,
-      data: astrologyData
-    });
-
-  } catch (error) {
-    console.error('[Client API] Get astrology data error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to fetch astrology data',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
-
-/**
- * Refresh astrology data for a user (force recalculation)
- * POST /api/client/users/:userId/astrology/refresh
- * Access: client (own users), admin, super_admin, user (own data only)
- */
-router.post('/users/:userId/astrology/refresh', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
-  try {
-    const { userId } = req.params;
-
-    const user = await User.findById(userId)
-      .select('profile clientId')
-      .lean();
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Check access permissions
-    if (!checkUserAccess(req.user, user)) {
-      return res.status(403).json({
-        success: false,
-        message: 'You do not have permission to refresh astrology data for this user'
-      });
-    }
-
-    const astrologyData = await astrologyService.refreshAstrologyData(userId, user.profile);
-
-    res.json({
-      success: true,
-      message: 'Astrology data refreshed successfully',
-      data: astrologyData
-    });
-
-  } catch (error) {
-    console.error('[Client API] Refresh astrology data error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to refresh astrology data',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-});
 
 // ==========================================
 // PANCHANG API ENDPOINTS - Add to client.js
@@ -710,9 +603,9 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
     const { userId } = req.params;
     let { date } = req.query;
 
-    // Validate user and fetch live location
+    // Validate user and fetch live location + profile (for numero daily prediction)
     const user = await User.findById(userId)
-      .select('clientId liveLocation')
+      .select('clientId liveLocation profile')
       .lean();
 
     if (!user) {
@@ -758,15 +651,27 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
     if (panchangData) {
       console.log('[Client API] Panchang data found in DB for date:', date);
       
-      // Format the response - location from panchang table
+      // Enrich with numero daily prediction (lucky number, prediction for the day)
+      let numeroDailyPrediction = null;
+      const userName = user.profile?.name || user.profile?.firstName;
+      if (userName) {
+        try {
+          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName);
+          numeroDailyPrediction = numeroResult.data; // lucky_number, prediction, etc.
+        } catch (e) {
+          console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+        }
+      }
+
       const formattedData = {
         dateKey: panchangData.dateKey,
         requestDate: panchangData.requestDate,
-        location: panchangData.location, // Location from panchang table
+        location: panchangData.location,
         basicPanchang: panchangData.basicPanchang,
         advancedPanchang: panchangData.advancedPanchang,
         chaughadiyaMuhurta: panchangData.chaughadiyaMuhurta,
         dailyNakshatraPrediction: panchangData.dailyNakshatraPrediction,
+        numeroDailyPrediction, // lucky_number, prediction for the day from numerology
         lastCalculated: panchangData.lastCalculated,
         calculationSource: panchangData.calculationSource
       };
@@ -822,6 +727,20 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
         false // Don't force refresh
       );
 
+      // Enrich with numero daily prediction (lucky number, prediction for the day)
+      let numeroDailyPrediction = null;
+      const userName = user.profile?.name || user.profile?.firstName;
+      if (userName) {
+        try {
+          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName);
+          numeroDailyPrediction = numeroResult.data;
+        } catch (e) {
+          console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+        }
+      }
+
+      const enrichedData = { ...fetchedPanchangData, numeroDailyPrediction };
+
       console.log('[Client API] Successfully auto-fetched and saved panchang for date:', date);
 
       return res.json({
@@ -829,7 +748,7 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
         source: 'api',
         message: 'Panchang data fetched and saved automatically using user live location',
         autoFetched: true,
-        data: fetchedPanchangData
+        data: enrichedData
       });
 
     } catch (fetchError) {
@@ -853,42 +772,17 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
   }
 });
 
- * POST - Fetch and save panchang data for any date (current, past, or future)
- * POST /api/client/users/:userId/panchang
- * Body: { 
- *   date: "2026-01-31" or { day: 31, month: 1, year: 2026 }, 
- *   latitude: 28.5842 (optional),
- *   longitude: 77.3150 (optional)
- * }
- * Access: client (own users), admin, super_admin, user (own data only)
- * 
- * This endpoint:
- * 1. Fetches panchang data from API for the specified date
- * 2. Saves it to database
- * 3. Returns the panchang data
- * 4. Future GET requests for this date will return saved data
- * 
- * If date not provided, defaults to current date
- * If location not provided, uses user's liveLocation from DB
- * 
- * Examples:
- *   POST /api/client/users/:userId/panchang
- *   Body: { date: "2026-02-15" }  // Fetch and save for future date
- *   
- *   POST /api/client/users/:userId/panchang
- *   Body: { date: "2026-01-20" }  // Fetch and save for past date
- *   
- *   POST /api/client/users/:userId/panchang
- *   Body: {}  // Fetch and save for today
- */
+
+
+
 router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
     let { date, latitude, longitude } = req.body;
 
-    // Validate user and fetch live location
+    // Validate user and fetch live location + profile (for numero daily prediction)
     const user = await User.findById(userId)
-      .select('clientId liveLocation')
+      .select('clientId liveLocation profile')
       .lean();
 
     if (!user) {
@@ -979,7 +873,18 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
     if (existingData) {
       console.log('[Client API] Panchang data already exists for date:', dateKey);
       
-      // Return existing data
+      // Enrich with numero daily prediction
+      let numeroDailyPrediction = null;
+      const userName = user.profile?.name || user.profile?.firstName;
+      if (userName) {
+        try {
+          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName);
+          numeroDailyPrediction = numeroResult.data;
+        } catch (e) {
+          console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+        }
+      }
+
       const formattedData = {
         dateKey: existingData.dateKey,
         requestDate: existingData.requestDate,
@@ -988,6 +893,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
         advancedPanchang: existingData.advancedPanchang,
         chaughadiyaMuhurta: existingData.chaughadiyaMuhurta,
         dailyNakshatraPrediction: existingData.dailyNakshatraPrediction,
+        numeroDailyPrediction,
         lastCalculated: existingData.lastCalculated,
         calculationSource: existingData.calculationSource
       };
@@ -1013,12 +919,24 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       false // Don't force refresh, let service handle caching
     );
 
+    // Enrich with numero daily prediction
+    let numeroDailyPrediction = null;
+    const userName = user.profile?.name || user.profile?.firstName;
+    if (userName) {
+      try {
+        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName);
+        numeroDailyPrediction = numeroResult.data;
+      } catch (e) {
+        console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+      }
+    }
+
     res.json({
       success: true,
       message: 'Panchang data fetched and saved successfully',
       source: 'api',
       dateRequested: dateKey,
-      data: panchangData
+      data: { ...panchangData, numeroDailyPrediction }
     });
 
   } catch (error) {
@@ -1031,6 +949,50 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
   }
 });
 
+
+
+
+/**
+ * Get list of dates for which panchang data exists
+ * GET /api/client/users/:userId/panchang/list
+ * Query params: ?limit=30&skip=0
+ * Access: client (own users), admin, super_admin, user (own data only)
+ */
+router.get('/users/:userId/panchang/list', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 30, 90);
+    const skip = parseInt(req.query.skip) || 0;
+
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({ success: false, message: 'You do not have permission' });
+    }
+
+    const records = await Panchang.find({ userId })
+      .select('dateKey requestDate lastCalculated')
+      .sort({ dateKey: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await Panchang.countDocuments({ userId });
+
+    res.json({
+      success: true,
+      data: records.map(r => ({ dateKey: r.dateKey, requestDate: r.requestDate, lastCalculated: r.lastCalculated })),
+      count: records.length,
+      total,
+      hasMore: total > skip + limit
+    });
+  } catch (error) {
+    console.error('[Client API] Get panchang list error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch panchang list', error: process.env.NODE_ENV === 'development' ? error.message : undefined });
+  }
+});
 
 router.get('/users/:userId/panchang/batch', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
@@ -1141,7 +1103,6 @@ router.get('/users/:userId/panchang/batch', authenticate, authorize('client', 'a
     });
   }
 });
-
 /**
  * DELETE panchang data for a specific date
  * DELETE /api/client/users/:userId/panchang
@@ -1345,7 +1306,10 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
       });
     }
 
-    // Use provided date or default to today
+    // User DOB - required for numeroReport & numeroTable (static, fetched once). If missing, only daily prediction is returned.
+    const userDob = user.profile?.dob || null;
+
+    // Use provided date or default to today (for daily prediction)
     if (!date) {
       const today = new Date();
       date = {
@@ -1360,6 +1324,7 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
       userId,
       date,
       userName,
+      userDob,
       forceRefresh
     );
 
@@ -1419,6 +1384,8 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
       });
     }
 
+    const userDob = user.profile?.dob || null;
+
     // Use provided date or default to today
     if (!date) {
       const today = new Date();
@@ -1430,7 +1397,7 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
       console.log('[Client API] No date provided for refresh, using today:', date);
     }
 
-    const result = await numerologyService.refreshNumerologyData(userId, date, userName);
+    const result = await numerologyService.refreshNumerologyData(userId, date, userName, userDob);
 
     res.json({
       success: true,
