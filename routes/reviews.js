@@ -21,6 +21,67 @@ const upload = multer({
   }
 });
 
+// Get all reviews for an expert - MUST BE BEFORE /:reviewId route
+router.get('/expert/:expertId', authenticate, authorize(['client', 'user']), async (req, res) => {
+  try {
+    const { expertId } = req.params;
+    
+    const reviews = await Review.find({ 
+      expertId
+    })
+    .populate('createdBy', 'clientId')
+    .sort({ createdAt: -1 })
+    .lean();
+
+    // Generate presigned URLs for review images and format response
+    const reviewsWithUrls = await Promise.all(
+      reviews.map(async (review) => {
+        // Generate presigned URL for image
+        if (review.userImage) {
+          try {
+            const imageKey = review.userImageKey || extractS3KeyFromUrl(review.userImage);
+            if (imageKey) {
+              review.userImage = await getobject(imageKey, 604800); // 7 days expiry
+            }
+          } catch (error) {
+            console.error('Error generating presigned URL for review image:', error);
+            // Keep original URL if presigned fails
+          }
+        }
+        
+        // Format clean response
+        return {
+          id: review._id,
+          expertId: review.expertId,
+          userName: review.userName,
+          userImage: review.userImage,
+          userImageKey: review.userImageKey || null,
+          rating: review.rating,
+          description: review.description,
+          consultationType: review.consultationType,
+          isActive: review.isActive,
+          clientId: review.createdBy?.clientId || null,
+          createdAt: review.createdAt,
+          updatedAt: review.updatedAt
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      data: reviewsWithUrls,
+      count: reviewsWithUrls.length
+    });
+  } catch (error) {
+    console.error('Get reviews error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reviews',
+      error: error.message
+    });
+  }
+});
+
 // Get single review by ID
 router.get('/:reviewId', authenticate, authorize(['client', 'user']), async (req, res) => {
   try {
@@ -83,66 +144,7 @@ router.get('/:reviewId', authenticate, authorize(['client', 'user']), async (req
   }
 });
 
-// Get all reviews for an expert
-router.get('/expert/:expertId', authenticate, authorize(['client', 'user']), async (req, res) => {
-  try {
-    const { expertId } = req.params;
-    
-    const reviews = await Review.find({ 
-      expertId
-    })
-    .populate('createdBy', 'clientId')
-    .sort({ createdAt: -1 })
-    .lean();
 
-    // Generate presigned URLs for review images and format response
-    const reviewsWithUrls = await Promise.all(
-      reviews.map(async (review) => {
-        // Generate presigned URL for image
-        if (review.userImage) {
-          try {
-            const imageKey = review.userImageKey || extractS3KeyFromUrl(review.userImage);
-            if (imageKey) {
-              review.userImage = await getobject(imageKey, 604800); // 7 days expiry
-            }
-          } catch (error) {
-            console.error('Error generating presigned URL for review image:', error);
-            // Keep original URL if presigned fails
-          }
-        }
-        
-        // Format clean response
-        return {
-          id: review._id,
-          expertId: review.expertId,
-          userName: review.userName,
-          userImage: review.userImage,
-          userImageKey: review.userImageKey || null,
-          rating: review.rating,
-          description: review.description,
-          consultationType: review.consultationType,
-          isActive: review.isActive,
-          clientId: review.createdBy?.clientId || null,
-          createdAt: review.createdAt,
-          updatedAt: review.updatedAt
-        };
-      })
-    );
-
-    res.json({
-      success: true,
-      data: reviewsWithUrls,
-      count: reviewsWithUrls.length
-    });
-  } catch (error) {
-    console.error('Get reviews error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch reviews',
-      error: error.message
-    });
-  }
-});
 
 // Create new review
 router.post('/expert/:expertId', authenticate, authorize(['client', 'user']), async (req, res) => {

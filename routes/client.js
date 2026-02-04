@@ -772,9 +772,35 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
   }
 });
 
-
-
-
+/**
+ * POST - Fetch and save panchang data for any date (current, past, or future)
+ * POST /api/client/users/:userId/panchang
+ * Body: { 
+ *   date: "2026-01-31" or { day: 31, month: 1, year: 2026 }, 
+ *   latitude: 28.5842 (optional),
+ *   longitude: 77.3150 (optional)
+ * }
+ * Access: client (own users), admin, super_admin, user (own data only)
+ * 
+ * This endpoint:
+ * 1. Fetches panchang data from API for the specified date
+ * 2. Saves it to database
+ * 3. Returns the panchang data
+ * 4. Future GET requests for this date will return saved data
+ * 
+ * If date not provided, defaults to current date
+ * If location not provided, uses user's liveLocation from DB
+ * 
+ * Examples:
+ *   POST /api/client/users/:userId/panchang
+ *   Body: { date: "2026-02-15" }  // Fetch and save for future date
+ *   
+ *   POST /api/client/users/:userId/panchang
+ *   Body: { date: "2026-01-20" }  // Fetch and save for past date
+ *   
+ *   POST /api/client/users/:userId/panchang
+ *   Body: {}  // Fetch and save for today
+ */
 router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;

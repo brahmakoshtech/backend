@@ -205,7 +205,7 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
         motivation: {
           emoji: '🌸 ✨ 🕊️',
           title: 'Small steps, big transformation',
-          text: 'Every moment of mindfulness counts. Start where you are, with what you have.'
+          text: 'Your spiritual check-in earns karma points that feed cows, educate children, and help those in need.'
         }
       }
     });

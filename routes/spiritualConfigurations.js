@@ -64,17 +64,23 @@ const createConfiguration = async (req, res) => {
 // Get all configurations for a client
 const getConfigurations = async (req, res) => {
   try {
-    console.log('[Spiritual Config] User info:', {
-      userId: req.user._id,
-      role: req.user.role,
-      clientId: req.user.clientId
-    });
-    console.log('[Spiritual Config] Query params:', req.query);
+    // Get clientId based on user role
+    let clientId;
+    if (req.user.role === 'client') {
+      clientId = req.user.clientId;
+    } else if (req.user.role === 'user') {
+      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
+    }
     
     // Build query with optional filters
     const query = {
       isDeleted: false
     };
+    
+    // Add clientId filter if available
+    if (clientId) {
+      query.clientId = clientId;
+    }
     
     if (req.query.type) {
       query.type = req.query.type;
@@ -84,11 +90,7 @@ const getConfigurations = async (req, res) => {
       query.categoryId = req.query.categoryId;
     }
     
-    console.log('[Spiritual Config] Query:', query);
-    
     const configurations = await SpiritualConfiguration.find(query).sort({ createdAt: -1 });
-
-    console.log('[Spiritual Config] Found configurations:', configurations.length);
 
     res.status(200).json({
       success: true,

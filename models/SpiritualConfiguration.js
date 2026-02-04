@@ -16,8 +16,8 @@ const spiritualConfigurationSchema = new mongoose.Schema({
   duration: {
     type: String,
     required: true,
-    enum: ['5 minutes', '10 minutes', '15 minutes', '20 minutes', '30 minutes', '45 minutes', '1 hour'],
-    default: '15 minutes'
+    enum: ['1 minute', '2 minutes', '3 minutes', '4 minutes', '5 minutes', '6 minutes', '7 minutes', '8 minutes', '9 minutes', '10 minutes'],
+    default: '5 minutes'
   },
   type: {
     type: String,
@@ -27,7 +27,7 @@ const spiritualConfigurationSchema = new mongoose.Schema({
   },
   emotion: {
     type: String,
-    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', ''],
+    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', 'neutral', 'stress', ''],
     default: ''
   },
   karmaPoints: {

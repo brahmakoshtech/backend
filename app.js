@@ -23,6 +23,7 @@ import superAdminRoutes from './routes/superAdmin.js';
 import clientProfileMobileRoutes from './routes/mobile/clientProfile.js';
 import userProfileMobileRoutes from './routes/mobile/userProfile.js';
 import partnerProfileMobileRoutes from './routes/mobile/partnerProfile.js';
+import mobileContentRoutes from './routes/mobile/content.js';
 import chatRoutes from './routes/mobile/chat.js';
 import voiceRoutes from './routes/mobile/voice.js';
 import uploadRoutes from './routes/upload.js';
@@ -43,9 +44,8 @@ import spiritualActivityRoutes from './routes/spiritualActivities.js';
 import spiritualConfigurationRoutes from './routes/spiritualConfigurations.js';
 import spiritualClipRoutes from './routes/spiritualClips.js';
 import spiritualStatsRoutes from './routes/spiritualStats.js';
-import publicRoutes from './routes/public.js';
-import realtimeAgentRoutes from './routes/mobile/realtimeAgent.js';
-import mobileContentRoutes from './routes/mobile/content.js';
+import chapterRoutes from './routes/chapters.js';
+import shlokaRoutes from './routes/shlokas.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -120,7 +120,7 @@ app.use('/api/super-admin', superAdminRoutes);
 // Mobile API Routes
 app.use('/api/mobile/client', clientProfileMobileRoutes);
 app.use('/api/mobile/user', userProfileMobileRoutes);
-app.use('/api/mobile/realtime-agent', realtimeAgentRoutes);
+// app.use('/api/mobile/realtime-agent', realtimeAgentRoutes);
 app.use('/api/mobile/chat', chatRoutes);
 app.use('/api/mobile/voice', voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
@@ -147,10 +147,8 @@ app.use('/api/spiritual-clips', spiritualClipRoutes);
 app.use('/api/founder-messages', founderMessageRoutes);
 app.use('/api/brand-assets', brandAssetRoutes);
 app.use('/api/spiritual-stats', spiritualStatsRoutes);
-app.use('/api/public', publicRoutes);
-
-// ============ NEW: Partner-User Chat Routes ============
-app.use('/api/chat', partnerUserChatRoutes);
+app.use('/api/chapters', chapterRoutes);
+app.use('/api/shlokas', shlokaRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
