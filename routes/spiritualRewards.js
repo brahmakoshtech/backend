@@ -42,7 +42,6 @@ router.get('/', authenticateToken, async (req, res) => {
     console.log('Generated clientId:', clientId);
     
     const rewards = await SpiritualReward.find({ clientId })
-      .populate('createdBy', 'name email')
       .sort({ createdAt: -1 });
 
     console.log('Found rewards count:', rewards.length);
@@ -99,6 +98,7 @@ router.get('/', authenticateToken, async (req, res) => {
           title: cleanRewardObj.title,
           description: cleanRewardObj.description,
           category: cleanRewardObj.category,
+          subcategory: cleanRewardObj.subcategory,
           karmaPointsRequired: cleanRewardObj.karmaPointsRequired,
           numberOfDevotees: cleanRewardObj.numberOfDevotees,
           devoteeMessage: cleanRewardObj.devoteeMessage,
@@ -135,14 +135,14 @@ router.get('/', authenticateToken, async (req, res) => {
 router.post('/', authenticateToken, async (req, res) => {
   try {
     const clientId = getClientId(req);
-    // Try different possible userId fields
-    const userId = req.user._id || req.user.userId || req.user.id;
+    // Try different possible userId fields and convert to string
+    const userId = (req.user._id || req.user.userId || req.user.id)?.toString();
     
-    console.log('Create reward - User info:', {
-      userId,
-      clientId,
-      userObject: req.user
-    });
+    console.log('=== CREATE REWARD DEBUG ===');
+    console.log('Full req.user object:', JSON.stringify(req.user, null, 2));
+    console.log('Extracted userId:', userId);
+    console.log('UserId type:', typeof userId);
+    console.log('ClientId:', clientId);
     
     if (!userId) {
       return res.status(400).json({
@@ -155,6 +155,7 @@ router.post('/', authenticateToken, async (req, res) => {
       title,
       description,
       category,
+      subcategory,
       karmaPointsRequired,
       numberOfDevotees,
       devoteeMessage,
@@ -164,10 +165,10 @@ router.post('/', authenticateToken, async (req, res) => {
     } = req.body;
 
     // Validate required fields
-    if (!title || !description || !category) {
+    if (!title || !description || !category || !subcategory) {
       return res.status(400).json({
         success: false,
-        message: 'Title, description, and category are required'
+        message: 'Title, description, category, and subcategory are required'
       });
     }
 
@@ -176,6 +177,7 @@ router.post('/', authenticateToken, async (req, res) => {
       title,
       description,
       category,
+      subcategory,
       karmaPointsRequired: karmaPointsRequired || 0,
       numberOfDevotees: numberOfDevotees || 0,
       devoteeMessage,
@@ -185,11 +187,17 @@ router.post('/', authenticateToken, async (req, res) => {
       photoKey: req.body.photoKey,
       bannerKey: req.body.bannerKey,
       clientId,
-      createdBy: userId
+      createdBy: userId,
+      createdByModel: req.user.role === 'client' ? 'Client' : req.user.role === 'user' ? 'User' : 'Admin'
+    });
+
+    console.log('Creating reward with:', {
+      createdBy: userId,
+      createdByModel: req.user.role === 'client' ? 'Client' : req.user.role === 'user' ? 'User' : 'Admin',
+      userRole: req.user.role
     });
 
     await reward.save();
-    await reward.populate('createdBy', 'name email');
 
     res.status(201).json({
       success: true,
@@ -216,6 +224,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
       title,
       description,
       category,
+      subcategory,
       karmaPointsRequired,
       numberOfDevotees,
       devoteeMessage,
@@ -236,6 +245,7 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (title) reward.title = title;
     if (description) reward.description = description;
     if (category) reward.category = category;
+    if (subcategory) reward.subcategory = subcategory;
     if (karmaPointsRequired !== undefined) reward.karmaPointsRequired = karmaPointsRequired;
     if (numberOfDevotees !== undefined) reward.numberOfDevotees = numberOfDevotees;
     if (devoteeMessage !== undefined) reward.devoteeMessage = devoteeMessage;
@@ -246,7 +256,6 @@ router.put('/:id', authenticateToken, async (req, res) => {
     if (req.body.bannerKey) reward.bannerKey = req.body.bannerKey;
 
     await reward.save();
-    await reward.populate('createdBy', 'name email');
 
     res.status(200).json({
       success: true,
