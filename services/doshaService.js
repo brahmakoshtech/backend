@@ -2,14 +2,31 @@
 // Fetches all Indian Astrology Dosha APIs and combines results
 
 import axios from 'axios';
+import Dosha from '../models/Dosha.js';
 
+// API endpoints (requested set)
+// Doshas:
+// 1. manglik
+// 2. kalsarpa_details
+// 3. sadhesati_current_status
+// 4. sadhesati_life_details
+// 5. pitra_dosha_report
+// Dashas:
+// - current_yogini_dasha
+// - current_chardasha
+// - major_chardasha
 const DOSHA_ENDPOINTS = {
+  manglik: '/manglik',  
   kalsarpa: '/kalsarpa_details',
-  manglik: '/manglik',
-  pitra: '/pitra_dosha',
-  sadeSati: '/sade_sati',
-  shani: '/shani_dosha',
-  gandmool: '/gandmool_dosha'
+  sadeSatiCurrent: '/sadhesati_current_status',
+  sadeSatiLife: '/sadhesati_life_details',
+  pitra: '/pitra_dosha_report'
+};
+
+const DASHA_ENDPOINTS = {
+  currentYogini: '/current_yogini_dasha',
+  currentChardasha: '/current_chardasha',
+  majorChardasha: '/major_chardasha'
 };
 
 class DoshaService {
@@ -101,41 +118,129 @@ class DoshaService {
   }
 
   /**
-   * Get all dosha data for a user (from User model)
-   * Fetches from all 6 APIs in parallel
+   * Call a single dasha API
    */
-  async getAllDoshas(user) {
-    const birthData = this.prepareBirthData(user);
+  async fetchDasha(name, birthData) {
+    const endpoint = DASHA_ENDPOINTS[name];
+    if (!endpoint) return { error: `Unknown dasha: ${name}` };
 
-    const results = await Promise.all([
-      this.fetchDosha('kalsarpa', birthData),
+    try {
+      const response = await this.apiClient.post(endpoint, birthData);
+      return { success: true, data: response.data };
+    } catch (error) {
+      console.error(`[Dasha Service] ${name} error:`, error.response?.data || error.message);
+      return {
+        success: false,
+        error: error.response?.data?.message || error.message,
+        data: null
+      };
+    }
+  }
+
+  /**
+   * Get all dosha data for a user (from User model)
+   * Caches all dosha/dasha data in DB; reuses cached result unless forceRefresh is true.
+   * @param {Object} user - User document (must include profile + liveLocation)
+   * @param {Object} options - { forceRefresh?: boolean }
+   */
+  async getAllDoshas(user, options = {}) {
+    const { forceRefresh = false } = options;
+    const birthData = this.prepareBirthData(user);
+    const userId = user?._id || user?.id;
+
+    // Use cached value if available and valid, unless forcing refresh
+    if (userId && !forceRefresh) {
+      const existing = await Dosha.findOne({ userId }).lean();
+      const hasDoshas =
+        existing?.doshas && Object.keys(existing.doshas).length > 0;
+      const hasDashas =
+        existing?.dashas && Object.keys(existing.dashas).length > 0;
+      const hasSimpleManglik =
+        !!(existing?.doshas && Object.prototype.hasOwnProperty.call(existing.doshas, 'simpleManglik'));
+
+      // Only reuse cache if:
+      // - we have doshas
+      // - we have dashas
+      // - and there is NO legacy simpleManglik field
+      if (hasDoshas && hasDashas && !hasSimpleManglik) {
+        return {
+          birthData: existing.birthData || birthData,
+          doshas: existing.doshas || {},
+          dashas: existing.dashas || {},
+          summary: existing.summary || {}
+        };
+      }
+    }
+
+    // Fetch all doshas
+    const [
+      resManglik,
+      resKalsarpa,
+      resSadeSatiCurrent,
+      resSadeSatiLife,
+      resPitra
+    ] = await Promise.all([
       this.fetchDosha('manglik', birthData),
-      this.fetchDosha('pitra', birthData),
-      this.fetchDosha('sadeSati', birthData),
-      this.fetchDosha('shani', birthData),
-      this.fetchDosha('gandmool', birthData)
+      this.fetchDosha('kalsarpa', birthData),
+      this.fetchDosha('sadeSatiCurrent', birthData),
+      this.fetchDosha('sadeSatiLife', birthData),
+      this.fetchDosha('pitra', birthData)
     ]);
 
-    const [kalsarpa, manglik, pitra, sadeSati, shani, gandmool] = results;
+    const manglik = resManglik.success && resManglik.data ? this.normalizeManglik(resManglik.data) : { present: false, error: resManglik.error };
+    const kalsarpa = resKalsarpa.success && resKalsarpa.data ? this.normalizeKalsarpa(resKalsarpa.data) : { present: false, error: resKalsarpa.error };
+    const sadeSatiCurrent = resSadeSatiCurrent.success && resSadeSatiCurrent.data ? this.normalizeSadeSati(resSadeSatiCurrent.data) : { present: false, error: resSadeSatiCurrent.error };
+    const sadeSatiLife = resSadeSatiLife.success && resSadeSatiLife.data ? this.normalizeSadeSati(resSadeSatiLife.data) : { present: false, error: resSadeSatiLife.error };
+    const pitra = resPitra.success && resPitra.data ? this.normalizePitra(resPitra.data) : { present: false, error: resPitra.error };
 
     const doshas = {
-      kalsarpa: kalsarpa.success && kalsarpa.data ? this.normalizeKalsarpa(kalsarpa.data) : { present: false, error: kalsarpa.error },
-      manglik: manglik.success && manglik.data ? this.normalizeManglik(manglik.data) : { present: false, error: manglik.error },
-      pitra: pitra.success && pitra.data ? this.normalizePitra(pitra.data) : { present: false, error: pitra.error },
-      sadeSati: sadeSati.success && sadeSati.data ? this.normalizeSadeSati(sadeSati.data) : { present: false, error: sadeSati.error },
-      shani: shani.success && shani.data ? this.normalizeShani(shani.data) : { present: false, error: shani.error },
-      gandmool: gandmool.success && gandmool.data ? this.normalizeGandmool(gandmool.data) : { present: false, error: gandmool.error }
+      manglik,
+      kalsarpa,
+      sadeSatiCurrent,
+      sadeSatiLife,
+      pitra
+    };
+
+    // Fetch dashas
+    const [
+      resCurrentYogini,
+      resCurrentChardasha,
+      resMajorChardasha
+    ] = await Promise.all([
+      this.fetchDasha('currentYogini', birthData),
+      this.fetchDasha('currentChardasha', birthData),
+      this.fetchDasha('majorChardasha', birthData)
+    ]);
+
+    const dashas = {
+      currentYogini: resCurrentYogini.success ? resCurrentYogini.data : { error: resCurrentYogini.error },
+      currentChardasha: resCurrentChardasha.success ? resCurrentChardasha.data : { error: resCurrentChardasha.error },
+      majorChardasha: resMajorChardasha.success ? resMajorChardasha.data : { error: resMajorChardasha.error }
     };
 
     const summary = {
-      kalsarpa: doshas.kalsarpa.present,
-      manglik: doshas.manglik.present,
-      pitra: doshas.pitra.present,
-      sadeSati: doshas.sadeSati.present,
-      shani: doshas.shani.present,
-      gandmool: doshas.gandmool.present,
+      manglik: !!manglik?.present,
+      kalsarpa: !!kalsarpa?.present,
+      sadeSatiCurrent: !!sadeSatiCurrent?.present,
+      sadeSatiLife: !!sadeSatiLife?.present,
+      pitra: !!pitra?.present,
       anyPresent: Object.values(doshas).some(d => d && d.present)
     };
+
+    if (userId) {
+      await Dosha.findOneAndUpdate(
+        { userId },
+        {
+          userId,
+          birthData,
+          doshas,
+          dashas,
+          summary,
+          lastFetched: new Date()
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
 
     return {
       birthData: {
@@ -149,6 +254,7 @@ class DoshaService {
         tzone: birthData.tzone
       },
       doshas,
+      dashas,
       summary
     };
   }
@@ -186,8 +292,10 @@ class DoshaService {
   }
 
   normalizeSadeSati(data) {
-    const status = data?.sadhesati_status || data?.sade_sati_status || data?.status;
-    const present = !!(status && (status.includes('Under') || status.includes('undergoing')));
+    const rawStatus = data?.sadhesati_status || data?.sade_sati_status || data?.status;
+    const status = rawStatus ? String(rawStatus) : '';
+    const lower = status.toLowerCase();
+    const present = !!(lower.includes('under') || lower.includes('ongoing') || lower.includes('running'));
     return {
       present,
       status,

@@ -13,6 +13,7 @@ import astrologyService from '../services/astrologyService.js';
 import panchangService from '../services/panchangService.js';
 import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
+import remedyService from '../services/remedyService.js';
 
 const router = express.Router();
 
@@ -478,6 +479,7 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
 
     let astrologyData = null;
     let astrologyError = null;
+    let doshaData = null;
 
     // FIXED: Check for required fields including liveLocation for coordinates
     const hasRequiredFields = user.profile?.dob && 
@@ -502,6 +504,13 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
           forceRefresh
         );
         console.log('[Client API] Astrology data retrieved successfully');
+
+        // Fetch doshas + dashas (cached)
+        try {
+          doshaData = await doshaService.getAllDoshas(user, { forceRefresh });
+        } catch (doshaErr) {
+          console.warn('[Client API] Could not fetch doshas/dashas for complete-details:', doshaErr.message);
+        }
       } catch (error) {
         console.error('[Client API] Astrology generation error:', error);
         astrologyError = error.message;
@@ -522,6 +531,9 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
       data: {
         user,
         astrology: astrologyData,
+        doshas: doshaData ? doshaData.doshas : undefined,
+        dashas: doshaData ? doshaData.dashas : undefined,
+        doshaSummary: doshaData ? doshaData.summary : undefined,
         astrologyError: astrologyError || undefined
       }
     });
@@ -590,9 +602,28 @@ router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin'
       forceRefresh
     );
 
+    // Fetch doshas (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool)
+    let doshas = null;
+    try {
+      console.log('[Client API] Fetching dosha data for astrology endpoint...');
+      // Ensure user object has liveLocation for doshaService
+      const userWithLocation = {
+        ...user,
+        liveLocation: user.liveLocation || {}
+      };
+      doshas = await doshaService.getAllDoshas(userWithLocation);
+      console.log('[Client API] Dosha data retrieved successfully');
+    } catch (doshaError) {
+      console.warn('[Client API] Could not fetch doshas:', doshaError.message);
+      // Don't fail the request if doshas fail, just log warning
+    }
+
     res.json({
       success: true,
-      data: astrologyData
+      data: {
+        ...astrologyData,
+        doshas: doshas || undefined
+      }
     });
 
   } catch (error) {
@@ -1656,6 +1687,7 @@ router.delete('/users/:userId/numerology', authenticate, authorize('client', 'ad
 router.get('/users/:userId/doshas', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
     const { userId } = req.params;
+    const forceRefresh = req.query.refresh === 'true';
 
     const user = await User.findById(userId)
       .select('profile clientId liveLocation')
@@ -1675,7 +1707,7 @@ router.get('/users/:userId/doshas', authenticate, authorize('client', 'admin', '
       });
     }
 
-    const result = await doshaService.getAllDoshas(user);
+    const result = await doshaService.getAllDoshas(user, { forceRefresh });
 
     res.json({
       success: true,
@@ -1686,6 +1718,63 @@ router.get('/users/:userId/doshas', authenticate, authorize('client', 'admin', '
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch dosha data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Get remedies (puja, gemstone, rudraksha) for a user
+ * GET /api/client/users/:userId/remedies
+ * Query params: ?refresh=true to force refresh from API
+ * Access: client (own users), admin, super_admin, user (own data only)
+ */
+router.get('/users/:userId/remedies', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const forceRefresh = req.query.refresh === 'true';
+
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access remedies for this user'
+      });
+    }
+
+    // Require basic birth details to call remedies APIs
+    if (!user.profile?.dob || !user.profile?.timeOfBirth) {
+      return res.status(400).json({
+        success: false,
+        message: 'User has incomplete birth details for remedies',
+        missingFields: {
+          dob: !user.profile?.dob,
+          timeOfBirth: !user.profile?.timeOfBirth
+        }
+      });
+    }
+
+    const result = await remedyService.getRemedies(user, { forceRefresh });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('[Client API] Get remedies error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch remedies',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
