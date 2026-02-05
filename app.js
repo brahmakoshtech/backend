@@ -126,7 +126,6 @@ app.use('/api/mobile/chat', chatRoutes);
 app.use('/api/mobile/voice', voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
 app.use('/api/mobile/content', mobileContentRoutes);
-
 // Partner–User Chat (partners list, conversations, messages)
 app.use('/api/chat', partnerUserChatRoutes);
 
