@@ -39,11 +39,18 @@ export const putobject = async (key, contentType) => {
 };
 
 // Generate presigned URL for direct browser upload
-export const generateUploadUrl = async (fileName, contentType, key) => {
+export const generateUploadUrl = async (fileName, contentType, folder) => {
   try {
+    // Generate unique key with timestamp and random ID
+    const timestamp = Date.now();
+    const randomId = Math.random().toString(36).substring(2, 15);
+    const fileExtension = fileName.split('.').pop();
+    const uniqueFileName = `${timestamp}_${randomId}.${fileExtension}`;
+    const key = folder ? `${folder}/${uniqueFileName}` : uniqueFileName;
+    
     const command = new PutObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
-      Key: key, // Use the key directly instead of generating a new one
+      Key: key,
       ContentType: contentType,
       CacheControl: 'max-age=31536000',
       Metadata: {
