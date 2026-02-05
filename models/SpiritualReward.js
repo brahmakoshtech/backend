@@ -49,19 +49,20 @@ const spiritualRewardSchema = new mongoose.Schema({
   },
   photoUrl: {
     type: String,
-    trim: true
+    default: null
   },
   photoKey: {
     type: String,
-    trim: true
+    default: null
   },
   bannerUrl: {
     type: String,
-    trim: true
+    default: null
   },
   bannerKey: {
     type: String,
-    trim: true
+    default: null
+                                  // trim: true
   },
   isActive: {
     type: Boolean,
@@ -69,6 +70,7 @@ const spiritualRewardSchema = new mongoose.Schema({
   },
   clientId: {
     type: String,
+    ref: 'Client',
     required: true
   },
   createdBy: {

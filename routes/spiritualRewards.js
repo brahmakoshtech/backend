@@ -56,10 +56,17 @@ router.get('/', authenticateToken, async (req, res) => {
         // Generate presigned URLs for photo and banner
         if (rewardObj.photoKey || rewardObj.photoUrl) {
           try {
-            const photoKey = rewardObj.photoKey || rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+            // Extract full key from URL if photoKey is just filename
+            let photoKey = rewardObj.photoKey;
+            if (photoKey && !photoKey.includes('/')) {
+              photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+            } else if (!photoKey && rewardObj.photoUrl) {
+              photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+            }
+            
             if (photoKey) {
-              rewardObj.photoKey = photoKey; // Add key to response
-              rewardObj.photoPresignedUrl = await getobject(photoKey);
+              rewardObj.photoKey = photoKey;
+              rewardObj.image = await getobject(photoKey);
             }
           } catch (error) {
             console.error('Failed to generate photo presigned URL:', error);
@@ -68,17 +75,44 @@ router.get('/', authenticateToken, async (req, res) => {
         
         if (rewardObj.bannerKey || rewardObj.bannerUrl) {
           try {
-            const bannerKey = rewardObj.bannerKey || rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+            // Extract full key from URL if bannerKey is just filename
+            let bannerKey = rewardObj.bannerKey;
+            if (bannerKey && !bannerKey.includes('/')) {
+              bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+            } else if (!bannerKey && rewardObj.bannerUrl) {
+              bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+            }
+            
             if (bannerKey) {
-              rewardObj.bannerKey = bannerKey; // Add key to response
-              rewardObj.bannerPresignedUrl = await getobject(bannerKey);
+              rewardObj.bannerKey = bannerKey;
+              rewardObj.banner = await getobject(bannerKey);
             }
           } catch (error) {
             console.error('Failed to generate banner presigned URL:', error);
           }
         }
         
-        return rewardObj;
+        const { photoUrl, bannerUrl, ...cleanRewardObj } = rewardObj;
+        
+        return {
+          _id: cleanRewardObj._id,
+          title: cleanRewardObj.title,
+          description: cleanRewardObj.description,
+          category: cleanRewardObj.category,
+          karmaPointsRequired: cleanRewardObj.karmaPointsRequired,
+          numberOfDevotees: cleanRewardObj.numberOfDevotees,
+          devoteeMessage: cleanRewardObj.devoteeMessage,
+          greetings: cleanRewardObj.greetings,
+          isActive: cleanRewardObj.isActive,
+          clientId: cleanRewardObj.clientId,
+          createdBy: cleanRewardObj.createdBy,
+          createdAt: cleanRewardObj.createdAt,
+          updatedAt: cleanRewardObj.updatedAt,
+          image: rewardObj.image,
+          imageKey: rewardObj.photoKey,
+          banner: rewardObj.banner,
+          bannerKey: rewardObj.bannerKey
+        };
       })
     );
 
