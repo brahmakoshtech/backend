@@ -90,6 +90,7 @@ router.post('/register-with-image', upload.single('image'), async (req, res) => 
         gowthra: gowthra || '',
         profession: profession || undefined,
       },
+      credits: 1000, // signup bonus for mobile registration
       loginApproved: false, // Requires super admin approval
     });
 

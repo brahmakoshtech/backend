@@ -214,6 +214,7 @@ router.post('/register', async (req, res) => {
       email,
       password,
       profile: profile || {},
+      credits: 1000, // signup bonus
       loginApproved: false // Requires super admin approval
     });
 

@@ -8,9 +8,12 @@ import User from '../models/User.js';
 import Client from '../models/Client.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
+import Credit from '../models/Credit.js';
 import astrologyService from '../services/astrologyService.js';
 import panchangService from '../services/panchangService.js';
 import numerologyService from '../services/numerologyService.js';
+import doshaService from '../services/doshaService.js';
+import remedyService from '../services/remedyService.js';
 
 const router = express.Router();
 
@@ -127,6 +130,7 @@ router.post('/users', authenticate, authorize('client', 'admin', 'super_admin'),
       password,
       profile: profile || {},
       clientId: req.user.role === 'client' ? req.user._id : req.body.clientId,
+      credits: 1000, // signup bonus for client-created users
       emailVerified: true,
       loginApproved: true,
       registrationStep: 3
@@ -152,6 +156,85 @@ router.post('/users', authenticate, authorize('client', 'admin', 'super_admin'),
     res.status(500).json({
       success: false,
       message: 'Failed to create user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Add credits to a user (for paid chat/features)
+ * POST /api/client/users/:userId/credits
+ * Body: { amount: number, description?: string }
+ * Access: client (own users), admin, super_admin
+ */
+router.post('/users/:userId/credits', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { amount, description } = req.body;
+
+    const numericAmount = Number(amount);
+    if (!numericAmount || Number.isNaN(numericAmount)) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount is required and must be a number'
+      });
+    }
+    if (numericAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount must be greater than 0'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Clients can only manage their own users
+    if (req.user.role === 'client') {
+      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only add credits to your own users'
+        });
+      }
+    }
+
+    const previousBalance = user.credits || 0;
+    const newBalance = previousBalance + numericAmount;
+
+    user.credits = newBalance;
+    await user.save();
+
+    const tx = await Credit.create({
+      userId: user._id,
+      amount: numericAmount,
+      previousBalance,
+      newBalance,
+      addedBy: req.user._id,
+      addedByRole: req.user.role,
+      description: description || `Credits added by ${req.user.role}`
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Credits added successfully',
+      data: {
+        userId: user._id,
+        previousBalance,
+        newBalance,
+        transaction: tx
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Add user credits error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add credits',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -396,6 +479,7 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
 
     let astrologyData = null;
     let astrologyError = null;
+    let doshaData = null;
 
     // FIXED: Check for required fields including liveLocation for coordinates
     const hasRequiredFields = user.profile?.dob && 
@@ -420,6 +504,13 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
           forceRefresh
         );
         console.log('[Client API] Astrology data retrieved successfully');
+
+        // Fetch doshas + dashas (cached)
+        try {
+          doshaData = await doshaService.getAllDoshas(user, { forceRefresh });
+        } catch (doshaErr) {
+          console.warn('[Client API] Could not fetch doshas/dashas for complete-details:', doshaErr.message);
+        }
       } catch (error) {
         console.error('[Client API] Astrology generation error:', error);
         astrologyError = error.message;
@@ -440,6 +531,9 @@ router.get('/users/:userId/complete-details', authenticate, authorize('client', 
       data: {
         user,
         astrology: astrologyData,
+        doshas: doshaData ? doshaData.doshas : undefined,
+        dashas: doshaData ? doshaData.dashas : undefined,
+        doshaSummary: doshaData ? doshaData.summary : undefined,
         astrologyError: astrologyError || undefined
       }
     });
@@ -508,9 +602,28 @@ router.get('/users/:userId/astrology', authenticate, authorize('client', 'admin'
       forceRefresh
     );
 
+    // Fetch doshas (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool)
+    let doshas = null;
+    try {
+      console.log('[Client API] Fetching dosha data for astrology endpoint...');
+      // Ensure user object has liveLocation for doshaService
+      const userWithLocation = {
+        ...user,
+        liveLocation: user.liveLocation || {}
+      };
+      doshas = await doshaService.getAllDoshas(userWithLocation);
+      console.log('[Client API] Dosha data retrieved successfully');
+    } catch (doshaError) {
+      console.warn('[Client API] Could not fetch doshas:', doshaError.message);
+      // Don't fail the request if doshas fail, just log warning
+    }
+
     res.json({
       success: true,
-      data: astrologyData
+      data: {
+        ...astrologyData,
+        doshas: doshas || undefined
+      }
     });
 
   } catch (error) {
@@ -1303,9 +1416,9 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
     let { date } = req.body;
     const forceRefresh = req.query.refresh === 'true';
 
-    // Validate user
+    // Validate user (include liveLocation for doshas)
     const user = await User.findById(userId)
-      .select('profile clientId')
+      .select('profile clientId liveLocation')
       .lean();
 
     if (!user) {
@@ -1354,10 +1467,20 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
       forceRefresh
     );
 
+    // Fetch doshas (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool) using user details
+    let doshas = null;
+    if (user.profile?.dob) {
+      try {
+        doshas = await doshaService.getAllDoshas(user);
+      } catch (e) {
+        console.warn('[Client API] Could not fetch doshas:', e.message);
+      }
+    }
+
     res.json({
       success: true,
       source: result.source, // 'database' or 'api'
-      data: result.data
+      data: { ...result.data, doshas }
     });
 
   } catch (error) {
@@ -1383,7 +1506,7 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
     let { date } = req.body;
 
     const user = await User.findById(userId)
-      .select('profile clientId')
+      .select('profile clientId liveLocation')
       .lean();
 
     if (!user) {
@@ -1425,11 +1548,21 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
 
     const result = await numerologyService.refreshNumerologyData(userId, date, userName, userDob);
 
+    // Fetch doshas using user details
+    let doshas = null;
+    if (user.profile?.dob) {
+      try {
+        doshas = await doshaService.getAllDoshas(user);
+      } catch (e) {
+        console.warn('[Client API] Could not fetch doshas:', e.message);
+      }
+    }
+
     res.json({
       success: true,
       message: 'Numerology data refreshed successfully',
       source: result.source,
-      data: result.data
+      data: { ...result.data, doshas }
     });
 
   } catch (error) {
@@ -1540,6 +1673,108 @@ router.delete('/users/:userId/numerology', authenticate, authorize('client', 'ad
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete numerology data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Get all doshas for a user (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool)
+ * GET /api/client/users/:userId/doshas
+ * Access: client (own users), admin, super_admin, user (own data only)
+ * Uses user profile (dob, timeOfBirth) and liveLocation (latitude, longitude) from DB
+ */
+router.get('/users/:userId/doshas', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const forceRefresh = req.query.refresh === 'true';
+
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access dosha data for this user'
+      });
+    }
+
+    const result = await doshaService.getAllDoshas(user, { forceRefresh });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('[Client API] Get doshas error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch dosha data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Get remedies (puja, gemstone, rudraksha) for a user
+ * GET /api/client/users/:userId/remedies
+ * Query params: ?refresh=true to force refresh from API
+ * Access: client (own users), admin, super_admin, user (own data only)
+ */
+router.get('/users/:userId/remedies', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const forceRefresh = req.query.refresh === 'true';
+
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access remedies for this user'
+      });
+    }
+
+    // Require basic birth details to call remedies APIs
+    if (!user.profile?.dob || !user.profile?.timeOfBirth) {
+      return res.status(400).json({
+        success: false,
+        message: 'User has incomplete birth details for remedies',
+        missingFields: {
+          dob: !user.profile?.dob,
+          timeOfBirth: !user.profile?.timeOfBirth
+        }
+      });
+    }
+
+    const result = await remedyService.getRemedies(user, { forceRefresh });
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('[Client API] Get remedies error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch remedies',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

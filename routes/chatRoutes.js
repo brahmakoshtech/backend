@@ -616,8 +616,8 @@ router.get('/conversations', authenticate, async (req, res) => {
 
     const isPartner = req.userType === 'partner';
     const query = isPartner 
-      ? { partnerId: req.userId, status: { $in: ['accepted', 'active'] } }
-      : { userId: req.userId, status: { $in: ['accepted', 'active', 'pending'] } };
+      ? { partnerId: req.userId, status: { $in: ['accepted', 'active', 'ended'] } }
+      : { userId: req.userId, status: { $in: ['accepted', 'active', 'pending', 'ended'] } };
 
     console.log('Query:', JSON.stringify(query));
 
@@ -712,21 +712,28 @@ router.get('/conversations/:conversationId/messages', authenticate, async (req, 
 
     console.log(`✅ Found ${messages.length} messages (total: ${totalMessages})`);
 
+    const responseData = {
+      messages: messages.reverse(),
+      conversationStatus: conversation.status,
+      isAccepted: conversation.isAcceptedByPartner,
+      userAstrology: isPartner ? conversation.userAstrologyData : null,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        totalMessages,
+        totalPages: Math.ceil(totalMessages / parseInt(limit)),
+        hasMore: skip + messages.length < totalMessages
+      }
+    };
+
+    if (conversation.status === 'ended') {
+      responseData.sessionDetails = conversation.sessionDetails || null;
+      responseData.rating = conversation.rating || { byUser: {}, byPartner: {} };
+    }
+
     res.json({
       success: true,
-      data: {
-        messages: messages.reverse(),
-        conversationStatus: conversation.status,
-        isAccepted: conversation.isAcceptedByPartner,
-        userAstrology: isPartner ? conversation.userAstrologyData : null,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          totalMessages,
-          totalPages: Math.ceil(totalMessages / parseInt(limit)),
-          hasMore: skip + messages.length < totalMessages
-        }
-      }
+      data: responseData
     });
   } catch (error) {
     console.error('❌ Error fetching messages:', error.message);
@@ -889,14 +896,7 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
     console.log('🔚 END CONVERSATION - START');
     const { conversationId } = req.params;
 
-    const conversation = await Conversation.findOneAndUpdate(
-      { conversationId },
-      {
-        status: 'ended',
-        endedAt: new Date()
-      },
-      { new: true }
-    );
+    const conversation = await Conversation.findOne({ conversationId });
 
     if (!conversation) {
       return res.status(404).json({
@@ -904,6 +904,33 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
         message: 'Conversation not found'
       });
     }
+
+    const endTime = new Date();
+
+    // Count messages for summary
+    const totalMessages = await Message.countDocuments({
+      conversationId,
+      isDeleted: false
+    });
+
+    conversation.status = 'ended';
+    conversation.endedAt = endTime;
+
+    // Fill session summary
+    const startTime = conversation.startedAt || conversation.sessionDetails?.startTime || conversation.createdAt;
+    const durationMinutes = startTime
+      ? Math.round((endTime - startTime) / (1000 * 60))
+      : 0;
+
+    conversation.sessionDetails = {
+      duration: durationMinutes,
+      messagesCount: totalMessages,
+      startTime,
+      endTime,
+      creditsUsed: conversation.sessionDetails?.creditsUsed || 0
+    };
+
+    await conversation.save();
 
     // If partner is ending conversation, decrease active count
     if (req.userType === 'partner') {
@@ -926,6 +953,72 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
     res.status(500).json({
       success: false,
       message: 'Failed to end conversation',
+      error: error.message
+    });
+  }
+});
+
+// @route   PATCH /api/chat/conversations/:conversationId/feedback
+// @desc    Submit rating/feedback for a conversation (user or partner)
+// @access  Private
+router.patch('/conversations/:conversationId/feedback', authenticate, async (req, res) => {
+  try {
+    console.log('📝 FEEDBACK - START');
+    const { conversationId } = req.params;
+    const { stars, feedback, satisfaction } = req.body;
+
+    const conversation = await Conversation.findOne({ conversationId });
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+
+    const isPartner = req.userType === 'partner';
+
+    // Ensure the caller belongs to this conversation
+    const hasAccess = isPartner
+      ? conversation.partnerId.toString() === req.userId
+      : conversation.userId.toString() === req.userId;
+
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const target = isPartner ? conversation.rating.byPartner : conversation.rating.byUser;
+
+    if (stars !== undefined) {
+      const n = Number(stars);
+      if (!Number.isNaN(n) && n >= 0 && n <= 5) {
+        target.stars = n;
+      }
+    }
+
+    if (feedback !== undefined) {
+      target.feedback = feedback;
+    }
+
+    if (satisfaction !== undefined) {
+      target.satisfaction = satisfaction;
+    }
+
+    target.ratedAt = new Date();
+
+    await conversation.save();
+
+    res.json({
+      success: true,
+      data: conversation.rating
+    });
+  } catch (error) {
+    console.error('❌ Error saving feedback:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save feedback',
       error: error.message
     });
   }
