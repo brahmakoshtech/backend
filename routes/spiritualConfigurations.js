@@ -4,6 +4,17 @@ import SpiritualConfiguration from '../models/SpiritualConfiguration.js';
 
 const router = express.Router();
 
+// Helper function to get default categoryId based on type
+const getDefaultCategoryId = (type) => {
+  const typeToCategory = {
+    'meditation': '69787dfbbeaf7e42675a221d',
+    'chanting': '69787dcbbeaf7e42675a2212',
+    'silence': '69787d8bbeaf7e42675a2207',
+    'prayer': '69787d32beaf7e42675a21f8'
+  };
+  return typeToCategory[type] || '';
+};
+
 // All routes require authentication
 router.use(authenticateToken);
 
@@ -42,7 +53,7 @@ const createConfiguration = async (req, res) => {
       karmaPoints: karmaPoints || 10,
       chantingType: chantingType || '',
       customChantingType: customChantingType || '',
-      categoryId: categoryId || '',
+      categoryId: categoryId || getDefaultCategoryId(type),
       clientId
     });
 
@@ -94,20 +105,8 @@ const getConfigurations = async (req, res) => {
       
       const mappedType = categoryToTypeMap[req.query.categoryId];
       if (mappedType) {
-        // First try with categoryId, if no results then try with type
-        const categoryQuery = { ...query, categoryId: req.query.categoryId };
-        const categoryConfigs = await SpiritualConfiguration.find(categoryQuery).sort({ createdAt: -1 });
-        
-        if (categoryConfigs.length > 0) {
-          return res.status(200).json({
-            success: true,
-            data: categoryConfigs,
-            count: categoryConfigs.length
-          });
-        } else {
-          // Fallback to type filter
-          query.type = mappedType;
-        }
+        // Get all configurations of the mapped type (both with and without categoryId)
+        query.type = mappedType;
       } else {
         query.categoryId = req.query.categoryId;
       }

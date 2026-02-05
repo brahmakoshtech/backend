@@ -27,7 +27,7 @@ const spiritualConfigurationSchema = new mongoose.Schema({
   },
   emotion: {
     type: String,
-    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', 'neutral', 'stress', ''],
+    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', 'neutral', 'stressed', ''],
     default: ''
   },
   karmaPoints: {

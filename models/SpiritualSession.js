@@ -42,7 +42,7 @@ const spiritualSessionSchema = new mongoose.Schema({
   },
   emotion: {
     type: String,
-    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', 'stress', 'anxious', 'peaceful', 'grateful', 'hopeful', 'loving', 'serene', 'focused', 'energized', 'centered', 'mindful', 'devoted', 'elevated', 'reverent', 'quiet', 'neutral']
+    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', 'stressed', 'anxious', 'peaceful', 'grateful', 'hopeful', 'loving', 'serene', 'focused', 'energized', 'centered', 'mindful', 'devoted', 'elevated', 'reverent', 'quiet', 'neutral']
   },
   chantCount: {
     type: Number,
