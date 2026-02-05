@@ -229,25 +229,52 @@ router.patch('/clients/:id/activate', async (req, res) => {
   }
 });
 
-// Get users under clients
+// Get users under clients (admin credits view) with optional search + pagination
 router.get('/users', async (req, res) => {
   try {
+    const { search, page = 1, limit = 25 } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(limit) || 25, 1), 100);
+    const skip = (pageNum - 1) * pageSize;
+
     const clients = await Client.find({ 
       adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
     }).select('_id');
 
     const clientIds = clients.map(c => c._id);
-    
-    const users = await User.find({ 
+
+    const query = {
       clientId: { $in: clientIds }
-    })
+    };
+
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [
+        { email: regex },
+        { 'profile.name': regex }
+      ];
+    }
+    
+    const [users, total] = await Promise.all([
+      User.find(query)
       .select('-password')
       .populate('clientId', 'email businessName clientId')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .lean(),
+      User.countDocuments(query)
+    ]);
     
     res.json({
       success: true,
-      data: { users }
+      data: { 
+        users,
+        total,
+        page: pageNum,
+        limit: pageSize,
+        hasMore: total > skip + users.length
+      }
     });
   } catch (error) {
     res.status(500).json({ 

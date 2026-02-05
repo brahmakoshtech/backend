@@ -8,9 +8,11 @@ import User from '../models/User.js';
 import Client from '../models/Client.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
+import Credit from '../models/Credit.js';
 import astrologyService from '../services/astrologyService.js';
 import panchangService from '../services/panchangService.js';
 import numerologyService from '../services/numerologyService.js';
+import doshaService from '../services/doshaService.js';
 
 const router = express.Router();
 
@@ -127,6 +129,7 @@ router.post('/users', authenticate, authorize('client', 'admin', 'super_admin'),
       password,
       profile: profile || {},
       clientId: req.user.role === 'client' ? req.user._id : req.body.clientId,
+      credits: 1000, // signup bonus for client-created users
       emailVerified: true,
       loginApproved: true,
       registrationStep: 3
@@ -152,6 +155,85 @@ router.post('/users', authenticate, authorize('client', 'admin', 'super_admin'),
     res.status(500).json({
       success: false,
       message: 'Failed to create user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Add credits to a user (for paid chat/features)
+ * POST /api/client/users/:userId/credits
+ * Body: { amount: number, description?: string }
+ * Access: client (own users), admin, super_admin
+ */
+router.post('/users/:userId/credits', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { amount, description } = req.body;
+
+    const numericAmount = Number(amount);
+    if (!numericAmount || Number.isNaN(numericAmount)) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount is required and must be a number'
+      });
+    }
+    if (numericAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount must be greater than 0'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Clients can only manage their own users
+    if (req.user.role === 'client') {
+      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only add credits to your own users'
+        });
+      }
+    }
+
+    const previousBalance = user.credits || 0;
+    const newBalance = previousBalance + numericAmount;
+
+    user.credits = newBalance;
+    await user.save();
+
+    const tx = await Credit.create({
+      userId: user._id,
+      amount: numericAmount,
+      previousBalance,
+      newBalance,
+      addedBy: req.user._id,
+      addedByRole: req.user.role,
+      description: description || `Credits added by ${req.user.role}`
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Credits added successfully',
+      data: {
+        userId: user._id,
+        previousBalance,
+        newBalance,
+        transaction: tx
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Add user credits error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add credits',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -1303,9 +1385,9 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
     let { date } = req.body;
     const forceRefresh = req.query.refresh === 'true';
 
-    // Validate user
+    // Validate user (include liveLocation for doshas)
     const user = await User.findById(userId)
-      .select('profile clientId')
+      .select('profile clientId liveLocation')
       .lean();
 
     if (!user) {
@@ -1354,10 +1436,20 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
       forceRefresh
     );
 
+    // Fetch doshas (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool) using user details
+    let doshas = null;
+    if (user.profile?.dob) {
+      try {
+        doshas = await doshaService.getAllDoshas(user);
+      } catch (e) {
+        console.warn('[Client API] Could not fetch doshas:', e.message);
+      }
+    }
+
     res.json({
       success: true,
       source: result.source, // 'database' or 'api'
-      data: result.data
+      data: { ...result.data, doshas }
     });
 
   } catch (error) {
@@ -1383,7 +1475,7 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
     let { date } = req.body;
 
     const user = await User.findById(userId)
-      .select('profile clientId')
+      .select('profile clientId liveLocation')
       .lean();
 
     if (!user) {
@@ -1425,11 +1517,21 @@ router.post('/users/:userId/numerology/refresh', authenticate, authorize('client
 
     const result = await numerologyService.refreshNumerologyData(userId, date, userName, userDob);
 
+    // Fetch doshas using user details
+    let doshas = null;
+    if (user.profile?.dob) {
+      try {
+        doshas = await doshaService.getAllDoshas(user);
+      } catch (e) {
+        console.warn('[Client API] Could not fetch doshas:', e.message);
+      }
+    }
+
     res.json({
       success: true,
       message: 'Numerology data refreshed successfully',
       source: result.source,
-      data: result.data
+      data: { ...result.data, doshas }
     });
 
   } catch (error) {
@@ -1540,6 +1642,50 @@ router.delete('/users/:userId/numerology', authenticate, authorize('client', 'ad
     res.status(500).json({
       success: false,
       message: error.message || 'Failed to delete numerology data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Get all doshas for a user (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool)
+ * GET /api/client/users/:userId/doshas
+ * Access: client (own users), admin, super_admin, user (own data only)
+ * Uses user profile (dob, timeOfBirth) and liveLocation (latitude, longitude) from DB
+ */
+router.get('/users/:userId/doshas', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access dosha data for this user'
+      });
+    }
+
+    const result = await doshaService.getAllDoshas(user);
+
+    res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error('[Client API] Get doshas error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch dosha data',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

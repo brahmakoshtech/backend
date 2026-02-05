@@ -106,7 +106,8 @@ const conversationSchema = new mongoose.Schema({
     duration: { type: Number, default: 0 }, // in minutes
     messagesCount: { type: Number, default: 0 },
     startTime: { type: Date, default: null },
-    endTime: { type: Date, default: null }
+    endTime: { type: Date, default: null },
+    creditsUsed: { type: Number, default: 0 } // reserved for future credit deduction
   },
   
   // Payment Information
@@ -126,12 +127,22 @@ const conversationSchema = new mongoose.Schema({
   rating: {
     byUser: {
       stars: { type: Number, min: 0, max: 5, default: null },
-      feedback: { type: String, default: null },
+      feedback: { type: String, default: null }, // detailed description
+      satisfaction: {
+        type: String,
+        enum: ['very_happy', 'happy', 'neutral', 'unhappy', 'very_unhappy', null],
+        default: null
+      },
       ratedAt: { type: Date, default: null }
     },
     byPartner: {
       stars: { type: Number, min: 0, max: 5, default: null },
       feedback: { type: String, default: null },
+      satisfaction: {
+        type: String,
+        enum: ['very_happy', 'happy', 'neutral', 'unhappy', 'very_unhappy', null],
+        default: null
+      },
       ratedAt: { type: Date, default: null }
     }
   },

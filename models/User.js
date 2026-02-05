@@ -122,6 +122,12 @@ const userSchema = new mongoose.Schema({
     type: Date,
     select: false
   },
+  // Current credit balance for paid features (chat, etc.)
+  credits: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   createdAt: {
     type: Date,
     default: Date.now
