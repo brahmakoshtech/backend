@@ -58,35 +58,55 @@ const checkUserAccess = (requestingUser, targetUser) => {
 /**
  * Get client's own users
  * GET /api/client/users
+ * Query params: ?page=1&limit=25&search=query
  * Access: client, admin, super_admin, user (user can only see themselves)
  */
 router.get('/users', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
   try {
+    const { search, page = 1, limit = 25 } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(limit) || 25, 1), 100);
+    const skip = (pageNum - 1) * pageSize;
+
     let query = {};
 
     if (req.user.role === 'client') {
       console.log('[Client API] Fetching users for client:', req.user._id.toString());
       query.clientId = req.user._id;
     } else if (req.user.role === 'user') {
-      // Users can only see themselves
       console.log('[Client API] User fetching own record:', req.user._id.toString());
       query._id = req.user._id;
     }
-    // admin and super_admin see all users
 
-    const users = await User.find(query)
-      .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')
-      .populate('clientId', 'clientId businessName email')
-      .sort({ createdAt: -1 })
-      .lean();
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      query.$or = [
+        { email: regex },
+        { 'profile.name': regex }
+      ];
+    }
 
-    console.log('[Client API] Found users:', users.length);
+    const [users, total] = await Promise.all([
+      User.find(query)
+        .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')
+        .populate('clientId', 'clientId businessName email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      User.countDocuments(query)
+    ]);
+
+    console.log('[Client API] Found users:', users.length, 'Total:', total);
 
     res.json({
       success: true,
       data: {
         users,
-        count: users.length
+        total,
+        page: pageNum,
+        limit: pageSize,
+        hasMore: total > skip + users.length
       }
     });
   } catch (error) {
@@ -235,6 +255,84 @@ router.post('/users/:userId/credits', authenticate, authorize('client', 'admin',
     res.status(500).json({
       success: false,
       message: 'Failed to add credits',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Add karma points to a user (bonus points)
+ * POST /api/client/users/:userId/karma-points
+ * Body: { amount: number, description?: string }
+ * Access: client (own users), admin, super_admin
+ */
+router.post('/users/:userId/karma-points', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { amount, description } = req.body;
+
+    const numericAmount = Number(amount);
+    if (!numericAmount || Number.isNaN(numericAmount)) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount is required and must be a number'
+      });
+    }
+    if (numericAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'amount must be greater than 0'
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Clients can only manage their own users
+    if (req.user.role === 'client') {
+      if (!user.clientId || user.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only add karma points to your own users'
+        });
+      }
+    }
+
+    const previousBalance = user.karmaPoints || 0;
+    const previousBonus = user.bonusKarmaPoints || 0;
+    const newBonus = previousBonus + numericAmount;
+    const newBalance = previousBalance + numericAmount;
+
+    user.bonusKarmaPoints = newBonus;  // Track bonus separately
+    user.karmaPoints = newBalance;      // Total balance
+    await user.save();
+
+    console.log(`[Client API] Karma points added: User ${userId}, Bonus: ${previousBonus} -> ${newBonus}, Total: ${previousBalance} -> ${newBalance}`);
+
+    res.status(201).json({
+      success: true,
+      message: 'Karma points added successfully',
+      data: {
+        userId: user._id,
+        previousBalance,
+        newBalance,
+        bonusAdded: numericAmount,
+        totalBonus: newBonus,
+        addedBy: req.user._id,
+        addedByRole: req.user.role,
+        description: description || `Karma points bonus added by ${req.user.role}`
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Add karma points error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to add karma points',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

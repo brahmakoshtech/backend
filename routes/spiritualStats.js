@@ -669,13 +669,35 @@ router.post('/save-session', async (req, res) => {
     
     console.log('Session saved successfully:', newSession._id);
     
-    // ✅ AUTO-UPDATE: User's karma points
+    // ✅ AUTO-UPDATE: User's karma points (sessions + bonus - redemptions)
     const User = (await import('../models/User.js')).default;
-    const sessions = await SpiritualSession.find({ userId });
-    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
     
-    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: totalKarmaPoints } });
-    console.log('User karma points updated to:', totalKarmaPoints);
+    // Get user to access bonus points
+    const user = await User.findById(userId).select('bonusKarmaPoints');
+    const bonusPoints = user?.bonusKarmaPoints || 0;
+    
+    // Calculate total earned karma points from all sessions
+    const sessions = await SpiritualSession.find({ userId });
+    const totalEarnedFromSessions = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    // Calculate total spent karma points from redemptions (only completed status)
+    const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
+    const totalSpentKarmaPoints = redemptions.reduce((sum, redemption) => sum + (redemption.karmaPointsSpent || 0), 0);
+    
+    // Final balance = earned from sessions + bonus - spent
+    const finalKarmaPoints = Math.max(0, totalEarnedFromSessions + bonusPoints - totalSpentKarmaPoints);
+    
+    console.log('=== KARMA POINTS CALCULATION ===');
+    console.log('Total Sessions:', sessions.length);
+    console.log('Earned from Sessions:', totalEarnedFromSessions);
+    console.log('Bonus Points:', bonusPoints);
+    console.log('Total Redemptions:', redemptions.length);
+    console.log('Total Spent:', totalSpentKarmaPoints);
+    console.log('Final Balance:', finalKarmaPoints);
+    console.log('================================');
+    
+    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: finalKarmaPoints } });
     
     res.json({
       success: true,
@@ -683,7 +705,7 @@ router.post('/save-session', async (req, res) => {
       data: {
         ...newSession.toObject(),
         statusMessage: getStatusMessage(newSession.status, newSession.completionPercentage),
-        totalKarmaPoints // Return updated total
+        totalKarmaPoints: finalKarmaPoints // Return updated balance
       }
     });
   } catch (error) {
@@ -794,6 +816,144 @@ router.post('/clean-duplicates', async (req, res) => {
     });
   } catch (error) {
     console.error('Clean duplicates error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Recalculate karma points for current user
+router.post('/recalculate-karma', async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.userId;
+    const User = (await import('../models/User.js')).default;
+    const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
+    
+    // Get all sessions
+    const sessions = await SpiritualSession.find({ userId });
+    const totalEarned = sessions.reduce((sum, s) => sum + (s.karmaPoints || 0), 0);
+    
+    // Get all completed redemptions
+    const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
+    const totalSpent = redemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
+    
+    // Calculate balance
+    const balance = Math.max(0, totalEarned - totalSpent);
+    
+    // Update user
+    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: balance } });
+    
+    res.json({
+      success: true,
+      message: 'Karma points recalculated successfully',
+      data: {
+        totalSessions: sessions.length,
+        totalEarned,
+        totalRedemptions: redemptions.length,
+        totalSpent,
+        currentBalance: balance,
+        sessions: sessions.map(s => ({ id: s._id, title: s.title, points: s.karmaPoints })),
+        redemptions: redemptions.map(r => ({ id: r._id, points: r.karmaPointsSpent, status: r.status }))
+      }
+    });
+  } catch (error) {
+    console.error('Recalculate karma error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Debug karma points - show detailed breakdown
+router.get('/debug-karma', async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.userId;
+    const User = (await import('../models/User.js')).default;
+    const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
+    
+    // Get user current karma points
+    const user = await User.findById(userId).select('karmaPoints email');
+    
+    // Get all sessions
+    const sessions = await SpiritualSession.find({ userId }).sort({ createdAt: -1 });
+    const totalEarned = sessions.reduce((sum, s) => sum + (s.karmaPoints || 0), 0);
+    
+    // Get ALL redemptions (not just completed)
+    const allRedemptions = await RewardRedemption.find({ userId }).sort({ redeemedAt: -1 });
+    const completedRedemptions = allRedemptions.filter(r => r.status === 'completed');
+    const totalSpent = completedRedemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
+    
+    // Calculate what it should be
+    const calculatedBalance = Math.max(0, totalEarned - totalSpent);
+    
+    res.json({
+      success: true,
+      data: {
+        userEmail: user.email,
+        currentKarmaPointsInDB: user.karmaPoints,
+        calculatedBalance,
+        difference: user.karmaPoints - calculatedBalance,
+        sessions: {
+          total: sessions.length,
+          totalEarned,
+          list: sessions.map(s => ({
+            id: s._id,
+            title: s.title,
+            type: s.type,
+            points: s.karmaPoints,
+            date: s.createdAt
+          }))
+        },
+        redemptions: {
+          total: allRedemptions.length,
+          completed: completedRedemptions.length,
+          totalSpent,
+          list: allRedemptions.map(r => ({
+            id: r._id,
+            points: r.karmaPointsSpent,
+            status: r.status,
+            date: r.redeemedAt
+          }))
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Debug karma error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+});
+
+// Delete all test redemptions for current user (MUST BE BEFORE /:sessionId route)
+router.delete('/clear-redemptions', async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.userId;
+    const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
+    const User = (await import('../models/User.js')).default;
+    
+    // Delete all redemptions
+    const result = await RewardRedemption.deleteMany({ userId });
+    
+    // Recalculate karma points (only from sessions now)
+    const sessions = await SpiritualSession.find({ userId });
+    const totalEarned = sessions.reduce((sum, s) => sum + (s.karmaPoints || 0), 0);
+    
+    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: totalEarned } });
+    
+    res.json({
+      success: true,
+      message: `Deleted ${result.deletedCount} redemptions and reset karma points`,
+      data: {
+        deletedRedemptions: result.deletedCount,
+        newKarmaBalance: totalEarned
+      }
+    });
+  } catch (error) {
+    console.error('Clear redemptions error:', error);
     res.status(500).json({
       success: false,
       message: error.message
