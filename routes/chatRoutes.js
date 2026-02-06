@@ -3,8 +3,15 @@ import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
 import Message from '../models/Message.js';
 import Conversation from '../models/Conversation.js';
+import ConversationSession from '../models/ConversationSession.js';
+import ChatCreditLedger from '../models/ChatCreditLedger.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
+import astrologyService from '../services/astrologyService.js';
+import numerologyService from '../services/numerologyService.js';
+import doshaService from '../services/doshaService.js';
+import remedyService from '../services/remedyService.js';
+import panchangService from '../services/panchangService.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
@@ -192,7 +199,7 @@ router.get('/partners', authenticate, async (req, res) => {
     console.log(`📊 Active AND verified: ${activeAndVerified}`);
 
     const partners = await Partner.find({ isActive: true, isVerified: true })
-      .select('name email profilePicture specialization rating totalSessions experience onlineStatus activeConversationsCount maxConversations lastActiveAt')
+      .select('name email phone profilePicture bio specialization rating totalSessions experience experienceRange expertise expertiseCategory skills languages qualifications consultationModes location totalRatings completedSessions pricePerSession currency onlineStatus activeConversationsCount maxConversations lastActiveAt availabilityPreference')
       .sort({ rating: -1, totalSessions: -1 })
       .lean();
 
@@ -249,10 +256,43 @@ router.get('/partners', authenticate, async (req, res) => {
     console.error('Message:', error.message);
     console.error('Stack:', error.stack);
     console.error('═══════════════════════════════════════════════════');
-    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch partners',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/chat/partners/:partnerId
+// @desc    Get full partner details (for display in chat sidebar)
+// @access  Private
+router.get('/partners/:partnerId', authenticate, async (req, res) => {
+  try {
+    const { partnerId } = req.params;
+    const partner = await Partner.findById(partnerId)
+      .select('-password -resetPasswordToken -resetPasswordExpires')
+      .lean();
+    if (!partner || !partner.isActive) {
+      return res.status(404).json({ success: false, message: 'Partner not found' });
+    }
+    const onlineStatus = partner.onlineStatus || 'offline';
+    const activeConversationsCount = partner.activeConversationsCount ?? 0;
+    const maxConversations = partner.maxConversations || 5;
+    res.json({
+      success: true,
+      data: {
+        ...partner,
+        status: onlineStatus,
+        isBusy: activeConversationsCount >= maxConversations,
+        canAcceptConversation: activeConversationsCount < maxConversations
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching partner:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch partner',
       error: error.message
     });
   }
@@ -305,53 +345,31 @@ router.post('/conversations', authenticate, async (req, res) => {
 
     console.log('✅ Partner found:', partner.name);
 
-    // Create conversation ID
-    const conversationId = [finalPartnerId, finalUserId].sort().join('_');
-    console.log('Generated conversation ID:', conversationId);
+    // Base ID for lookup; new consultations get unique ID with timestamp
+    const baseId = [finalPartnerId, finalUserId].sort().join('_');
+    console.log('Base conversation ID:', baseId);
 
-    // Check if conversation already exists
-    let conversation = await Conversation.findOne({ conversationId });
+    // Check if active/pending conversation already exists (same session)
+    let conversation = await Conversation.findOne({
+      partnerId: finalPartnerId,
+      userId: finalUserId,
+      status: { $in: ['pending', 'accepted', 'active'] }
+    });
 
     if (conversation) {
-      // If conversation was ended/rejected, reopen it as a new pending request
-      if (['ended', 'rejected', 'cancelled'].includes(conversation.status)) {
-        console.log('🔄 Reopening ended/rejected conversation as new pending request');
-        let userAstrologyInfo = conversation.userAstrologyData || {};
-        if (req.userType === 'user' && (astrologyData?.name || astrologyData?.dateOfBirth)) {
-          const user = await User.findById(finalUserId);
-          userAstrologyInfo = {
-            name: astrologyData?.name || user?.profile?.name || user?.email,
-            dateOfBirth: astrologyData?.dateOfBirth || (user?.profile?.dob ? new Date(user.profile.dob).toISOString().split('T')[0] : null),
-            timeOfBirth: astrologyData?.timeOfBirth || user?.profile?.timeOfBirth || '',
-            placeOfBirth: astrologyData?.placeOfBirth || user?.profile?.placeOfBirth || '',
-            gowthra: astrologyData?.gowthra || user?.profile?.gowthra || '',
-            zodiacSign: astrologyData?.zodiacSign || user?.profile?.zodiacSign || '',
-            moonSign: astrologyData?.moonSign || user?.profile?.moonSign || '',
-            ascendant: astrologyData?.ascendant || user?.profile?.ascendant || '',
-            additionalInfo: astrologyData?.additionalInfo || user?.profile?.astrologyDetails
-          };
-        }
-        conversation.status = 'pending';
-        conversation.isAcceptedByPartner = false;
-        conversation.acceptedAt = null;
-        conversation.rejectedAt = null;
-        conversation.rejectionReason = null;
-        conversation.endedAt = null;
-        conversation.userAstrologyData = userAstrologyInfo;
-        conversation.unreadCount = { partner: 0, user: 0 };
-        await conversation.save();
-      } else {
-        console.log('ℹ️ Conversation already exists');
-      }
-      await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus');
+      console.log('ℹ️ Active/pending conversation already exists');
+      await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus bio experience expertise languages qualifications location totalSessions completedSessions pricePerSession');
       await conversation.populate('userId', 'email profile profileImage');
-
       return res.json({
         success: true,
-        message: conversation.status === 'pending' ? 'Consultation request reopened. Waiting for partner acceptance.' : 'Conversation already exists',
+        message: 'Conversation already exists',
         data: conversation
       });
     }
+
+    // For new consultation after ended/rejected: create NEW conversation with unique ID
+    const conversationId = `${baseId}_${Date.now()}`;
+    console.log('Generated new conversation ID:', conversationId);
 
     // Get user's complete profile data
     let userAstrologyInfo = {};
@@ -390,7 +408,7 @@ router.post('/conversations', authenticate, async (req, res) => {
       userAstrologyData: userAstrologyInfo
     });
 
-    await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus');
+    await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus bio experience expertise languages qualifications location totalSessions completedSessions pricePerSession');
     await conversation.populate('userId', 'email profile profileImage');
 
     console.log('✅ Conversation created successfully');
@@ -517,10 +535,19 @@ router.post('/partner/requests/:conversationId/accept', authenticate, async (req
       });
     }
 
-    // Accept conversation
+    // Accept conversation - session timing starts from partner acceptance
+    const acceptedAt = new Date();
     conversation.status = 'accepted';
     conversation.isAcceptedByPartner = true;
-    conversation.acceptedAt = new Date();
+    conversation.acceptedAt = acceptedAt;
+    conversation.startedAt = acceptedAt;
+    conversation.sessionDetails = {
+      ...(conversation.sessionDetails || {}),
+      startTime: acceptedAt,
+      duration: 0,
+      messagesCount: 0,
+      creditsUsed: conversation.sessionDetails?.creditsUsed || 0
+    };
     await conversation.save();
 
     // Update partner's active conversation count
@@ -623,7 +650,7 @@ router.get('/conversations', authenticate, async (req, res) => {
 
     const conversations = await Conversation.find(query)
       .sort({ lastMessageAt: -1 })
-      .populate('partnerId', 'name email profilePicture specialization rating onlineStatus')
+      .populate('partnerId', 'name email profilePicture specialization rating onlineStatus bio experience expertise languages qualifications location totalSessions completedSessions pricePerSession')
       .populate('userId', 'email profile profileImage')
       .lean();
 
@@ -889,12 +916,13 @@ router.patch('/conversations/:conversationId/read', authenticate, async (req, re
 });
 
 // @route   PATCH /api/chat/conversations/:conversationId/end
-// @desc    End a conversation
+// @desc    End a conversation (accepts feedback in body for single-call flow)
 // @access  Private
 router.patch('/conversations/:conversationId/end', authenticate, async (req, res) => {
   try {
     console.log('🔚 END CONVERSATION - START');
     const { conversationId } = req.params;
+    const { stars, feedback, satisfaction } = req.body || {};
 
     const conversation = await Conversation.findOne({ conversationId });
 
@@ -905,48 +933,136 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       });
     }
 
+    const isPartner = req.userType === 'partner';
+    const hasAccess = isPartner
+      ? conversation.partnerId.toString() === req.userId
+      : conversation.userId.toString() === req.userId;
+    if (!hasAccess) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
     const endTime = new Date();
 
-    // Count messages for summary
     const totalMessages = await Message.countDocuments({
       conversationId,
       isDeleted: false
     });
 
+    const startTime = conversation.acceptedAt || conversation.sessionDetails?.startTime || conversation.startedAt || conversation.createdAt;
+    const rawMinutes = startTime ? (endTime - new Date(startTime)) / (1000 * 60) : 0;
+    // Billing: per started minute. If accepted and had any activity, minimum 1 minute.
+    const billableMinutes = startTime
+      ? Math.max((conversation.isAcceptedByPartner ? 1 : 0), Math.ceil(rawMinutes))
+      : 0;
+    const durationMinutes = billableMinutes;
+
+    // Credit billing rates
+    const USER_RATE_PER_MIN = 4;
+    const PARTNER_RATE_PER_MIN = 3;
+
     conversation.status = 'ended';
     conversation.endedAt = endTime;
+    // Compute credits: user pays 4/min, partner earns 3/min (proportional to actual debit)
+    const user = await User.findById(conversation.userId).select('credits email profile');
+    const partner = await Partner.findById(conversation.partnerId).select('creditsEarnedTotal creditsEarnedBalance email name');
 
-    // Fill session summary
-    const startTime = conversation.startedAt || conversation.sessionDetails?.startTime || conversation.createdAt;
-    const durationMinutes = startTime
-      ? Math.round((endTime - startTime) / (1000 * 60))
-      : 0;
+    const userPreviousBalance = user?.credits || 0;
+    const intendedUserDebit = billableMinutes * USER_RATE_PER_MIN;
+    const userDebited = Math.min(userPreviousBalance, intendedUserDebit);
+    const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
+
+    const partnerPreviousBalance = partner?.creditsEarnedBalance || 0;
+    // Keep 4:3 relationship even if user couldn't pay full amount
+    const partnerCredited = Math.floor((userDebited * PARTNER_RATE_PER_MIN) / USER_RATE_PER_MIN);
+    const partnerNewBalance = partnerPreviousBalance + partnerCredited;
+    const partnerNewTotal = (partner?.creditsEarnedTotal || 0) + partnerCredited;
+
+    if (user) {
+      user.credits = userNewBalance;
+      await user.save();
+    }
+    if (partner) {
+      partner.creditsEarnedBalance = partnerNewBalance;
+      partner.creditsEarnedTotal = partnerNewTotal;
+      await partner.save();
+    }
 
     conversation.sessionDetails = {
       duration: durationMinutes,
       messagesCount: totalMessages,
       startTime,
       endTime,
-      creditsUsed: conversation.sessionDetails?.creditsUsed || 0
+      creditsUsed: userDebited,
+      partnerCreditsEarned: partnerCredited,
+      userRatePerMinute: USER_RATE_PER_MIN,
+      partnerRatePerMinute: PARTNER_RATE_PER_MIN
     };
+
+    if (stars !== undefined || feedback !== undefined || satisfaction !== undefined) {
+      const target = isPartner ? conversation.rating.byPartner : conversation.rating.byUser;
+      if (stars !== undefined) {
+        const n = Number(stars);
+        if (!Number.isNaN(n) && n >= 0 && n <= 5) target.stars = n;
+      }
+      if (feedback !== undefined) target.feedback = String(feedback).trim() || null;
+      if (satisfaction !== undefined) target.satisfaction = satisfaction || null;
+      target.ratedAt = new Date();
+    }
 
     await conversation.save();
 
-    // If partner is ending conversation, decrease active count
-    if (req.userType === 'partner') {
+    // Store billing ledger (fast audit)
+    await ChatCreditLedger.findOneAndUpdate(
+      { conversationId },
+      {
+        conversationId,
+        userId: conversation.userId,
+        partnerId: conversation.partnerId,
+        billableMinutes,
+        userDebited,
+        partnerCredited,
+        userPreviousBalance,
+        userNewBalance,
+        partnerPreviousBalance,
+        partnerNewBalance,
+        userRatePerMinute: USER_RATE_PER_MIN,
+        partnerRatePerMinute: PARTNER_RATE_PER_MIN
+      },
+      { upsert: true, new: true }
+    );
+
+    if (isPartner) {
       const partner = await Partner.findById(req.userId);
       if (partner.activeConversationsCount > 0) {
         partner.activeConversationsCount -= 1;
         await partner.updateBusyStatus();
-        console.log('✅ Partner active conversations decreased to:', partner.activeConversationsCount);
       }
     }
 
-    console.log('✅ Conversation ended');
+    await ConversationSession.findOneAndUpdate(
+      { conversationId },
+      {
+        conversationId,
+        partnerId: conversation.partnerId,
+        userId: conversation.userId,
+        startTime: conversation.sessionDetails.startTime,
+        endTime,
+        duration: durationMinutes,
+        messagesCount: totalMessages,
+        creditsUsed: conversation.sessionDetails.creditsUsed || 0,
+        rating: conversation.rating
+      },
+      { upsert: true, new: true }
+    );
 
+    const data = conversation.toObject ? conversation.toObject() : conversation;
     res.json({
       success: true,
-      data: conversation
+      data: {
+        ...data,
+        sessionDetails: conversation.sessionDetails,
+        rating: conversation.rating
+      }
     });
   } catch (error) {
     console.error('❌ Error ending conversation:', error.message);
@@ -990,6 +1106,7 @@ router.patch('/conversations/:conversationId/feedback', authenticate, async (req
     }
 
     const target = isPartner ? conversation.rating.byPartner : conversation.rating.byUser;
+    const previousStars = target.stars;
 
     if (stars !== undefined) {
       const n = Number(stars);
@@ -1009,6 +1126,23 @@ router.patch('/conversations/:conversationId/feedback', authenticate, async (req
     target.ratedAt = new Date();
 
     await conversation.save();
+
+    // If user rated partner for the first time, update partner aggregate rating
+    if (!isPartner && stars !== undefined) {
+      const n = Number(stars);
+      if (!Number.isNaN(n) && n >= 0 && n <= 5 && (previousStars == null)) {
+        const partner = await Partner.findById(conversation.partnerId);
+        if (partner) {
+          const oldTotal = partner.totalRatings || 0;
+          const oldAvg = partner.rating || 0;
+          const newTotal = oldTotal + 1;
+          const newAvg = newTotal > 0 ? ((oldAvg * oldTotal + n) / newTotal) : n;
+          partner.totalRatings = newTotal;
+          partner.rating = newAvg;
+          await partner.save();
+        }
+      }
+    }
 
     res.json({
       success: true,
@@ -1072,6 +1206,106 @@ router.get('/unread-count', authenticate, async (req, res) => {
   }
 });
 
+// @route   GET /api/chat/credits/history/user
+// @desc    Get paginated chat credit history for current user
+// @access  Private (User)
+router.get('/credits/history/user', authenticate, async (req, res) => {
+  try {
+    if (req.userType !== 'user') {
+      return res.status(403).json({ success: false, message: 'Only users can access this endpoint' });
+    }
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      ChatCreditLedger.find({ userId: req.userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('partnerId', 'name email profilePicture')
+        .lean(),
+      ChatCreditLedger.countDocuments({ userId: req.userId })
+    ]);
+
+    const data = items.map((entry) => ({
+      conversationId: entry.conversationId,
+      billableMinutes: entry.billableMinutes,
+      creditsUsed: entry.userDebited,
+      createdAt: entry.createdAt,
+      partner: entry.partnerId
+    }));
+
+    res.json({
+      success: true,
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching user credit history:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch credit history',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/chat/credits/history/partner
+// @desc    Get paginated chat earnings history for current partner
+// @access  Private (Partner)
+router.get('/credits/history/partner', authenticate, async (req, res) => {
+  try {
+    if (req.userType !== 'partner') {
+      return res.status(403).json({ success: false, message: 'Only partners can access this endpoint' });
+    }
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      ChatCreditLedger.find({ partnerId: req.userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('userId', 'email profile profileImage')
+        .lean(),
+      ChatCreditLedger.countDocuments({ partnerId: req.userId })
+    ]);
+
+    const data = items.map((entry) => ({
+      conversationId: entry.conversationId,
+      billableMinutes: entry.billableMinutes,
+      creditsEarned: entry.partnerCredited,
+      createdAt: entry.createdAt,
+      user: entry.userId
+    }));
+
+    res.json({
+      success: true,
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit)
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching partner credit history:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch credit history',
+      error: error.message
+    });
+  }
+});
+
 // @route   GET /api/chat/conversation/:conversationId/astrology
 // @desc    Get user's astrology data for a conversation (Partner only)
 // @access  Private (Partner only)
@@ -1120,6 +1354,113 @@ router.get('/conversation/:conversationId/astrology', authenticate, async (req, 
     res.status(500).json({
       success: false,
       message: 'Failed to fetch astrology data',
+      error: error.message
+    });
+  }
+});
+
+// @route   GET /api/chat/conversation/:conversationId/complete-user-details
+// @desc    Get complete user data: astrology, numerology, doshas, remedies, panchang (Partner only)
+// @access  Private (Partner only)
+router.get('/conversation/:conversationId/complete-user-details', authenticate, async (req, res) => {
+  try {
+    if (req.userType !== 'partner') {
+      return res.status(403).json({ success: false, message: 'Only partners can view this data' });
+    }
+
+    const { conversationId } = req.params;
+    const conversation = await Conversation.findOne({ conversationId })
+      .populate('userId', 'email profile profileImage clientId liveLocation');
+
+    if (!conversation || conversation.partnerId.toString() !== req.userId) {
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
+    }
+
+    const user = await User.findById(conversation.userId._id)
+      .select('-password')
+      .populate('clientId', 'clientId businessName')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const result = {
+      user: { _id: user._id, email: user.email, profile: user.profile, profileImage: user.profileImage },
+      birthDetails: conversation.userAstrologyData || user.profile,
+      astrology: null,
+      numerology: null,
+      doshas: null,
+      dashas: null,
+      remedies: null,
+      panchang: null,
+      errors: {}
+    };
+
+    const hasBirthDetails = user.profile?.dob && user.profile?.timeOfBirth;
+    const hasLocation = (user.liveLocation?.latitude != null) && (user.liveLocation?.longitude != null);
+
+    if (hasBirthDetails) {
+      const profileWithLocation = {
+        ...user.profile,
+        latitude: user.liveLocation?.latitude ?? user.profile?.latitude,
+        longitude: user.liveLocation?.longitude ?? user.profile?.longitude
+      };
+
+      try {
+        result.astrology = await astrologyService.getCompleteAstrologyData(user._id, profileWithLocation, false);
+      } catch (e) {
+        result.errors.astrology = e.message;
+      }
+
+      try {
+        const doshaData = await doshaService.getAllDoshas(user, { forceRefresh: false });
+        result.doshas = doshaData.doshas;
+        result.dashas = doshaData.dashas;
+      } catch (e) {
+        result.errors.doshas = e.message;
+      }
+
+      try {
+        result.remedies = (await remedyService.getRemedies(user, { forceRefresh: false })).remedies;
+      } catch (e) {
+        result.errors.remedies = e.message;
+      }
+    }
+
+    const userName = user.profile?.name || user.profile?.firstName || user.email;
+    if (userName) {
+      try {
+        const today = new Date();
+        const date = { day: today.getDate(), month: today.getMonth() + 1, year: today.getFullYear() };
+        const numData = await numerologyService.getNumerologyData(user._id, date, userName, user.profile?.dob, false);
+        result.numerology = numData.data;
+      } catch (e) {
+        result.errors.numerology = e.message;
+      }
+    }
+
+    if (hasLocation) {
+      try {
+        const today = new Date();
+        result.panchang = await panchangService.getCompletePanchangData(
+          user._id,
+          today.toISOString(),
+          user.liveLocation.latitude,
+          user.liveLocation.longitude,
+          false
+        );
+      } catch (e) {
+        result.errors.panchang = e.message;
+      }
+    }
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('❌ Complete user details error:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user details',
       error: error.message
     });
   }

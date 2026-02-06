@@ -5,12 +5,26 @@ const partnerSchema = new mongoose.Schema({
   // Basic Information
   name: {
     type: String,
-    required: true,
+    
     trim: true
+  },
+  // Link partner to a client (used for "experts" created by clients)
+  clientId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Client',
+    default: null,
+    index: true
+  },
+  // Optional category (compatible with ExpertCategory usage)
+  categoryId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'ExpertCategory',
+    default: null,
+    index: true
   },
   email: {
     type: String,
-    required: true,
+    
     unique: true,
     lowercase: true,
     trim: true
@@ -26,6 +40,19 @@ const partnerSchema = new mongoose.Schema({
   
   // Profile Information
   profilePicture: {
+    type: String,
+    default: null
+  },
+  // S3 key support (used by former Expert routes)
+  profilePictureKey: {
+    type: String,
+    default: null
+  },
+  backgroundBanner: {
+    type: String,
+    default: null
+  },
+  backgroundBannerKey: {
     type: String,
     default: null
   },
@@ -133,6 +160,10 @@ const partnerSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  // Per-mode charges (compatible with Expert model)
+  chatCharge: { type: Number, default: 0, min: 0 },
+  voiceCharge: { type: Number, default: 0, min: 0 },
+  videoCharge: { type: Number, default: 0, min: 0 },
   currency: {
     type: String,
     default: 'INR'
@@ -241,6 +272,12 @@ const partnerSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  // Soft delete flag (compatible with Expert model)
+  isDeleted: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
   blockedReason: {
     type: String,
     default: null
@@ -274,6 +311,18 @@ const partnerSchema = new mongoose.Schema({
   resetPasswordExpires: {
     type: Date,
     default: null
+  },
+
+  // Credits (partner earnings from chat)
+  creditsEarnedTotal: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
+  creditsEarnedBalance: {
+    type: Number,
+    default: 0,
+    min: 0
   }
 }, {
   timestamps: true
