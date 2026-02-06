@@ -37,7 +37,7 @@ const partnerSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-  
+
   // Profile Information
   profilePicture: {
     type: String,
