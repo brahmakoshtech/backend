@@ -16,15 +16,12 @@ const spiritualRewardSchema = new mongoose.Schema({
   category: {
     type: String,
     required: [true, 'Category is required'],
-    enum: [
-      'Spiritual Books',
-      'Prayer Items', 
-      'Meditation Tools',
-      'Sacred Jewelry',
-      'Temple Visits',
-      'Blessings',
-      'Other'
-    ]
+    trim: true
+  },
+  subcategory: {
+    type: String,
+    required: [true, 'Subcategory is required'],
+    trim: true
   },
   karmaPointsRequired: {
     type: Number,
@@ -75,8 +72,13 @@ const spiritualRewardSchema = new mongoose.Schema({
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    refPath: 'createdByModel',
     required: true
+  },
+  createdByModel: {
+    type: String,
+    required: true,
+    enum: ['User', 'Client', 'Admin']
   }
 }, {
   timestamps: true
@@ -84,7 +86,7 @@ const spiritualRewardSchema = new mongoose.Schema({
 
 // Index for better query performance
 spiritualRewardSchema.index({ clientId: 1, isActive: 1 });
-spiritualRewardSchema.index({ category: 1, clientId: 1 });
+spiritualRewardSchema.index({ category: 1, subcategory: 1, clientId: 1 });
 spiritualRewardSchema.index({ karmaPointsRequired: 1, clientId: 1 });
 
 export default mongoose.model('SpiritualReward', spiritualRewardSchema);
