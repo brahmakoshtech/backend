@@ -669,12 +669,21 @@ router.post('/save-session', async (req, res) => {
     
     console.log('Session saved successfully:', newSession._id);
     
+    // ✅ AUTO-UPDATE: User's karma points
+    const User = (await import('../models/User.js')).default;
+    const sessions = await SpiritualSession.find({ userId });
+    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: totalKarmaPoints } });
+    console.log('User karma points updated to:', totalKarmaPoints);
+    
     res.json({
       success: true,
       message: `Session saved successfully (${newSession.status})`,
       data: {
         ...newSession.toObject(),
-        statusMessage: getStatusMessage(newSession.status, newSession.completionPercentage)
+        statusMessage: getStatusMessage(newSession.status, newSession.completionPercentage),
+        totalKarmaPoints // Return updated total
       }
     });
   } catch (error) {

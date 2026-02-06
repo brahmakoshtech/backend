@@ -128,6 +128,12 @@ const userSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  // Karma points for spiritual activities and rewards
+  karmaPoints: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   createdAt: {
     type: Date,
     default: Date.now
