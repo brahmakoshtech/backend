@@ -85,6 +85,35 @@ const partnerSchema = new mongoose.Schema({
     enum: ['Astrology', 'Vastu', 'Reiki', 'Healer', 'Numerology', 'Others'],
     default: null
   },
+  emailOtp: {
+    type: String,
+    default: null
+  },
+  emailOtpExpiry: {
+    type: Date,
+    default: null
+  },
+  phoneOtp: {
+    type: String,
+    default: null
+  },
+  phoneOtpExpiry: {
+    type: Date,
+    default: null
+  },
+  phoneOtpMethod: {
+    type: String,
+    enum: ['email', 'sms', 'whatsapp', 'gupshup', 'twilio'],
+    default: null
+  },
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  phoneVerified: {
+    type: Boolean,
+    default: false
+  },
   skills: {
     type: [String],
     default: [], // Max 5 skills from predefined list

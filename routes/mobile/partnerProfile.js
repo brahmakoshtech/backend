@@ -146,6 +146,7 @@ router.post('/register/step1', async (req, res) => {
 router.post('/register/step1/verify', async (req, res) => {
   try {
     const { email, otp, clientId: clientCode } = req.body;
+    console.log(req.body);
 
     if (!email || !otp) {
       return res.status(400).json({ 

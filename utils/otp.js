@@ -34,6 +34,7 @@ export const isOTPExpired = (expiryDate) => {
 // Validate OTP
 export const validateOTP = (storedOTP, providedOTP, expiryDate) => {
   if (!storedOTP || !providedOTP) {
+    console.log(storedOTP, providedOTP);
     return { valid: false, message: 'OTP is required' };
   }
   
