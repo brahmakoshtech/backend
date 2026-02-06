@@ -1,6 +1,6 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import Expert from '../../models/Expert.js';
+import Partner from '../../models/Partner.js';
 import Client from '../../models/Client.js';
 import multer from 'multer';
 import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
@@ -28,6 +28,26 @@ const withClientIdString = (doc) => {
   }
   
   return obj;
+};
+
+// Backward-compatible shape for existing "experts" frontend.
+// Under the hood we store data in Partner collection.
+const toExpertShape = (doc) => {
+  const obj = withClientIdString(doc);
+  const expertiseStr = Array.isArray(obj.expertise) ? obj.expertise.join(', ') : (obj.expertise || '');
+  const experienceStr = typeof obj.experience === 'number' ? `${obj.experience} years` : (obj.experience || '');
+  const statusStr = obj.onlineStatus || obj.status || 'offline';
+  return {
+    ...obj,
+    // aliases expected by existing UI
+    profileSummary: obj.profileSummary ?? obj.bio ?? '',
+    profilePhoto: obj.profilePhoto ?? obj.profilePicture ?? null,
+    profilePhotoKey: obj.profilePhotoKey ?? obj.profilePictureKey ?? null,
+    status: statusStr,
+    expertise: expertiseStr,
+    experience: experienceStr,
+    reviews: obj.reviews ?? obj.totalRatings ?? 0
+  };
 };
 
 const getClientId = async (req) => {
@@ -100,7 +120,7 @@ router.get('/', authenticate, async (req, res) => {
     console.log('Category parameter used:', categoryParam);
     console.log('Final MongoDB query:', query);
     
-    const experts = await Expert.find(query)
+    const experts = await Partner.find(query)
       .populate('clientId', 'clientId')
       .sort({ createdAt: -1 });
     
@@ -109,11 +129,12 @@ router.get('/', authenticate, async (req, res) => {
     const expertsWithUrls = await Promise.all(
       experts.map(async (expert) => {
         const expertObj = withClientIdString(expert);
-        if (expertObj.profilePhotoKey || expertObj.profilePhoto) {
+        // partner profile picture
+        if (expertObj.profilePictureKey || expertObj.profilePicture) {
           try {
-            const imageKey = expertObj.profilePhotoKey || extractS3KeyFromUrl(expertObj.profilePhoto);
+            const imageKey = expertObj.profilePictureKey || extractS3KeyFromUrl(expertObj.profilePicture);
             if (imageKey) {
-              expertObj.profilePhoto = await getobject(imageKey, 604800);
+              expertObj.profilePicture = await getobject(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating profile photo presigned URL:', error);
@@ -129,7 +150,7 @@ router.get('/', authenticate, async (req, res) => {
             console.error('Error generating banner presigned URL:', error);
           }
         }
-        return expertObj;
+        return toExpertShape(expertObj);
       })
     );
     
@@ -153,7 +174,7 @@ router.get('/:id', authenticate, async (req, res) => {
       });
     }
     
-    const expert = await Expert.findOne({
+    const expert = await Partner.findOne({
       _id: req.params.id,
       clientId: clientId,
       isDeleted: false,
@@ -165,11 +186,11 @@ router.get('/:id', authenticate, async (req, res) => {
     }
     
     const expertObj = withClientIdString(expert);
-    if (expertObj.profilePhotoKey || expertObj.profilePhoto) {
+    if (expertObj.profilePictureKey || expertObj.profilePicture) {
       try {
-        const imageKey = expertObj.profilePhotoKey || extractS3KeyFromUrl(expertObj.profilePhoto);
+        const imageKey = expertObj.profilePictureKey || extractS3KeyFromUrl(expertObj.profilePicture);
         if (imageKey) {
-          expertObj.profilePhoto = await getobject(imageKey, 604800);
+          expertObj.profilePicture = await getobject(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating profile photo presigned URL:', error);
@@ -186,7 +207,7 @@ router.get('/:id', authenticate, async (req, res) => {
       }
     }
     
-    res.json({ success: true, data: expertObj });
+    res.json({ success: true, data: toExpertShape(expertObj) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -195,7 +216,7 @@ router.get('/:id', authenticate, async (req, res) => {
 // CREATE new expert
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { name, experience, expertise, profileSummary, languages, customLanguage, chatCharge, voiceCharge, videoCharge, status, categoryId } = req.body;
+    const { name, email, password, phone, experience, expertise, profileSummary, languages, customLanguage, chatCharge, voiceCharge, videoCharge, status, categoryId } = req.body;
     
     let clientId;
     try {
@@ -214,31 +235,52 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
     
-    if (!name || !experience || !expertise || !profileSummary || !chatCharge || !voiceCharge || !videoCharge) {
+    if (!name || !email || !password || !experience || !expertise || !profileSummary) {
       return res.status(400).json({ 
         success: false, 
-        message: 'Missing required fields: name, experience, expertise, profileSummary, and pricing are required' 
+        message: 'Missing required fields: name, email, password, experience, expertise, profileSummary are required' 
       });
     }
-    
-    const newExpert = new Expert({
+
+    const expNum = Number(String(experience).match(/\d+/)?.[0] || 0);
+    const expertiseArr = String(expertise)
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const langs = Array.isArray(languages) ? languages.slice() : (languages ? [languages] : ['Hindi']);
+    if (customLanguage && String(customLanguage).trim()) langs.push(String(customLanguage).trim());
+
+    const onlineStatus =
+      status === 'online' ? 'online' :
+      status === 'busy' || status === 'queue' ? 'busy' :
+      'offline';
+
+    const newPartner = new Partner({
       name,
-      experience,
-      expertise,
-      profileSummary,
-      languages: languages || ['Hindi'],
-      customLanguage: customLanguage || '',
-      chatCharge: Number(chatCharge),
-      voiceCharge: Number(voiceCharge),
-      videoCharge: Number(videoCharge),
-      status: status || 'offline',
+      email,
+      password,
+      phone: phone || null,
       clientId: clientId,
-      categoryId: categoryId || null
+      categoryId: categoryId || null,
+      bio: profileSummary,
+      experience: Number.isFinite(expNum) ? expNum : 0,
+      expertise: expertiseArr,
+      specialization: expertiseArr,
+      languages: langs,
+      chatCharge: Number(chatCharge) || 0,
+      voiceCharge: Number(voiceCharge) || 0,
+      videoCharge: Number(videoCharge) || 0,
+      onlineStatus,
+      isActive: true,
+      // Client-created experts are treated as verified partners
+      isVerified: true,
+      verificationStatus: 'approved',
+      verifiedAt: new Date()
     });
-    
-    const savedExpert = await newExpert.save();
-    await savedExpert.populate('clientId', 'clientId');
-    res.status(201).json({ success: true, data: withClientIdString(savedExpert) });
+
+    const saved = await newPartner.save();
+    await saved.populate('clientId', 'clientId');
+    res.status(201).json({ success: true, data: toExpertShape(saved) });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -264,7 +306,7 @@ router.post('/:id/upload-profile-photo', authenticate, upload.single('profilePho
       });
     }
 
-    const expert = await Expert.findOne({
+    const expert = await Partner.findOne({
       _id: req.params.id,
       clientId: clientId,
       isDeleted: false,
@@ -282,8 +324,8 @@ router.post('/:id/upload-profile-photo', authenticate, upload.single('profilePho
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 
-    expert.profilePhoto = imageUrl;
-    expert.profilePhotoKey = imageKey;
+    expert.profilePicture = imageUrl;
+    expert.profilePictureKey = imageKey;
     await expert.save();
 
     res.json({
@@ -323,7 +365,7 @@ router.post('/:id/upload-banner', authenticate, upload.single('backgroundBanner'
       });
     }
 
-    const expert = await Expert.findOne({
+    const expert = await Partner.findOne({
       _id: req.params.id,
       clientId: clientId,
       isDeleted: false,
@@ -365,7 +407,7 @@ router.post('/:id/upload-banner', authenticate, upload.single('backgroundBanner'
 // UPDATE expert
 router.put('/:id', authenticate, async (req, res) => {
   try {
-    const { name, experience, expertise, profileSummary, languages, customLanguage, chatCharge, voiceCharge, videoCharge, status, isActive, categoryId } = req.body;
+    const { name, email, password, phone, experience, expertise, profileSummary, languages, customLanguage, chatCharge, voiceCharge, videoCharge, status, isActive, categoryId } = req.body;
     
     let clientId;
     try {
@@ -384,7 +426,7 @@ router.put('/:id', authenticate, async (req, res) => {
       });
     }
     
-    const expert = await Expert.findOne({
+    const expert = await Partner.findOne({
       _id: req.params.id,
       clientId: clientId,
       isDeleted: false
@@ -397,19 +439,43 @@ router.put('/:id', authenticate, async (req, res) => {
     const updateData = {};
     
     if (name !== undefined) updateData.name = name;
-    if (experience !== undefined) updateData.experience = experience;
-    if (expertise !== undefined) updateData.expertise = expertise;
-    if (profileSummary !== undefined) updateData.profileSummary = profileSummary;
-    if (languages !== undefined) updateData.languages = languages;
-    if (customLanguage !== undefined) updateData.customLanguage = customLanguage;
+    if (email !== undefined) updateData.email = email;
+    if (password !== undefined && password) updateData.password = password;
+    if (phone !== undefined) updateData.phone = phone;
+    if (experience !== undefined) {
+      const expNum = Number(String(experience).match(/\d+/)?.[0] || 0);
+      updateData.experience = Number.isFinite(expNum) ? expNum : 0;
+    }
+    if (expertise !== undefined) {
+      const expertiseArr = String(expertise)
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+      updateData.expertise = expertiseArr;
+      updateData.specialization = expertiseArr;
+    }
+    if (profileSummary !== undefined) updateData.bio = profileSummary;
+    if (languages !== undefined) updateData.languages = Array.isArray(languages) ? languages : [languages].filter(Boolean);
+    if (customLanguage !== undefined) {
+      const cl = String(customLanguage || '').trim();
+      if (cl) {
+        const cur = Array.isArray(updateData.languages) ? updateData.languages : (expert.languages || []);
+        if (!cur.includes(cl)) updateData.languages = [...cur, cl];
+      }
+    }
     if (chatCharge !== undefined) updateData.chatCharge = Number(chatCharge);
     if (voiceCharge !== undefined) updateData.voiceCharge = Number(voiceCharge);
     if (videoCharge !== undefined) updateData.videoCharge = Number(videoCharge);
-    if (status !== undefined && status !== null && status !== '') updateData.status = status;
+    if (status !== undefined && status !== null && status !== '') {
+      updateData.onlineStatus =
+        status === 'online' ? 'online' :
+        status === 'busy' || status === 'queue' ? 'busy' :
+        'offline';
+    }
     if (isActive !== undefined) updateData.isActive = Boolean(isActive);
     if (categoryId !== undefined) updateData.categoryId = categoryId || null;
     
-    const updatedExpert = await Expert.findOneAndUpdate(
+    const updatedExpert = await Partner.findOneAndUpdate(
       {
         _id: req.params.id,
         clientId: clientId,
@@ -423,7 +489,7 @@ router.put('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Expert not found' });
     }
     
-    res.json({ success: true, data: withClientIdString(updatedExpert) });
+    res.json({ success: true, data: toExpertShape(updatedExpert) });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
@@ -449,7 +515,7 @@ router.delete('/:id', authenticate, async (req, res) => {
       });
     }
     
-    const expert = await Expert.findOne({
+    const expert = await Partner.findOne({
       _id: req.params.id,
       clientId: clientId,
       isDeleted: false
@@ -488,7 +554,7 @@ router.patch('/:id/toggle', authenticate, async (req, res) => {
       });
     }
     
-    const expert = await Expert.findOne({
+    const expert = await Partner.findOne({
       _id: req.params.id,
       clientId: clientId,
       isDeleted: false
@@ -503,7 +569,7 @@ router.patch('/:id/toggle', authenticate, async (req, res) => {
     
     res.json({ 
       success: true, 
-      data: withClientIdString(updatedExpert),
+      data: toExpertShape(updatedExpert),
       message: `Expert ${updatedExpert.isActive ? 'enabled' : 'disabled'} successfully`
     });
   } catch (error) {

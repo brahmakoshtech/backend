@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 const reviewSchema = new mongoose.Schema({
   expertId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Expert',
+    ref: 'Partner',
     required: true
   },
   userName: {

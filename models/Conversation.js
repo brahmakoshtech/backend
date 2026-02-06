@@ -107,7 +107,10 @@ const conversationSchema = new mongoose.Schema({
     messagesCount: { type: Number, default: 0 },
     startTime: { type: Date, default: null },
     endTime: { type: Date, default: null },
-    creditsUsed: { type: Number, default: 0 } // reserved for future credit deduction
+    creditsUsed: { type: Number, default: 0 }, // user credits debited for this session
+    partnerCreditsEarned: { type: Number, default: 0 }, // partner credits earned for this session
+    userRatePerMinute: { type: Number, default: 4 },
+    partnerRatePerMinute: { type: Number, default: 3 }
   },
   
   // Payment Information
