@@ -238,37 +238,13 @@ router.post('/register', async (req, res) => {
 // Get current user
 router.get('/me', authenticate, async (req, res) => {
   try {
-    // Fetch full user document from database
-    const user = await User.findById(req.user._id)
-      .select('-password')
-      .populate('clientId', 'clientId businessName email');
-    
-    if (!user) {
-      return res.status(404).json({ 
-        success: false, 
-        message: 'User not found' 
-      });
-    }
-    
-    // Calculate total karma points: sessions + bonus
-    const SpiritualSession = (await import('../../models/SpiritualSession.js')).default;
-    const sessions = await SpiritualSession.find({ userId: user._id });
-    const sessionKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
-    const bonusKarmaPoints = user.karmaPoints || 0;
-    const totalKarmaPoints = sessionKarmaPoints + bonusKarmaPoints;
-    
-    const userData = user.toObject();
-    userData.totalKarmaPoints = totalKarmaPoints;
-    userData.role = 'user';
-    
     res.json({
       success: true,
       data: {
-        user: userData
+        user: req.user
       }
     });
   } catch (error) {
-    console.error('/auth/user/me error:', error);
     res.status(500).json({ 
       success: false, 
       message: error.message 
