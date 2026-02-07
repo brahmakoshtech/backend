@@ -98,8 +98,7 @@ router.get('/users', authenticate, authorize('client', 'admin', 'super_admin', '
 
     const usersWithKarma = users.map(user => ({
       ...user,
-      karmaPoints: user.karmaPoints ?? 0,
-      bonusKarmaPoints: user.bonusKarmaPoints ?? 0
+      karmaPoints: user.karmaPoints ?? 0
     }));
 
     res.json({
@@ -307,12 +306,9 @@ router.post('/users/:userId/karma-points', authenticate, authorize('client', 'ad
     }
 
     const previousBalance = user.karmaPoints || 0;
-    const previousBonus = user.bonusKarmaPoints || 0;
-    const newBonus = previousBonus + numericAmount;
     const newBalance = previousBalance + numericAmount;
 
-    user.bonusKarmaPoints = newBonus;  // Track bonus separately
-    user.karmaPoints = newBalance;      // Total balance
+    user.karmaPoints = newBalance;
     await user.save();
 
     // Save transaction history
@@ -327,8 +323,6 @@ router.post('/users/:userId/karma-points', authenticate, authorize('client', 'ad
       description: description || `Karma points bonus added by ${req.user.role}`
     });
 
-    console.log(`[Client API] Karma points added: User ${userId}, Bonus: ${previousBonus} -> ${newBonus}, Total: ${previousBalance} -> ${newBalance}`);
-
     res.status(201).json({
       success: true,
       message: 'Karma points added successfully',
@@ -336,12 +330,7 @@ router.post('/users/:userId/karma-points', authenticate, authorize('client', 'ad
         userId: user._id,
         previousBalance,
         newBalance,
-        bonusAdded: numericAmount,
-        totalBonus: newBonus,
-        transaction: tx,
-        addedBy: req.user._id,
-        addedByRole: req.user.role,
-        description: description || `Karma points bonus added by ${req.user.role}`
+        transaction: tx
       }
     });
   } catch (error) {
@@ -388,8 +377,7 @@ router.get('/users/:userId/karma-points/history', authenticate, authorize('clien
       success: true,
       data: {
         transactions,
-        currentBalance: user.karmaPoints || 0,
-        totalBonus: user.bonusKarmaPoints || 0
+        currentBalance: user.karmaPoints || 0
       }
     });
   } catch (error) {

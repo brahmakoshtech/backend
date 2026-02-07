@@ -134,12 +134,6 @@ const userSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
-  // Bonus karma points added by admin/client (separate from earned points)
-  bonusKarmaPoints: {
-    type: Number,
-    default: 0,
-    min: 0
-  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -177,6 +171,12 @@ userSchema.methods.comparePassword = async function(candidatePassword) {
     throw error;
   }
 };
+
+// Virtual field to calculate karma points breakdown
+userSchema.virtual('karmaPointsBreakdown').get(async function() {
+  // This will be populated by the API endpoint, not here
+  return null;
+});
 
 // Remove sensitive data when converting to JSON
 userSchema.methods.toJSON = function() {

@@ -85,7 +85,13 @@ const getUserStats = async (req, res) => {
       // Only count duration for non-chanting activities
       return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
     }, 0);
+    
+    // Calculate karma points only from sessions (exclude bonus points)
     const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    // Get user details for profile info
+    const User = (await import('../models/User.js')).default;
+    const currentUser = await User.findById(userId).select('email profile.name profile.dob');
     const averageCompletion = sessions.length > 0 ? 
       sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
     
@@ -208,10 +214,7 @@ const getUserStats = async (req, res) => {
       return activityData;
     });
     
-    // Get current user details
-    const User = (await import('../models/User.js')).default;
-    const currentUser = await User.findById(userId).select('email profile.name profile.dob');
-    
+    // User details already fetched above as currentUser
     const stats = {
       totalStats: {
         sessions: totalSessions,
@@ -611,13 +614,6 @@ router.post('/save-session', async (req, res) => {
     const userId = req.user._id || req.user.userId;
     const { type, title, targetDuration, actualDuration, karmaPoints, emotion, status, completionPercentage, chantCount, chantingName, videoUrl, audioUrl } = req.body;
     
-    console.log('=== SAVE SESSION DEBUG ===');
-    console.log('User ID:', userId);
-    console.log('Session Type:', type);
-    console.log('Session Data:', req.body);
-    console.log('Video URL:', videoUrl);
-    console.log('Audio URL:', audioUrl);
-    
     // Basic validation - all activities need userId, type, title
     if (!userId || !type || !title) {
       return res.status(400).json({
@@ -662,42 +658,31 @@ router.post('/save-session', async (req, res) => {
       sessionData.chantCount = 0;
     }
     
-    console.log('Final session data to save:', sessionData);
-    
     const newSession = new SpiritualSession(sessionData);
     await newSession.save();
-    
-    console.log('Session saved successfully:', newSession._id);
     
     // ✅ AUTO-UPDATE: User's karma points (sessions + bonus - redemptions)
     const User = (await import('../models/User.js')).default;
     const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
-    
-    // Get user to access bonus points
-    const user = await User.findById(userId).select('bonusKarmaPoints');
-    const bonusPoints = user?.bonusKarmaPoints || 0;
+    const KarmaPointsTransaction = (await import('../models/KarmaPointsTransaction.js')).default;
     
     // Calculate total earned karma points from all sessions
     const sessions = await SpiritualSession.find({ userId });
     const totalEarnedFromSessions = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    // Calculate total bonus points from transactions
+    const bonusTransactions = await KarmaPointsTransaction.find({ userId });
+    const totalBonusPoints = bonusTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
     
     // Calculate total spent karma points from redemptions (only completed status)
     const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
     const totalSpentKarmaPoints = redemptions.reduce((sum, redemption) => sum + (redemption.karmaPointsSpent || 0), 0);
     
     // Final balance = earned from sessions + bonus - spent
-    const finalKarmaPoints = Math.max(0, totalEarnedFromSessions + bonusPoints - totalSpentKarmaPoints);
+    const finalKarmaPoints = Math.max(0, totalEarnedFromSessions + totalBonusPoints - totalSpentKarmaPoints);
     
-    console.log('=== KARMA POINTS CALCULATION ===');
-    console.log('Total Sessions:', sessions.length);
-    console.log('Earned from Sessions:', totalEarnedFromSessions);
-    console.log('Bonus Points:', bonusPoints);
-    console.log('Total Redemptions:', redemptions.length);
-    console.log('Total Spent:', totalSpentKarmaPoints);
-    console.log('Final Balance:', finalKarmaPoints);
-    console.log('================================');
-    
-    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: finalKarmaPoints } });
+    // Update User.karmaPoints with total balance
+    await User.findByIdAndUpdate(userId, { karmaPoints: finalKarmaPoints });
     
     res.json({
       success: true,
@@ -841,8 +826,7 @@ router.post('/recalculate-karma', async (req, res) => {
     // Calculate balance
     const balance = Math.max(0, totalEarned - totalSpent);
     
-    // Update user
-    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: balance } });
+    // NOTE: Do NOT update User.karmaPoints - it should only store bonus points
     
     res.json({
       success: true,
@@ -942,7 +926,7 @@ router.delete('/clear-redemptions', async (req, res) => {
     const sessions = await SpiritualSession.find({ userId });
     const totalEarned = sessions.reduce((sum, s) => sum + (s.karmaPoints || 0), 0);
     
-    await User.findByIdAndUpdate(userId, { $set: { karmaPoints: totalEarned } });
+    // NOTE: Do NOT update User.karmaPoints - it should only store bonus points
     
     res.json({
       success: true,

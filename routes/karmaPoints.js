@@ -4,19 +4,23 @@ import { authenticateToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
-// GET /api/karma-points - Get only karma points for authenticated user
+// GET /api/karma-points - Get karma points for authenticated user
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    console.log('[Karma Points] Full req.user:', JSON.stringify(req.user, null, 2));
+    const userId = req.user._id || req.user.userId;
     
-    // req.user already has karmaPoints from authenticate middleware
-    if (req.user && req.user.karmaPoints !== undefined) {
-      return res.json({ karmaPoints: req.user.karmaPoints });
-    }
+    const user = await User.findById(userId).select('karmaPoints').lean();
+    const karmaPoints = user?.karmaPoints || 0;
     
-    res.json({ karmaPoints: 0 });
+    res.json({ 
+      karmaPoints,
+      breakdown: {
+        total: karmaPoints,
+        available: karmaPoints
+      }
+    });
   } catch (error) {
-    console.error('Error fetching karma points:', error);
+    console.error('[Karma Points] Error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

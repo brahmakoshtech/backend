@@ -1215,21 +1215,15 @@ router.get('/profile', authenticate, async (req, res) => {
       });
     }
 
-    // Generate presigned URL for profile image if exists
-    let profileImageUrl = null;
-    if (user.profileImage) {
-      try {
-        const { getobject } = await import('../../utils/s3.js');
-        profileImageUrl = await getobject(user.profileImage);
-      } catch (error) {
-        console.error('Error generating profile image URL:', error);
-      }
-    }
-
-    const userData = user.toObject();
-    if (profileImageUrl) {
-      userData.profileImageUrl = profileImageUrl;
-    }
+    // Calculate total karma points: sessions + bonus
+    const SpiritualSession = (await import('../../models/SpiritualSession.js')).default;
+    const sessions = await SpiritualSession.find({ userId: user._id });
+    const sessionKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const bonusKarmaPoints = user.karmaPoints || 0;
+    const totalKarmaPoints = sessionKarmaPoints + bonusKarmaPoints;
+    
+    // Add total karma points to user data
+    userData.totalKarmaPoints = totalKarmaPoints;
 
     const token = generateToken(user._id, 'user', user.clientId);
 

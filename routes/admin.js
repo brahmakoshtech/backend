@@ -268,8 +268,7 @@ router.get('/users', async (req, res) => {
     
     const usersWithKarma = users.map(user => ({
       ...user,
-      karmaPoints: user.karmaPoints ?? 0,
-      bonusKarmaPoints: user.bonusKarmaPoints ?? 0
+      karmaPoints: user.karmaPoints ?? 0
     }));
     
     res.json({
