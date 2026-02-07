@@ -849,7 +849,6 @@ router.post('/users/:userId/astrology/refresh', authenticate, authorize('client'
     });
   }
 });
-
 // ==========================================
 // PANCHANG API ENDPOINTS - Add to client.js
 // ==========================================
