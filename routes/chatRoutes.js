@@ -345,6 +345,18 @@ router.post('/conversations', authenticate, async (req, res) => {
 
     console.log('✅ Partner found:', partner.name);
 
+    // If user is starting a chat, ensure they have credits > 0
+    if (req.userType === 'user') {
+      const user = await User.findById(finalUserId).select('credits email');
+      if (!user || (user.credits || 0) <= 0) {
+        console.log('❌ User has insufficient credits to start chat:', user?.email);
+        return res.status(402).json({
+          success: false,
+          message: 'Insufficient credits. Please recharge before starting a chat.'
+        });
+      }
+    }
+
     // Base ID for lookup; new consultations get unique ID with timestamp
     const baseId = [finalPartnerId, finalUserId].sort().join('_');
     console.log('Base conversation ID:', baseId);
@@ -972,8 +984,8 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
     const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
 
     const partnerPreviousBalance = partner?.creditsEarnedBalance || 0;
-    // Keep 4:3 relationship even if user couldn't pay full amount
-    const partnerCredited = Math.floor((userDebited * PARTNER_RATE_PER_MIN) / USER_RATE_PER_MIN);
+    // Partner always earns full 3 credits per billable minute
+    const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
     const partnerNewBalance = partnerPreviousBalance + partnerCredited;
     const partnerNewTotal = (partner?.creditsEarnedTotal || 0) + partnerCredited;
 
