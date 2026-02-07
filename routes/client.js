@@ -9,6 +9,7 @@ import Client from '../models/Client.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
 import Credit from '../models/Credit.js';
+import KarmaPointsTransaction from '../models/KarmaPointsTransaction.js';
 import astrologyService from '../services/astrologyService.js';
 import panchangService from '../services/panchangService.js';
 import numerologyService from '../services/numerologyService.js';
@@ -71,15 +72,13 @@ router.get('/users', authenticate, authorize('client', 'admin', 'super_admin', '
     let query = {};
 
     if (req.user.role === 'client') {
-      console.log('[Client API] Fetching users for client:', req.user._id.toString());
       query.clientId = req.user._id;
     } else if (req.user.role === 'user') {
-      console.log('[Client API] User fetching own record:', req.user._id.toString());
       query._id = req.user._id;
     }
 
-    if (search) {
-      const regex = new RegExp(search, 'i');
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
       query.$or = [
         { email: regex },
         { 'profile.name': regex }
@@ -97,16 +96,20 @@ router.get('/users', authenticate, authorize('client', 'admin', 'super_admin', '
       User.countDocuments(query)
     ]);
 
-    console.log('[Client API] Found users:', users.length, 'Total:', total);
+    const usersWithKarma = users.map(user => ({
+      ...user,
+      karmaPoints: user.karmaPoints ?? 0,
+      bonusKarmaPoints: user.bonusKarmaPoints ?? 0
+    }));
 
     res.json({
       success: true,
       data: {
-        users,
+        users: usersWithKarma,
         total,
         page: pageNum,
         limit: pageSize,
-        hasMore: total > skip + users.length
+        hasMore: total > skip + usersWithKarma.length
       }
     });
   } catch (error) {
@@ -312,6 +315,18 @@ router.post('/users/:userId/karma-points', authenticate, authorize('client', 'ad
     user.karmaPoints = newBalance;      // Total balance
     await user.save();
 
+    // Save transaction history
+    const tx = await KarmaPointsTransaction.create({
+      userId: user._id,
+      amount: numericAmount,
+      previousBalance,
+      newBalance,
+      addedBy: req.user._id,
+      addedByModel: req.user.role === 'client' ? 'Client' : req.user.role === 'admin' || req.user.role === 'super_admin' ? 'Admin' : 'User',
+      addedByRole: req.user.role,
+      description: description || `Karma points bonus added by ${req.user.role}`
+    });
+
     console.log(`[Client API] Karma points added: User ${userId}, Bonus: ${previousBonus} -> ${newBonus}, Total: ${previousBalance} -> ${newBalance}`);
 
     res.status(201).json({
@@ -323,6 +338,7 @@ router.post('/users/:userId/karma-points', authenticate, authorize('client', 'ad
         newBalance,
         bonusAdded: numericAmount,
         totalBonus: newBonus,
+        transaction: tx,
         addedBy: req.user._id,
         addedByRole: req.user.role,
         description: description || `Karma points bonus added by ${req.user.role}`
@@ -333,6 +349,54 @@ router.post('/users/:userId/karma-points', authenticate, authorize('client', 'ad
     res.status(500).json({
       success: false,
       message: 'Failed to add karma points',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Get karma points transaction history for a user
+ * GET /api/client/users/:userId/karma-points/history
+ * Access: client (own users), admin, super_admin, user (own history only)
+ */
+router.get('/users/:userId/karma-points/history', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to view karma points history for this user'
+      });
+    }
+
+    const transactions = await KarmaPointsTransaction.find({ userId })
+      .populate('addedBy', 'email businessName profile')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      data: {
+        transactions,
+        currentBalance: user.karmaPoints || 0,
+        totalBonus: user.bonusKarmaPoints || 0
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Get karma points history error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch karma points history',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

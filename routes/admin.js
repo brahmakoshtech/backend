@@ -247,8 +247,8 @@ router.get('/users', async (req, res) => {
       clientId: { $in: clientIds }
     };
 
-    if (search) {
-      const regex = new RegExp(search, 'i');
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
       query.$or = [
         { email: regex },
         { 'profile.name': regex }
@@ -257,7 +257,7 @@ router.get('/users', async (req, res) => {
     
     const [users, total] = await Promise.all([
       User.find(query)
-      .select('-password')
+      .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')
       .populate('clientId', 'email businessName clientId')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -266,17 +266,24 @@ router.get('/users', async (req, res) => {
       User.countDocuments(query)
     ]);
     
+    const usersWithKarma = users.map(user => ({
+      ...user,
+      karmaPoints: user.karmaPoints ?? 0,
+      bonusKarmaPoints: user.bonusKarmaPoints ?? 0
+    }));
+    
     res.json({
       success: true,
       data: { 
-        users,
+        users: usersWithKarma,
         total,
         page: pageNum,
         limit: pageSize,
-        hasMore: total > skip + users.length
+        hasMore: total > skip + usersWithKarma.length
       }
     });
   } catch (error) {
+    console.error('[Admin API] Error in GET /users:', error);
     res.status(500).json({ 
       success: false, 
       message: error.message 
