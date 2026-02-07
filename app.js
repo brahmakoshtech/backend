@@ -45,6 +45,8 @@ import spiritualConfigurationRoutes from './routes/spiritualConfigurations.js';
 import spiritualClipRoutes from './routes/spiritualClips.js';
 import spiritualStatsRoutes from './routes/spiritualStats.js';
 import spiritualRewardsRoutes from './routes/spiritualRewards.js';
+import karmaPointsRoutes from './routes/karmaPoints.js';
+import rewardRedemptionsRoutes from './routes/rewardRedemptions.js';
 import chapterRoutes from './routes/chapters.js';
 import shlokaRoutes from './routes/shlokas.js';
 
@@ -151,6 +153,8 @@ app.use('/api/founder-messages', founderMessageRoutes);
 app.use('/api/brand-assets', brandAssetRoutes);
 app.use('/api/spiritual-stats', spiritualStatsRoutes);
 app.use('/api/spiritual-rewards', spiritualRewardsRoutes);
+app.use('/api/karma-points', karmaPointsRoutes);
+app.use('/api/reward-redemptions', rewardRedemptionsRoutes);
 app.use('/api/chapters', chapterRoutes);
 app.use('/api/shlokas', shlokaRoutes);
 

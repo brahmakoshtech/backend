@@ -28,6 +28,66 @@ const getClientId = (req) => {
   throw new Error('Unable to determine clientId');
 };
 
+// Get single reward by ID
+router.get('/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const clientId = getClientId(req);
+
+    const reward = await SpiritualReward.findOne({ _id: id, clientId });
+    if (!reward) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reward not found'
+      });
+    }
+
+    const rewardObj = reward.toObject();
+
+    // Generate presigned URLs
+    if (rewardObj.photoKey || rewardObj.photoUrl) {
+      try {
+        let photoKey = rewardObj.photoKey;
+        if (!photoKey && rewardObj.photoUrl) {
+          photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+        }
+        if (photoKey) {
+          rewardObj.image = await getobject(photoKey);
+        }
+      } catch (error) {
+        console.error('Failed to generate photo presigned URL:', error);
+      }
+    }
+
+    if (rewardObj.bannerKey || rewardObj.bannerUrl) {
+      try {
+        let bannerKey = rewardObj.bannerKey;
+        if (!bannerKey && rewardObj.bannerUrl) {
+          bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
+        }
+        if (bannerKey) {
+          rewardObj.banner = await getobject(bannerKey);
+        }
+      } catch (error) {
+        console.error('Failed to generate banner presigned URL:', error);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Reward fetched successfully',
+      data: rewardObj
+    });
+  } catch (error) {
+    console.error('Get reward error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch reward',
+      error: error.message
+    });
+  }
+});
+
 // Get all rewards
 router.get('/', authenticateToken, async (req, res) => {
   try {
