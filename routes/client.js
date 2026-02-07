@@ -1493,6 +1493,89 @@ router.post('/users/:userId/numerology', authenticate, authorize('client', 'admi
   }
 });
 
+router.get('/users/:userId/numerology', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    let { date } = req.body;
+    const forceRefresh = req.query.refresh === 'true';
+
+    // Validate user (include liveLocation for doshas)
+    const user = await User.findById(userId)
+      .select('profile clientId liveLocation')
+      .lean();
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check access permissions
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to access numerology data for this user'
+      });
+    }
+
+    // Get name from user profile (required)
+    const userName = user.profile?.name || user.profile?.firstName;
+    if (!userName) {
+      return res.status(400).json({
+        success: false,
+        message: 'User profile must have a name to generate numerology data'
+      });
+    }
+
+    // User DOB - required for numeroReport & numeroTable (static, fetched once). If missing, only daily prediction is returned.
+    const userDob = user.profile?.dob || null;
+
+    // Use provided date or default to today (for daily prediction)
+    if (!date) {
+      const today = new Date();
+      date = {
+        day: today.getDate(),
+        month: today.getMonth() + 1,
+        year: today.getFullYear()
+      };
+      console.log('[Client API] No date provided, using today:', date);
+    }
+
+    const result = await numerologyService.getNumerologyData(
+      userId,
+      date,
+      userName,
+      userDob,
+      forceRefresh
+    );
+
+    // Fetch doshas (Kal Sarpa, Manglik, Pitra, Sade Sati, Shani, Gandmool) using user details
+    let doshas = null;
+    if (user.profile?.dob) {
+      try {
+        doshas = await doshaService.getAllDoshas(user);
+      } catch (e) {
+        console.warn('[Client API] Could not fetch doshas:', e.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      source: result.source, // 'database' or 'api'
+      data: { ...result.data, doshas }
+    });
+
+  } catch (error) {
+    console.error('[Client API] Get numerology data error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch numerology data',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
 /**
  * Refresh numerology data for a user (force recalculation)
  * POST /api/client/users/:userId/numerology/refresh
