@@ -49,6 +49,8 @@ import karmaPointsRoutes from './routes/karmaPoints.js';
 import rewardRedemptionsRoutes from './routes/rewardRedemptions.js';
 import chapterRoutes from './routes/chapters.js';
 import shlokaRoutes from './routes/shlokas.js';
+import sankalpRoutes from './routes/sankalp.js';
+import userSankalpRoutes from './routes/userSankalp.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -157,6 +159,8 @@ app.use('/api/karma-points', karmaPointsRoutes);
 app.use('/api/reward-redemptions', rewardRedemptionsRoutes);
 app.use('/api/chapters', chapterRoutes);
 app.use('/api/shlokas', shlokaRoutes);
+app.use('/api/sankalp', sankalpRoutes);
+app.use('/api/user-sankalp', userSankalpRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

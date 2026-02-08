@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import express from 'express';
 import SpiritualReward from '../models/SpiritualReward.js';
+import User from '../models/User.js';
 import { generateUploadUrl, deleteFromS3, getobject } from '../utils/s3.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 
@@ -33,6 +34,16 @@ router.get('/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const clientId = getClientId(req);
+    const userId = req.user._id || req.user.userId || req.user.id;
+
+    // Fetch user's karma points
+    let userKarmaPoints = 0;
+    if (userId && req.user.role === 'user') {
+      const user = await User.findById(userId).select('karmaPoints');
+      if (user) {
+        userKarmaPoints = user.karmaPoints || 0;
+      }
+    }
 
     const reward = await SpiritualReward.findOne({ _id: id, clientId });
     if (!reward) {
@@ -76,7 +87,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Reward fetched successfully',
-      data: rewardObj
+      data: rewardObj,
+      userKarmaPoints: userKarmaPoints
     });
   } catch (error) {
     console.error('Get reward error:', error);
@@ -92,20 +104,31 @@ router.get('/:id', authenticateToken, async (req, res) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const clientId = getClientId(req);
+    const userId = req.user._id || req.user.userId || req.user.id;
+    
     console.log('=== GET REWARDS DEBUG ===');
     console.log('User from token:', {
-      userId: req.user._id,
+      userId: userId,
       role: req.user.role,
       clientId: req.user.clientId,
       email: req.user.email
     });
     console.log('Generated clientId:', clientId);
     
+    // Fetch user's karma points
+    let userKarmaPoints = 0;
+    if (userId && req.user.role === 'user') {
+      const user = await User.findById(userId).select('karmaPoints');
+      if (user) {
+        userKarmaPoints = user.karmaPoints || 0;
+      }
+    }
+    
     const rewards = await SpiritualReward.find({ clientId })
       .sort({ createdAt: -1 });
 
     console.log('Found rewards count:', rewards.length);
-    console.log('Rewards:', rewards.map(r => ({ id: r._id, title: r.title, clientId: r.clientId })));
+    console.log('User karma points:', userKarmaPoints);
 
     // Generate presigned URLs for images
     const rewardsWithPresignedUrls = await Promise.all(
@@ -179,7 +202,8 @@ router.get('/', authenticateToken, async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Rewards fetched successfully',
-      data: rewardsWithPresignedUrls
+      data: rewardsWithPresignedUrls,
+      userKarmaPoints: userKarmaPoints
     });
   } catch (error) {
     console.error('Get rewards error:', error);
