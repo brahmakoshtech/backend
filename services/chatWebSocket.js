@@ -23,13 +23,14 @@ export const setupChatWebSocket = (server) => {
   const io = new Server(server, {
     path: '/socket.io/',
     cors: {
-      origin: (origin, callback) => {
-        // allow ALL origins safely
-        callback(null, true);
-      },
+      origin: '*',
       credentials: true,
       methods: ['GET', 'POST'],
     },
+    transports: ['websocket', 'polling'], // Allow both
+    allowUpgrades: true, // 🔥 Important!
+    pingTimeout: 60000,
+    pingInterval: 25000,
   });
   
   
