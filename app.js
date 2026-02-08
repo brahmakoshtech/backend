@@ -69,9 +69,7 @@ const server = http.createServer(app);
 
 // CORS Configuration - MUST BE BEFORE OTHER MIDDLEWARE
 app.use(cors({
-  origin: (origin, callback) => {
-    callback(null, true);
-  },
+  origin: '*', // or specific origins
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
