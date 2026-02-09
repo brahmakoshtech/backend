@@ -21,16 +21,18 @@ export const setupChatWebSocket = (server) => {
   console.log('🔧 [ChatWebSocket] Setting up Chat WebSocket server...');
   
   const io = new Server(server, {
-    path: '/socket.io/',
-    cors: {
-      origin: (origin, callback) => {
-        // allow ALL origins safely
-        callback(null, true);
-      },
-      credentials: true,
-      methods: ['GET', 'POST'],
+  path: '/socket.io/',
+  cors: {
+    origin: (origin, callback) => {
+      callback(null, true);
     },
-  });
+    credentials: true,
+    methods: ['GET', 'POST'],
+  },
+  allowEIO3: true,  // Add this
+  transports: ['websocket', 'polling'],  // Add this
+  allowUpgrades: true,  // Add this
+});
   
   
 
