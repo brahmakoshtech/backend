@@ -184,13 +184,7 @@ setupVoiceAgentWebSocket(server);
 // ============ NEW: 2. Chat WebSocket for Partner-User Communication ============
 setupChatWebSocket(server);
 
-// ============ START SERVER ============
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`✅ Server is running on port ${PORT}`);
-  console.log(`✅ Voice WebSocket available at ws://localhost:${PORT}/api/voice/agent`);
-  console.log(`✅ Chat WebSocket available at ws://localhost:${PORT}/socket.io/`);
-  console.log(`✅ REST API available at http://localhost:${PORT}/api`);
-});
-
-export default app;
+// ============ EXPORT SERVER (NOT APP) ============
+// This ensures WebSocket is attached to the actual running server
+export default server;
+export { app };
