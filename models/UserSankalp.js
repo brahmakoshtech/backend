@@ -21,14 +21,12 @@ const userSankalpSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
-    index: true
+    required: true
   },
   sankalpId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Sankalp',
-    required: true,
-    index: true
+    required: true
   },
   clientId: {
     type: mongoose.Schema.Types.ObjectId,
