@@ -61,10 +61,29 @@ router.post('/join', authenticate, async (req, res) => {
     // Update participants count
     await Sankalp.findByIdAndUpdate(sankalpId, { $inc: { participantsCount: 1 } });
 
+    // Populate and format response
+    const populated = await userSankalp.populate(['sankalpId', 'clientId']);
+    const response = populated.toObject();
+    
+    // Generate presigned URL for banner
+    if (response.sankalpId?.bannerImageKey) {
+      try {
+        const { getobject } = await import('../utils/s3.js');
+        response.sankalpId.bannerImage = await getobject(response.sankalpId.bannerImageKey);
+      } catch (error) {
+        console.error('Error generating presigned URL:', error);
+      }
+    }
+    
+    // Format clientId
+    if (response.clientId?._id) {
+      response.clientId = response.clientId.clientId; // Get CLI-KBHUMT format
+    }
+
     res.status(201).json({
       success: true,
       message: 'Successfully joined sankalp',
-      data: await userSankalp.populate('sankalpId')
+      data: response
     });
   } catch (error) {
     console.error('Error joining sankalp:', error);
@@ -98,6 +117,14 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
             }
           } catch (error) {
             console.error('Error generating presigned URL:', error);
+          }
+        }
+        // Format clientId to CLI-KBHUMT format
+        if (obj.clientId) {
+          const client = await import('../models/Client.js').then(m => m.default);
+          const clientDoc = await client.findById(obj.clientId);
+          if (clientDoc?.clientId) {
+            obj.clientId = clientDoc.clientId;
           }
         }
         return obj;
@@ -138,6 +165,15 @@ router.get('/:id', authenticate, async (req, res) => {
         }
       } catch (error) {
         console.error('Error generating presigned URL:', error);
+      }
+    }
+    
+    // Format clientId to CLI-KBHUMT format
+    if (obj.clientId) {
+      const Client = await import('../models/Client.js').then(m => m.default);
+      const clientDoc = await Client.findById(obj.clientId);
+      if (clientDoc?.clientId) {
+        obj.clientId = clientDoc.clientId;
       }
     }
 
@@ -225,10 +261,19 @@ router.post('/:id/report', authenticate, async (req, res) => {
       success: true,
       message: status === 'yes' ? `Report submitted! +${karmaAdded} karma points` : 'Report submitted',
       data: {
-        userSankalp,
-        karmaAdded,
-        isCompleted: userSankalp.status === 'completed',
-        completionBonus: userSankalp.status === 'completed' ? userSankalp.completionBonusEarned : 0
+        _id: userSankalp._id,
+        currentDay: userSankalp.currentDay,
+        status: userSankalp.status,
+        karmaEarned: userSankalp.karmaEarned,
+        todayReport: userSankalp.dailyReports[reportIndex],
+        karmaPointsAdded: karmaAdded,
+        motivationMessage: status === 'yes' ? userSankalp.sankalpId.dailyMotivationMessage : "Don't give up! Try again tomorrow",
+        ...(userSankalp.status === 'completed' && {
+          completionBonusEarned: userSankalp.completionBonusEarned,
+          completedAt: userSankalp.completedAt,
+          totalKarmaEarned: userSankalp.karmaEarned + userSankalp.completionBonusEarned,
+          completionMessage: userSankalp.sankalpId.completionMessage
+        })
       }
     });
   } catch (error) {
@@ -248,24 +293,45 @@ router.get('/:id/progress', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: 'User sankalp not found' });
     }
 
-    const yesCount = userSankalp.dailyReports.filter(r => r.status === 'yes').length;
-    const noCount = userSankalp.dailyReports.filter(r => r.status === 'no').length;
-    const notReportedCount = userSankalp.dailyReports.filter(r => r.status === 'not_reported').length;
-    const progressPercentage = Math.round((yesCount / userSankalp.totalDays) * 100);
+    const obj = userSankalp.toObject();
+    
+    // Generate presigned URL for banner
+    if (obj.sankalpId?.bannerImageKey) {
+      try {
+        const { getobject } = await import('../utils/s3.js');
+        obj.sankalpId.bannerImage = await getobject(obj.sankalpId.bannerImageKey);
+      } catch (error) {
+        console.error('Error generating presigned URL:', error);
+      }
+    }
+    
+    // Format clientId
+    if (obj.clientId) {
+      const Client = await import('../models/Client.js').then(m => m.default);
+      const clientDoc = await Client.findById(obj.clientId);
+      if (clientDoc?.clientId) {
+        obj.clientId = clientDoc.clientId;
+      }
+    }
+
+    const yesCount = obj.dailyReports.filter(r => r.status === 'yes').length;
+    const noCount = obj.dailyReports.filter(r => r.status === 'no').length;
+    const notReportedCount = obj.dailyReports.filter(r => r.status === 'not_reported').length;
+    const progressPercentage = Math.round((yesCount / obj.totalDays) * 100);
 
     res.json({
       success: true,
       data: {
-        userSankalp,
+        userSankalp: obj,
         progress: {
           yesCount,
           noCount,
           notReportedCount,
           progressPercentage,
-          currentDay: userSankalp.currentDay,
-          totalDays: userSankalp.totalDays,
-          karmaEarned: userSankalp.karmaEarned,
-          completionBonusEarned: userSankalp.completionBonusEarned
+          currentDay: obj.currentDay,
+          totalDays: obj.totalDays,
+          karmaEarned: obj.karmaEarned,
+          completionBonusEarned: obj.completionBonusEarned
         }
       }
     });

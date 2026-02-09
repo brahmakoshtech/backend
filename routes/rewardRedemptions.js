@@ -37,6 +37,15 @@ router.post('/redeem', authenticateToken, async (req, res) => {
       });
     }
 
+    // Check if already redeemed
+    const existingRedemption = await RewardRedemption.findOne({ userId, rewardId, clientId });
+    if (existingRedemption) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already redeemed this reward'
+      });
+    }
+
     // Get reward
     const reward = await SpiritualReward.findOne({ _id: rewardId, clientId, isActive: true });
     if (!reward) {
