@@ -72,30 +72,14 @@ const app = express();
 const server = http.createServer(app);
 
 // CORS Configuration - MUST BE BEFORE OTHER MIDDLEWARE
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'https://frontend-seven-steel-66.vercel.app',
-  'https://stage.brahmakosh.com',
-  'https://brahmakosh.com',
-  'https://www.brahmakosh.com'
-];
-
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1 || origin === undefined) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range']
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
 
