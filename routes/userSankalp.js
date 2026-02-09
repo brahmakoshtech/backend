@@ -3,6 +3,7 @@ import UserSankalp from '../models/UserSankalp.js';
 import Sankalp from '../models/Sankalp.js';
 import User from '../models/User.js';
 import { authenticate } from '../middleware/authMiddleware.js';
+import notificationService from '../services/notificationService.js';
 
 const router = express.Router();
 
@@ -235,6 +236,26 @@ router.post('/:id/report', authenticate, async (req, res) => {
 
       // Update user's karma points
       await User.findByIdAndUpdate(userId, { $inc: { karmaPoints: karmaAdded } });
+      
+      // Calculate streak
+      let currentStreak = 1;
+      for (let i = reportIndex - 1; i >= 0; i--) {
+        if (userSankalp.dailyReports[i].status === 'yes') {
+          currentStreak++;
+        } else {
+          break;
+        }
+      }
+      
+      // Send streak notification for milestones (7, 14, 21 days)
+      if ([7, 14, 21].includes(currentStreak)) {
+        await notificationService.sendStreakAlert(
+          userId,
+          userSankalp._id,
+          currentStreak,
+          userSankalp.sankalpId.title
+        );
+      }
     }
 
     // Update current day
@@ -253,6 +274,15 @@ router.post('/:id/report', authenticate, async (req, res) => {
       
       // Update completed count
       await Sankalp.findByIdAndUpdate(userSankalp.sankalpId._id, { $inc: { completedCount: 1 } });
+      
+      // Send completion notification
+      const totalKarma = userSankalp.karmaEarned + bonus;
+      await notificationService.sendCompletionNotification(
+        userId,
+        userSankalp._id,
+        userSankalp.sankalpId.title,
+        totalKarma
+      );
     }
 
     await userSankalp.save();

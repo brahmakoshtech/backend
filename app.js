@@ -51,6 +51,7 @@ import chapterRoutes from './routes/chapters.js';
 import shlokaRoutes from './routes/shlokas.js';
 import sankalpRoutes from './routes/sankalp.js';
 import userSankalpRoutes from './routes/userSankalp.js';
+import notificationRoutes from './routes/notifications.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -58,6 +59,7 @@ import partnerUserChatRoutes from './routes/chatRoutes.js';
 // Import services
 import { initializeSuperAdmin } from './config/initSuperAdmin.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
+import './services/cronJobs.js';
 
 // ============ NEW: Import Chat WebSocket Service ============
 import { setupChatWebSocket } from './services/chatWebSocket.js';
@@ -159,6 +161,7 @@ app.use('/api/chapters', chapterRoutes);
 app.use('/api/shlokas', shlokaRoutes);
 app.use('/api/sankalp', sankalpRoutes);
 app.use('/api/user-sankalp', userSankalpRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
