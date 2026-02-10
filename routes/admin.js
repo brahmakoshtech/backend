@@ -1,4 +1,5 @@
 import express from 'express';
+import mongoose from 'mongoose';
 import Client from '../models/Client.js';
 import User from '../models/User.js';
 import AppSettings from '../models/AppSettings.js';
@@ -373,17 +374,44 @@ router.post('/clients/:id/login-token', async (req, res) => {
 // ============ App Settings (e.g. Gemini API Key) ============
 
 // @route   GET /api/admin/settings/gemini-api-key
-// @desc    Get Gemini API key status (masked). Admin/Super Admin only.
+// @desc    Get Gemini API key status (masked). Optional query: clientId (Client _id or clientId code). Admin/Super Admin only.
 router.get('/settings/gemini-api-key', async (req, res) => {
   try {
+    const { clientId } = req.query;
+    let key = null;
+    let scope = 'app';
+
+    if (clientId) {
+      const isObjectId = mongoose.Types.ObjectId.isValid(clientId) && String(clientId).length === 24;
+      const client = isObjectId
+        ? await Client.findById(clientId).select('clientId businessName fullName settings.geminiApiKey').lean()
+        : await Client.findOne({ clientId: String(clientId) }).select('clientId businessName fullName settings.geminiApiKey').lean();
+      if (!client) {
+        return res.status(404).json({ success: false, message: 'Client not found' });
+      }
+      key = client.settings?.geminiApiKey || null;
+      scope = 'client';
+      const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+      return res.json({
+        success: true,
+        data: {
+          configured: !!key,
+          masked,
+          scope,
+          client: { _id: client._id, clientId: client.clientId, businessName: client.businessName, fullName: client.fullName }
+        }
+      });
+    }
+
     const settings = await AppSettings.getSettings();
-    const key = settings?.geminiApiKey;
+    key = settings?.geminiApiKey;
     const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
     res.json({
       success: true,
       data: {
         configured: !!key,
-        masked
+        masked,
+        scope
       }
     });
   } catch (error) {
@@ -392,19 +420,46 @@ router.get('/settings/gemini-api-key', async (req, res) => {
 });
 
 // @route   PUT /api/admin/settings/gemini-api-key
-// @desc    Update Gemini API key. Admin/Super Admin only.
+// @desc    Update Gemini API key. Body: { apiKey, clientId? }. If clientId provided, update that client's key; else app-level. Admin/Super Admin only.
 router.put('/settings/gemini-api-key', async (req, res) => {
   try {
-    const { apiKey } = req.body;
+    const { apiKey, clientId } = req.body;
+    const value = apiKey != null ? String(apiKey).trim() || null : null;
+
+    if (clientId) {
+      const isObjectId = mongoose.Types.ObjectId.isValid(clientId) && String(clientId).length === 24;
+      const client = isObjectId
+        ? await Client.findById(clientId)
+        : await Client.findOne({ clientId: String(clientId) });
+      if (!client) {
+        return res.status(404).json({ success: false, message: 'Client not found' });
+      }
+      if (!client.settings) client.settings = {};
+      client.settings.geminiApiKey = value;
+      await client.save();
+      const key = client.settings.geminiApiKey;
+      const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+      return res.json({
+        success: true,
+        message: 'Gemini API key updated for client',
+        data: {
+          configured: !!key,
+          masked,
+          scope: 'client',
+          client: { _id: client._id, clientId: client.clientId, businessName: client.businessName, fullName: client.fullName }
+        }
+      });
+    }
+
     const settings = await AppSettings.getSettings();
-    settings.geminiApiKey = apiKey != null ? String(apiKey).trim() || null : null;
+    settings.geminiApiKey = value;
     await settings.save();
     const key = settings.geminiApiKey;
     const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
     res.json({
       success: true,
       message: 'Gemini API key updated',
-      data: { configured: !!key, masked }
+      data: { configured: !!key, masked, scope: 'app' }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

@@ -1075,7 +1075,9 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
         .sort({ createdAt: 1 })
         .select('content senderModel')
         .lean();
-      summary = await generateConversationSummary(messagesForSummary);
+      const userDoc = await User.findById(conversation.userId).select('clientId').lean();
+      const userClientId = userDoc?.clientId || null;
+      summary = await generateConversationSummary(messagesForSummary, userClientId);
       if (summary) {
         conversation.sessionDetails = conversation.sessionDetails || {};
         conversation.sessionDetails.summary = summary;
