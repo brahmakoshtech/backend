@@ -1,6 +1,7 @@
 import express from 'express';
 import Client from '../models/Client.js';
 import User from '../models/User.js';
+import AppSettings from '../models/AppSettings.js';
 import { authenticate, authorize, generateToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -366,6 +367,47 @@ router.post('/clients/:id/login-token', async (req, res) => {
       success: false, 
       message: error.message 
     });
+  }
+});
+
+// ============ App Settings (e.g. Gemini API Key) ============
+
+// @route   GET /api/admin/settings/gemini-api-key
+// @desc    Get Gemini API key status (masked). Admin/Super Admin only.
+router.get('/settings/gemini-api-key', async (req, res) => {
+  try {
+    const settings = await AppSettings.getSettings();
+    const key = settings?.geminiApiKey;
+    const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+    res.json({
+      success: true,
+      data: {
+        configured: !!key,
+        masked
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @route   PUT /api/admin/settings/gemini-api-key
+// @desc    Update Gemini API key. Admin/Super Admin only.
+router.put('/settings/gemini-api-key', async (req, res) => {
+  try {
+    const { apiKey } = req.body;
+    const settings = await AppSettings.getSettings();
+    settings.geminiApiKey = apiKey != null ? String(apiKey).trim() || null : null;
+    await settings.save();
+    const key = settings.geminiApiKey;
+    const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+    res.json({
+      success: true,
+      message: 'Gemini API key updated',
+      data: { configured: !!key, masked }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 

@@ -46,6 +46,12 @@ const conversationSessionSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  /** AI-generated short description of topics discussed (Gemini) */
+  summary: {
+    type: String,
+    default: null,
+    trim: true
+  },
   rating: {
     byUser: {
       stars: { type: Number, min: 0, max: 5, default: null },

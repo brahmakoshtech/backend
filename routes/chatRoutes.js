@@ -12,6 +12,7 @@ import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import panchangService from '../services/panchangService.js';
+import { generateConversationSummary } from '../services/geminiService.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
@@ -1067,12 +1068,35 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       { upsert: true, new: true }
     );
 
+    // Generate conversation summary via Gemini (topics discussed) and save to DB
+    let summary = null;
+    try {
+      const messagesForSummary = await Message.find({ conversationId, isDeleted: false })
+        .sort({ createdAt: 1 })
+        .select('content senderModel')
+        .lean();
+      summary = await generateConversationSummary(messagesForSummary);
+      if (summary) {
+        conversation.sessionDetails = conversation.sessionDetails || {};
+        conversation.sessionDetails.summary = summary;
+        await conversation.save();
+        await ConversationSession.findOneAndUpdate(
+          { conversationId },
+          { summary }
+        );
+      }
+    } catch (summaryErr) {
+      console.warn('Conversation summary generation failed:', summaryErr.message);
+    }
+
     const data = conversation.toObject ? conversation.toObject() : conversation;
+    const sessionDetailsOut = { ...conversation.sessionDetails };
+    if (summary) sessionDetailsOut.summary = summary;
     res.json({
       success: true,
       data: {
         ...data,
-        sessionDetails: conversation.sessionDetails,
+        sessionDetails: sessionDetailsOut,
         rating: conversation.rating
       }
     });
