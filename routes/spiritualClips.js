@@ -270,7 +270,7 @@ router.post('/direct', authenticate, async (req, res) => {
 // PUT /api/spiritual-clips/:id/direct - Update clip with direct S3 URLs
 router.put('/:id/direct', authenticate, async (req, res) => {
   try {
-    const { title, description, suitableTime, guided, transcript, suitableConfiguration, videoUrl, audioUrl } = req.body;
+    const { title, description, suitableTime, guided, transcript, suitableConfiguration, type, videoUrl, audioUrl } = req.body;
 
     const updateData = {
       title: title?.trim(),
@@ -278,7 +278,8 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       suitableTime: suitableTime || '',
       guided: guided || '',
       transcript: transcript || '',
-      suitableConfiguration: suitableConfiguration || null
+      suitableConfiguration: suitableConfiguration || null,
+      type: type || undefined
     };
 
     // Add video URL and key if provided
@@ -462,7 +463,7 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
       });
     }
 
-    const { title, description, suitableTime, guided, transcript, suitableConfiguration } = req.body;
+    const { title, description, suitableTime, guided, transcript, suitableConfiguration, type } = req.body;
 
     // Validation
     if (title && title.length > 100) {
@@ -486,6 +487,7 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
     if (guided !== undefined) clip.guided = guided;
     if (transcript !== undefined) clip.transcript = transcript;
     if (suitableConfiguration !== undefined) clip.suitableConfiguration = suitableConfiguration || null;
+    if (type !== undefined) clip.type = type;
 
     // Handle new video upload to S3
     if (req.files && req.files.video) {

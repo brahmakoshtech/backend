@@ -21,7 +21,7 @@ router.use(authenticateToken);
 // Create new spiritual configuration
 const createConfiguration = async (req, res) => {
   try {
-    const { title, duration, description, emotion, type, karmaPoints, chantingType, customChantingType, categoryId } = req.body;
+    const { title, duration, description, emotion, type, karmaPoints, chantingType, meditationType, prayerType, categoryId } = req.body;
     
     // Get clientId based on user role
     let clientId;
@@ -51,11 +51,14 @@ const createConfiguration = async (req, res) => {
       emotion,
       type,
       karmaPoints: karmaPoints || 10,
-      chantingType: chantingType || '',
-      customChantingType: customChantingType || '',
       categoryId: categoryId || getDefaultCategoryId(type),
       clientId
     });
+    
+    // Add category-specific type field only if provided
+    if (chantingType) configuration.chantingType = chantingType;
+    if (meditationType) configuration.meditationType = meditationType;
+    if (prayerType) configuration.prayerType = prayerType;
 
     await configuration.save();
 
@@ -136,7 +139,7 @@ const getConfigurations = async (req, res) => {
 const updateConfiguration = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, duration, description, emotion, karmaPoints, chantingType, customChantingType, categoryId } = req.body;
+    const { title, duration, description, emotion, karmaPoints, chantingType, meditationType, prayerType, categoryId } = req.body;
     
     if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
@@ -152,7 +155,8 @@ const updateConfiguration = async (req, res) => {
     if (emotion !== undefined) updateData.emotion = emotion;
     if (karmaPoints !== undefined) updateData.karmaPoints = karmaPoints;
     if (chantingType !== undefined) updateData.chantingType = chantingType;
-    if (customChantingType !== undefined) updateData.customChantingType = customChantingType;
+    if (meditationType !== undefined) updateData.meditationType = meditationType;
+    if (prayerType !== undefined) updateData.prayerType = prayerType;
     if (categoryId !== undefined) updateData.categoryId = categoryId;
 
     const configuration = await SpiritualConfiguration.findOneAndUpdate(

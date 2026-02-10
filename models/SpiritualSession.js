@@ -52,7 +52,15 @@ const spiritualSessionSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  videoKey: {
+    type: String,
+    default: ''
+  },
   audioUrl: {
+    type: String,
+    default: ''
+  },
+  audioKey: {
     type: String,
     default: ''
   },
