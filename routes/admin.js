@@ -467,4 +467,99 @@ router.put('/settings/gemini-api-key', async (req, res) => {
   }
 });
 
+// ============ App Settings (OpenAI API Key) ============
+
+// @route   GET /api/admin/settings/openai-api-key
+// @desc    Get OpenAI API key status (masked). Optional query: clientId (Client _id or clientId code). Admin/Super Admin only.
+router.get('/settings/openai-api-key', async (req, res) => {
+  try {
+    const { clientId } = req.query;
+    let key = null;
+    let scope = 'app';
+
+    if (clientId) {
+      const isObjectId = mongoose.Types.ObjectId.isValid(clientId) && String(clientId).length === 24;
+      const client = isObjectId
+        ? await Client.findById(clientId).select('clientId businessName fullName settings.openaiApiKey').lean()
+        : await Client.findOne({ clientId: String(clientId) }).select('clientId businessName fullName settings.openaiApiKey').lean();
+      if (!client) {
+        return res.status(404).json({ success: false, message: 'Client not found' });
+      }
+      key = client.settings?.openaiApiKey || null;
+      scope = 'client';
+      const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+      return res.json({
+        success: true,
+        data: {
+          configured: !!key,
+          masked,
+          scope,
+          client: { _id: client._id, clientId: client.clientId, businessName: client.businessName, fullName: client.fullName }
+        }
+      });
+    }
+
+    const settings = await AppSettings.getSettings();
+    key = settings?.openaiApiKey;
+    const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+    res.json({
+      success: true,
+      data: {
+        configured: !!key,
+        masked,
+        scope
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @route   PUT /api/admin/settings/openai-api-key
+// @desc    Update OpenAI API key. Body: { apiKey, clientId? }. If clientId provided, update that client's key; else app-level. Admin/Super Admin only.
+router.put('/settings/openai-api-key', async (req, res) => {
+  try {
+    const { apiKey, clientId } = req.body;
+    const value = apiKey != null ? String(apiKey).trim() || null : null;
+
+    if (clientId) {
+      const isObjectId = mongoose.Types.ObjectId.isValid(clientId) && String(clientId).length === 24;
+      const client = isObjectId
+        ? await Client.findById(clientId)
+        : await Client.findOne({ clientId: String(clientId) });
+      if (!client) {
+        return res.status(404).json({ success: false, message: 'Client not found' });
+      }
+      if (!client.settings) client.settings = {};
+      client.settings.openaiApiKey = value;
+      await client.save();
+      const key = client.settings.openaiApiKey;
+      const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+      return res.json({
+        success: true,
+        message: 'OpenAI API key updated for client',
+        data: {
+          configured: !!key,
+          masked,
+          scope: 'client',
+          client: { _id: client._id, clientId: client.clientId, businessName: client.businessName, fullName: client.fullName }
+        }
+      });
+    }
+
+    const settings = await AppSettings.getSettings();
+    settings.openaiApiKey = value;
+    await settings.save();
+    const key = settings.openaiApiKey;
+    const masked = key ? `${key.slice(0, 4)}****${key.slice(-4)}` : null;
+    res.json({
+      success: true,
+      message: 'OpenAI API key updated',
+      data: { configured: !!key, masked, scope: 'app' }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 export default router;

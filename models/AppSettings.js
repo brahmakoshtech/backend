@@ -2,10 +2,15 @@ import mongoose from 'mongoose';
 
 /**
  * AppSettings - single-document store for app-wide settings (e.g. API keys).
- * Used for Gemini API key and other configurable keys manageable from admin dashboard.
+ * Used for AI API keys and other configurable keys manageable from admin dashboard.
  */
 const appSettingsSchema = new mongoose.Schema({
   geminiApiKey: {
+    type: String,
+    default: null,
+    trim: true
+  },
+  openaiApiKey: {
     type: String,
     default: null,
     trim: true

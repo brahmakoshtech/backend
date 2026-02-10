@@ -94,9 +94,10 @@ const clientSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  // Per-client settings (e.g. Gemini API key for conversation summary)
+  // Per-client settings (e.g. AI API keys for conversation summary)
   settings: {
-    geminiApiKey: { type: String, default: null, trim: true }
+    geminiApiKey: { type: String, default: null, trim: true },
+    openaiApiKey: { type: String, default: null, trim: true }
   }
 }, {
   timestamps: true
