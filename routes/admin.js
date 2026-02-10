@@ -11,23 +11,24 @@ const router = express.Router();
 router.use(authenticate);
 router.use(authorize('admin', 'super_admin'));
 
-// Get all clients
+// Get all clients (super_admin: all; admin: those with matching adminId or unassigned)
 router.get('/clients', async (req, res) => {
   try {
-    const clients = await Client.find({ 
-      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
-    })
+    const filter = req.user.role === 'super_admin'
+      ? {}
+      : { $or: [ { adminId: req.user._id }, { adminId: null }, { adminId: { $exists: false } } ] };
+    const clients = await Client.find(filter)
       .select('-password')
       .sort({ createdAt: -1 });
-    
+
     res.json({
       success: true,
       data: { clients }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -112,10 +113,10 @@ router.post('/clients', async (req, res) => {
 // Get single client
 router.get('/clients/:id', async (req, res) => {
   try {
-    const client = await Client.findOne({ 
-      _id: req.params.id, 
-      adminId: req.user.role === 'super_admin' ? { $exists: true } : req.user._id
-    }).select('-password');
+    const filter = req.user.role === 'super_admin'
+      ? { _id: req.params.id }
+      : { _id: req.params.id, $or: [ { adminId: req.user._id }, { adminId: null }, { adminId: { $exists: false } } ] };
+    const client = await Client.findOne(filter).select('-password');
 
     if (!client) {
       return res.status(404).json({ 
