@@ -166,7 +166,8 @@ const getUserStats = async (req, res) => {
     }
     
     // Get recent activities based on role
-    const recentActivities = sessions.slice(0, 20).map(session => {
+    const { getobject } = await import('../utils/s3.js');
+    const recentActivities = await Promise.all(sessions.slice(0, 20).map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -175,6 +176,21 @@ const getUserStats = async (req, res) => {
         if (completionPercentage < 100) {
           status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
         }
+      }
+      
+      // Generate presigned URLs if keys exist
+      let videoUrl = session.videoUrl || '';
+      let audioUrl = session.audioUrl || '';
+      
+      try {
+        if (session.videoKey) {
+          videoUrl = await getobject(session.videoKey, 3600);
+        }
+        if (session.audioKey) {
+          audioUrl = await getobject(session.audioKey, 3600);
+        }
+      } catch (error) {
+        console.error('Error generating presigned URLs for session:', session._id, error);
       }
       
       let activityData = {
@@ -189,8 +205,8 @@ const getUserStats = async (req, res) => {
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
         chantingName: session.chantingName,
-        videoUrl: session.videoUrl || '',
-        audioUrl: session.audioUrl || '',
+        videoUrl,
+        audioUrl,
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
           name: session.userId?.profile?.name || 
@@ -212,7 +228,7 @@ const getUserStats = async (req, res) => {
       }
       
       return activityData;
-    });
+    }));
     
     // User details already fetched above as currentUser
     const stats = {
@@ -357,7 +373,8 @@ const getAllUsersStats = async (req, res) => {
     });
     
     // Get recent activities - all for the current category
-    const recentActivities = sessions.slice(0, 50).map(session => {
+    const { getobject } = await import('../utils/s3.js');
+    const recentActivities = await Promise.all(sessions.slice(0, 50).map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -366,6 +383,21 @@ const getAllUsersStats = async (req, res) => {
         if (completionPercentage < 100) {
           status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
         }
+      }
+      
+      // Generate presigned URLs if keys exist
+      let videoUrl = session.videoUrl || '';
+      let audioUrl = session.audioUrl || '';
+      
+      try {
+        if (session.videoKey) {
+          videoUrl = await getobject(session.videoKey, 3600);
+        }
+        if (session.audioKey) {
+          audioUrl = await getobject(session.audioKey, 3600);
+        }
+      } catch (error) {
+        console.error('Error generating presigned URLs for session:', session._id, error);
       }
       
       let activityData = {
@@ -380,8 +412,8 @@ const getAllUsersStats = async (req, res) => {
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
         chantingName: session.chantingName,
-        videoUrl: session.videoUrl || '',
-        audioUrl: session.audioUrl || '',
+        videoUrl,
+        audioUrl,
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
           name: session.userId?.profile?.name || 
@@ -401,7 +433,7 @@ const getAllUsersStats = async (req, res) => {
       }
       
       return activityData;
-    });
+    }));
     
     console.log('[All Users Stats] Returning', recentActivities.length, 'activities for category:', category);
     
@@ -533,7 +565,8 @@ router.get('/user/:userId', async (req, res) => {
     });
     
     // Get recent activities for this user
-    const recentActivities = sessions.slice(0, 20).map(session => {
+    const { getobject } = await import('../utils/s3.js');
+    const recentActivities = await Promise.all(sessions.slice(0, 20).map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -542,6 +575,21 @@ router.get('/user/:userId', async (req, res) => {
         if (completionPercentage < 100) {
           status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
         }
+      }
+      
+      // Generate presigned URLs if keys exist
+      let videoUrl = session.videoUrl || '';
+      let audioUrl = session.audioUrl || '';
+      
+      try {
+        if (session.videoKey) {
+          videoUrl = await getobject(session.videoKey, 3600);
+        }
+        if (session.audioKey) {
+          audioUrl = await getobject(session.audioKey, 3600);
+        }
+      } catch (error) {
+        console.error('Error generating presigned URLs for session:', session._id, error);
       }
       
       let activityData = {
@@ -554,8 +602,8 @@ router.get('/user/:userId', async (req, res) => {
         emotion: session.emotion,
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
-        videoUrl: session.videoUrl || '',
-        audioUrl: session.audioUrl || '',
+        videoUrl,
+        audioUrl,
         userDetails: {
           email: userDetails?.email || 'Unknown',
           name: userDetails?.profile?.name || 
@@ -575,7 +623,7 @@ router.get('/user/:userId', async (req, res) => {
       }
       
       return activityData;
-    });
+    }));
     
     const stats = {
       totalStats: {
@@ -612,7 +660,7 @@ router.get('/user/:userId', async (req, res) => {
 router.post('/save-session', async (req, res) => {
   try {
     const userId = req.user._id || req.user.userId;
-    const { type, title, targetDuration, actualDuration, karmaPoints, emotion, status, completionPercentage, chantCount, chantingName, videoUrl, audioUrl } = req.body;
+    const { type, title, targetDuration, actualDuration, karmaPoints, emotion, status, completionPercentage, chantCount, chantingName, videoUrl, audioUrl, videoKey, audioKey } = req.body;
     
     // Basic validation - all activities need userId, type, title
     if (!userId || !type || !title) {
@@ -629,7 +677,9 @@ router.post('/save-session', async (req, res) => {
       karmaPoints: karmaPoints || 0,
       emotion,
       videoUrl: videoUrl || '',
-      audioUrl: audioUrl || ''
+      audioUrl: audioUrl || '',
+      videoKey: videoKey || '',
+      audioKey: audioKey || ''
     };
     
     if (type === 'chanting') {

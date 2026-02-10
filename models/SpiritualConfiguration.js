@@ -15,8 +15,8 @@ const spiritualConfigurationSchema = new mongoose.Schema({
   },
   duration: {
     type: String,
-    required: true,
-    enum: ['1 minute', '2 minutes', '3 minutes', '4 minutes', '5 minutes', '6 minutes', '7 minutes', '8 minutes', '9 minutes', '10 minutes'],
+    required: false,
+    enum: ['1 minute', '2 minutes', '3 minutes', '4 minutes', '5 minutes', '6 minutes', '7 minutes', '8 minutes', '9 minutes', '10 minutes', ''],
     default: '5 minutes'
   },
   type: {
@@ -37,12 +37,13 @@ const spiritualConfigurationSchema = new mongoose.Schema({
     default: 10
   },
   chantingType: {
-    type: String,
-    default: ''
+    type: String
   },
-  customChantingType: {
-    type: String,
-    default: ''
+  meditationType: {
+    type: String
+  },
+  prayerType: {
+    type: String
   },
   isActive: {
     type: Boolean,
