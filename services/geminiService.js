@@ -55,8 +55,8 @@ export async function generateConversationSummary(messages, clientId = null) {
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    // Use a stable, v1beta-supported text model
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.0-pro' });
+    // Use a v1beta-supported Gemini model (matches your working curl)
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const result = await model.generateContent(prompt);
     const response = result.response;
     if (!response || !response.text) return null;
