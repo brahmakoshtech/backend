@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 import Client from '../models/Client.js';
 import User from '../models/User.js';
+import Partner from '../models/Partner.js';
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
 
@@ -59,6 +60,17 @@ export const authenticate = async (req, res, next) => {
         // Add clientId from token for backward compatibility
         if (decoded.clientId) {
           user.tokenClientId = decoded.clientId;
+        }
+      }
+    } else if (decoded.role === 'partner') {
+      const partnerId = decoded.partnerId || decoded.userId;
+      if (partnerId) {
+        user = await Partner.findById(partnerId).select('-password');
+        if (user) {
+          user.role = 'partner';
+          if (!user.isActive) {
+            user = null;
+          }
         }
       }
     }

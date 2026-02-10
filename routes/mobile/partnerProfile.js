@@ -656,8 +656,9 @@ router.post('/register/step4', authenticate, upload.single('image'), async (req,
 
     await s3Client.send(uploadCommand);
 
-    // Save S3 key in partner profile
+    // Save S3 key in partner profile (key + key field for consistency with experts/crud)
     partner.profilePicture = imageKey;
+    partner.profilePictureKey = imageKey;
     partner.registrationStep = 4; // Mark Step 4 as complete
     await partner.save();
 
@@ -751,8 +752,9 @@ router.post('/profile/picture', authenticate, upload.single('image'), async (req
 
     await s3Client.send(uploadCommand);
 
-    // Save S3 key in partner profile
+    // Save S3 key in partner profile (key + key field for consistency with experts/crud)
     partner.profilePicture = imageKey;
+    partner.profilePictureKey = imageKey;
     await partner.save();
 
     // Return presigned URL for immediate use

@@ -110,7 +110,8 @@ const conversationSchema = new mongoose.Schema({
     creditsUsed: { type: Number, default: 0 }, // user credits debited for this session
     partnerCreditsEarned: { type: Number, default: 0 }, // partner credits earned for this session
     userRatePerMinute: { type: Number, default: 4 },
-    partnerRatePerMinute: { type: Number, default: 3 }
+    partnerRatePerMinute: { type: Number, default: 3 },
+    summary: { type: String, default: null } // AI-generated short description of topics discussed (Gemini)
   },
   
   // Payment Information

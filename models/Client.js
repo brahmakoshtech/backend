@@ -93,6 +93,10 @@ const clientSchema = new mongoose.Schema({
   loginApproved: {
     type: Boolean,
     default: false
+  },
+  // Per-client settings (e.g. Gemini API key for conversation summary)
+  settings: {
+    geminiApiKey: { type: String, default: null, trim: true }
   }
 }, {
   timestamps: true
