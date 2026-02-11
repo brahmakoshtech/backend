@@ -2,6 +2,7 @@ import express from 'express';
 import Chat from '../../models/Chat.js';
 import { authenticate } from '../../middleware/auth.js';
 import { getChatCompletion } from '../../utils/openai.js';
+import { getPromptContent, PROMPT_KEYS } from '../../services/promptService.js';
 
 const router = express.Router();
 
@@ -328,11 +329,24 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
       content: message.trim()
     });
 
+    let systemPrompt = 'You are Brahmakosh, a warm and empathetic spiritual wellness guide. Offer concise, actionable guidance rooted in mindfulness and positive habits.';
+    try {
+      const storedPrompt = await getPromptContent(PROMPT_KEYS.MOBILE_CHAT_ASSISTANT);
+      if (storedPrompt && typeof storedPrompt === 'string' && storedPrompt.trim().length > 0) {
+        systemPrompt = storedPrompt.trim();
+      }
+    } catch (promptError) {
+      console.warn('[Chat POST :chatId/message] Failed to load mobile chat prompt. Using fallback.', promptError.message);
+    }
+
     // Prepare messages for OpenAI (format: { role, content })
-    const openaiMessages = chat.messages.map(msg => ({
-      role: msg.role,
-      content: msg.content
-    }));
+    const openaiMessages = [
+      { role: 'system', content: systemPrompt },
+      ...chat.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+    ];
 
     // Get response from OpenAI
     const aiResponse = await getChatCompletion(openaiMessages);

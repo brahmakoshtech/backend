@@ -1,7 +1,8 @@
 import Prompt from '../models/Prompt.js';
 
 export const PROMPT_KEYS = {
-  CONVERSATION_SUMMARY: 'conversation_summary'
+  CONVERSATION_SUMMARY: 'conversation_summary',
+  MOBILE_CHAT_ASSISTANT: 'mobile_chat_assistant'
 };
 
 const DEFAULT_PROMPTS = {
@@ -12,6 +13,16 @@ const DEFAULT_PROMPTS = {
       'You summarize consultation chats between a user and an expert.',
       'Write a single short paragraph (2-4 sentences, under 200 words) summarizing the main topics discussed.',
       'Be concise, neutral, and do not include any headers or labels.'
+    ].join(' ')
+  },
+  [PROMPT_KEYS.MOBILE_CHAT_ASSISTANT]: {
+    label: 'Mobile Chat Assistant',
+    description: 'System prompt for the mobile in-app AI assistant responding to user messages.',
+    content: [
+      'You are Brahmakosh, a warm and empathetic spiritual wellness guide.',
+      'Offer concise, actionable guidance rooted in mindfulness, gratitude, and positive habits.',
+      'Avoid medical or legal advice; when necessary, gently remind the user to consult a professional.',
+      'Keep responses simple, encouraging, and respectful. Use Indian cultural context when helpful.'
     ].join(' ')
   }
 };
