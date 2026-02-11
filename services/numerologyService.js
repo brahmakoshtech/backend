@@ -124,8 +124,20 @@ class NumerologyService {
 
   /**
    * Get daily prediction only (changes daily - cached per user per date)
+   * Returns { missingFields, message } when userName is missing instead of generic/default data
    */
   async getDailyPredictionOnly(userId, dateInput, userName, forceRefresh = false) {
+    const trimmedName = (userName || '').toString().trim();
+    if (!trimmedName) {
+      return {
+        source: 'missing',
+        data: {
+          missingFields: ['name'],
+          message: 'Name is required for personalized daily numerology prediction'
+        }
+      };
+    }
+
     const { day, month, year } = this.extractDateComponents(dateInput);
     const normalizedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
@@ -137,7 +149,7 @@ class NumerologyService {
     }
 
     console.log('[Numerology Service] Fetching daily prediction for date:', `${year}-${month}-${day}`);
-    const dailyPrediction = await this.callNumeroAPI('/numero_prediction/daily', day, month, year, userName);
+    const dailyPrediction = await this.callNumeroAPI('/numero_prediction/daily', day, month, year, trimmedName);
 
     await Numerology.findOneAndUpdate(
       { userId, day, month, year },

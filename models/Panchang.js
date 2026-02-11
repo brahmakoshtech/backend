@@ -102,9 +102,13 @@ const panchangSchema = new mongoose.Schema({
     night: [mongoose.Schema.Types.Mixed]
   },
   dailyNakshatraPrediction: {
-    birthMoonSign: String,       // Added
-    birthMoonNakshatra: String,  // Added
-    predictionDate: String,      // Added
+    // When birth data missing - return these instead of generic predictions
+    missingFields: [String],
+    message: String,
+    // API response fields when birth data is complete
+    birthMoonSign: String,
+    birthMoonNakshatra: String,
+    predictionDate: String,
     nakshatra: String,
     prediction: mongoose.Schema.Types.Mixed,
     bot_response: String,

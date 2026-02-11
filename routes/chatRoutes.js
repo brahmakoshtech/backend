@@ -1486,7 +1486,8 @@ router.get('/conversation/:conversationId/complete-user-details', authenticate, 
           today.toISOString(),
           user.liveLocation.latitude,
           user.liveLocation.longitude,
-          false
+          false,
+          user.profile || null
         );
       } catch (e) {
         result.errors.panchang = e.message;

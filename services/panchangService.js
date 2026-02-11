@@ -41,11 +41,64 @@ class PanchangService {
   }
 
   /**
+   * Parse user birth data for nakshatra API. Returns request object or null if incomplete.
+   */
+  parseBirthRequestData(userProfile) {
+    if (!userProfile) return null;
+    const dob = userProfile.dob;
+    const timeOfBirth = (userProfile.timeOfBirth || '').toString().trim();
+    const lat = userProfile.latitude;
+    const lon = userProfile.longitude;
+
+    if (!dob || isNaN(new Date(dob).getTime())) return null;
+    const d = new Date(dob);
+    let hour = 12, min = 0;
+    if (timeOfBirth) {
+      const parts = timeOfBirth.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if (parts) {
+        hour = parseInt(parts[1], 10);
+        min = parseInt(parts[2], 10);
+      }
+    }
+    if (lat == null || lon == null || isNaN(parseFloat(lat)) || isNaN(parseFloat(lon))) return null;
+
+    return {
+      day: d.getDate(),
+      month: d.getMonth() + 1,
+      year: d.getFullYear(),
+      hour,
+      min,
+      lat: parseFloat(lat),
+      lon: parseFloat(lon),
+      tzone: 5.5
+    };
+  }
+
+  /**
+   * Get list of missing birth fields needed for personalized nakshatra prediction
+   */
+  getMissingBirthFields(userProfile) {
+    const missing = [];
+    if (!userProfile) {
+      return ['dateOfBirth', 'timeOfBirth', 'placeOfBirth'];
+    }
+    if (!userProfile.dob || isNaN(new Date(userProfile.dob).getTime())) missing.push('dateOfBirth');
+    if (!(userProfile.timeOfBirth || '').toString().trim()) missing.push('timeOfBirth');
+    const lat = userProfile.latitude;
+    const lon = userProfile.longitude;
+    if (lat == null || lon == null || isNaN(parseFloat(lat)) || isNaN(parseFloat(lon))) {
+      missing.push('placeOfBirth');
+    }
+    return missing;
+  }
+
+  /**
    * Main method: Get complete panchang data
    * Uses current date and user's live location from request
    * Checks DB first (for today's date), then fetches from API if needed
+   * @param {object} userProfile - Optional. profile.dob, profile.timeOfBirth, profile.latitude, profile.longitude for personalized nakshatra
    */
-  async getCompletePanchangData(userId, currentDate, latitude, longitude, forceRefresh = false) {
+  async getCompletePanchangData(userId, currentDate, latitude, longitude, forceRefresh = false, userProfile = null) {
     try {
       // Step 1: Validate input
       this.validatePanchangInput(currentDate, latitude, longitude);
@@ -72,13 +125,27 @@ class PanchangService {
       // Step 3: Prepare current date and location data for API
       const requestData = this.prepareRequestData(currentDate, latitude, longitude);
 
-      // Step 4: Fetch data from all 4 Panchang API endpoints in parallel
-      console.log('[Panchang Service] Fetching from 4 Panchang API endpoints for date:', todayKey);
-      const [basicPanchangData, advancedPanchangData, chaughadiyaData, nakshatraPredictionData] = await Promise.all([
+      // Step 4: Fetch nakshatra only if birth data is complete; otherwise return missingFields
+      const birthData = this.parseBirthRequestData(userProfile);
+      let nakshatraPredictionData;
+      if (birthData) {
+        nakshatraPredictionData = await this.fetchDailyNakshatraPrediction(birthData);
+        console.log('[Panchang Service] Nakshatra prediction fetched with birth data');
+      } else {
+        const missingFields = this.getMissingBirthFields(userProfile);
+        nakshatraPredictionData = {
+          missingFields,
+          message: 'Birth details (dateOfBirth, timeOfBirth, placeOfBirth) are required for personalized daily nakshatra prediction'
+        };
+        console.log('[Panchang Service] Birth data incomplete, returning missingFields:', missingFields);
+      }
+
+      // Step 4b: Fetch basic, advanced, chaughadiya in parallel
+      console.log('[Panchang Service] Fetching Panchang API endpoints for date:', todayKey);
+      const [basicPanchangData, advancedPanchangData, chaughadiyaData] = await Promise.all([
         this.fetchBasicPanchang(requestData),
         this.fetchAdvancedPanchangSunrise(requestData),
-        this.fetchChaughadiyaMuhurta(requestData),
-        this.fetchDailyNakshatraPrediction(requestData)
+        this.fetchChaughadiyaMuhurta(requestData)
       ]);
 
       console.log('[Panchang Service] All API calls completed successfully');
@@ -309,19 +376,21 @@ class PanchangService {
         day: chaughadiya.chaughadiya?.day || [],
         night: chaughadiya.chaughadiya?.night || []
       },
-      dailyNakshatraPrediction: {
-        birthMoonSign: nakshatraPrediction.birth_moon_sign || '',
-        birthMoonNakshatra: nakshatraPrediction.birth_moon_nakshatra || '',
-        predictionDate: nakshatraPrediction.prediction_date || '',
-        nakshatra: nakshatraPrediction.nakshatra || '',
-        prediction: nakshatraPrediction.prediction || {},
-        bot_response: nakshatraPrediction.bot_response || '',
-        mood: nakshatraPrediction.mood || '',
-        mood_percentage: nakshatraPrediction.mood_percentage || '',
-        lucky_color: nakshatraPrediction.lucky_color || [],
-        lucky_number: nakshatraPrediction.lucky_number || [],
-        lucky_time: nakshatraPrediction.lucky_time || ''
-      },
+      dailyNakshatraPrediction: nakshatraPrediction.missingFields
+        ? { missingFields: nakshatraPrediction.missingFields, message: nakshatraPrediction.message }
+        : {
+            birthMoonSign: nakshatraPrediction.birth_moon_sign || '',
+            birthMoonNakshatra: nakshatraPrediction.birth_moon_nakshatra || '',
+            predictionDate: nakshatraPrediction.prediction_date || '',
+            nakshatra: nakshatraPrediction.nakshatra || '',
+            prediction: nakshatraPrediction.prediction || {},
+            bot_response: nakshatraPrediction.bot_response || '',
+            mood: nakshatraPrediction.mood || '',
+            mood_percentage: nakshatraPrediction.mood_percentage || '',
+            lucky_color: nakshatraPrediction.lucky_color || [],
+            lucky_number: nakshatraPrediction.lucky_number || [],
+            lucky_time: nakshatraPrediction.lucky_time || ''
+          },
       lastCalculated: new Date(),
       calculationSource: 'api'
     };
@@ -382,10 +451,11 @@ class PanchangService {
 
   /**
    * Refresh panchang data (force recalculation from API)
+   * @param {object} userProfile - Optional. profile.dob, profile.timeOfBirth, profile.latitude, profile.longitude for personalized nakshatra
    */
-  async refreshPanchangData(userId, currentDate, latitude, longitude) {
+  async refreshPanchangData(userId, currentDate, latitude, longitude, userProfile = null) {
     console.log('[Panchang Service] Refreshing data for user:', userId);
-    return this.getCompletePanchangData(userId, currentDate, latitude, longitude, true);
+    return this.getCompletePanchangData(userId, currentDate, latitude, longitude, true, userProfile);
   }
 }
 

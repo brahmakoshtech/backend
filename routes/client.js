@@ -980,25 +980,25 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
         });
       }
 
-      // Fetch panchang data using user's live location
+      // Fetch panchang data using user's live location and birth profile for personalized nakshatra
       const fetchedPanchangData = await panchangService.getCompletePanchangData(
         userId,
         requestDate.toISOString(),
         user.liveLocation.latitude,
         user.liveLocation.longitude,
-        false // Don't force refresh
+        false, // Don't force refresh
+        user.profile || null
       );
 
       // Enrich with numero daily prediction (lucky number, prediction for the day)
-      let numeroDailyPrediction = null;
+      let numeroDailyPrediction;
       const userName = user.profile?.name || user.profile?.firstName;
-      if (userName) {
-        try {
-          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName);
-          numeroDailyPrediction = numeroResult.data;
-        } catch (e) {
-          console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
-        }
+      try {
+        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName || '');
+        numeroDailyPrediction = numeroResult.data;
+      } catch (e) {
+        console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+        numeroDailyPrediction = { missingFields: ['name'], message: 'Name is required for personalized daily numerology prediction' };
       }
 
       const enrichedData = { ...fetchedPanchangData, numeroDailyPrediction };
@@ -1162,15 +1162,14 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       console.log('[Client API] Panchang data already exists for date:', dateKey);
       
       // Enrich with numero daily prediction
-      let numeroDailyPrediction = null;
+      let numeroDailyPrediction;
       const userName = user.profile?.name || user.profile?.firstName;
-      if (userName) {
-        try {
-          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName);
-          numeroDailyPrediction = numeroResult.data;
-        } catch (e) {
-          console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
-        }
+      try {
+        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName || '');
+        numeroDailyPrediction = numeroResult.data;
+      } catch (e) {
+        console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+        numeroDailyPrediction = { missingFields: ['name'], message: 'Name is required for personalized daily numerology prediction' };
       }
 
       const formattedData = {
@@ -1198,25 +1197,25 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
     // Data doesn't exist - fetch from API and save
     console.log('[Client API] Fetching new panchang data from API for date:', dateKey);
     
-    // Fetch panchang data from service (forceRefresh = true to ensure fresh data)
+    // Fetch panchang data from service (pass user.profile for personalized nakshatra)
     const panchangData = await panchangService.getCompletePanchangData(
       userId,
       currentDate.toISOString(),
       latitude,
       longitude,
-      false // Don't force refresh, let service handle caching
+      false, // Don't force refresh, let service handle caching
+      user.profile || null
     );
 
     // Enrich with numero daily prediction
-    let numeroDailyPrediction = null;
+    let numeroDailyPrediction;
     const userName = user.profile?.name || user.profile?.firstName;
-    if (userName) {
-      try {
-        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName);
-        numeroDailyPrediction = numeroResult.data;
-      } catch (e) {
-        console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
-      }
+    try {
+      const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName || '');
+      numeroDailyPrediction = numeroResult.data;
+    } catch (e) {
+      console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
+      numeroDailyPrediction = { missingFields: ['name'], message: 'Name is required for personalized daily numerology prediction' };
     }
 
     res.json({
@@ -1484,7 +1483,7 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
     let { currentDate, latitude, longitude } = req.body;
 
     const user = await User.findById(userId)
-      .select('clientId liveLocation')
+      .select('clientId liveLocation profile')
       .lean();
 
     if (!user) {
@@ -1533,7 +1532,7 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
       }
     }
 
-    const panchangData = await panchangService.refreshPanchangData(userId, currentDate, latitude, longitude);
+    const panchangData = await panchangService.refreshPanchangData(userId, currentDate, latitude, longitude, user.profile || null);
 
     res.json({
       success: true,
