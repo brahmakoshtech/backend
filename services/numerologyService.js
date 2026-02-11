@@ -3,7 +3,6 @@
 import axios from 'axios';
 import Numerology from '../models/Numerology.js';
 import NumerologyUserProfile from '../models/NumerologyUserProfile.js';
-
 const DAILY_PREDICTION_OVERRIDES = {
   '6986ec25b9a939b9c6cba6c2': {
     __default__: {
