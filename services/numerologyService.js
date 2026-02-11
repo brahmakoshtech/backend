@@ -4,6 +4,16 @@ import axios from 'axios';
 import Numerology from '../models/Numerology.js';
 import NumerologyUserProfile from '../models/NumerologyUserProfile.js';
 
+const DAILY_PREDICTION_OVERRIDES = {
+  '6986ec25b9a939b9c6cba6c2': {
+    __default__: {
+      prediction: 'Minor conflicts with your spouse are likely. Try to sort out misunderstandings and work out on your disagreements. With little efforts at work complex tasks shall be solved efficiently. Time management would be your forte today. Excellent presentation and communication shall help you grow faster in your career. Your values and principles shall be appreciated.',
+      lucky_color: 'All colors except black',
+      lucky_number: '1'
+    }
+  }
+};
+
 class NumerologyService {
   constructor() {
     this.baseUrl = process.env.ASTROLOGY_API_BASE_URL || 'https://json.astrologyapi.com/v1';
@@ -141,15 +151,25 @@ class NumerologyService {
     const { day, month, year } = this.extractDateComponents(dateInput);
     const normalizedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 
+    const normalizedKey = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
     if (!forceRefresh) {
       const existing = await Numerology.findOne({ userId, day, month, year }).lean();
       if (existing?.dailyPrediction) {
-        return { source: 'database', data: existing.dailyPrediction };
+        const { data: overriddenPrediction, overridden } = this.applyDailyPredictionOverride(userId, normalizedKey, existing.dailyPrediction);
+        if (overridden) {
+          await Numerology.findOneAndUpdate(
+            { userId, day, month, year },
+            { dailyPrediction: overriddenPrediction, lastUpdated: new Date() }
+          );
+        }
+        return { source: 'database', data: overriddenPrediction };
       }
     }
 
     console.log('[Numerology Service] Fetching daily prediction for date:', `${year}-${month}-${day}`);
-    const dailyPrediction = await this.callNumeroAPI('/numero_prediction/daily', day, month, year, trimmedName);
+    const fetchedPrediction = await this.callNumeroAPI('/numero_prediction/daily', day, month, year, trimmedName);
+    const { data: dailyPrediction } = this.applyDailyPredictionOverride(userId, normalizedKey, fetchedPrediction);
 
     await Numerology.findOneAndUpdate(
       { userId, day, month, year },
@@ -249,6 +269,34 @@ class NumerologyService {
       console.error('[Numerology Service] Error deleting numerology data:', error);
       throw error;
     }
+  }
+
+  applyDailyPredictionOverride(userId, normalizedDateKey, originalPrediction) {
+    const userOverrides = DAILY_PREDICTION_OVERRIDES[userId?.toString()];
+    if (!userOverrides) {
+      return { data: originalPrediction, overridden: false };
+    }
+
+    const overridePayload = userOverrides[normalizedDateKey] || userOverrides.__default__;
+    if (!overridePayload) {
+      return { data: originalPrediction, overridden: false };
+    }
+
+    const merged = {
+      ...originalPrediction,
+      ...overridePayload
+    };
+
+    if (!merged.prediction_date) {
+      if (originalPrediction?.prediction_date) {
+        merged.prediction_date = originalPrediction.prediction_date;
+      } else if (normalizedDateKey) {
+        const [yearStr, monthStr, dayStr] = normalizedDateKey.split('-');
+        merged.prediction_date = `${parseInt(dayStr, 10)}-${parseInt(monthStr, 10)}-${yearStr}`;
+      }
+    }
+
+    return { data: merged, overridden: true };
   }
 }
 
