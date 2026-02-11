@@ -13,7 +13,7 @@ const spiritualSessionSchema = new mongoose.Schema({
   },
   title: {
     type: String,
-    required: true
+    required: false
   },
   chantingName: {
     type: String,

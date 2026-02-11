@@ -16,7 +16,7 @@ const spiritualConfigurationSchema = new mongoose.Schema({
   duration: {
     type: String,
     required: false,
-    enum: ['1 minute', '2 minutes', '3 minutes', '4 minutes', '5 minutes', '6 minutes', '7 minutes', '8 minutes', '9 minutes', '10 minutes', ''],
+    enum: ['1 minute', '2 minutes', '3 minutes', '4 minutes', '5 minutes', '6 minutes', '7 minutes', '8 minutes', '9 minutes', '10 minutes', '15 minutes', '20 minutes', '30 minutes', ''],
     default: '5 minutes'
   },
   type: {
