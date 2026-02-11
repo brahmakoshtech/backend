@@ -294,9 +294,55 @@ const getSingleConfiguration = async (req, res) => {
   }
 };
 
+// Get unique custom types for dropdowns
+const getCustomTypes = async (req, res) => {
+  try {
+    let clientId;
+    if (req.user.role === 'client') {
+      clientId = req.user.clientId;
+    } else if (req.user.role === 'user') {
+      clientId = req.user.clientId?.clientId || req.user.tokenClientId;
+    }
+    
+    const query = {};
+    if (clientId) query.clientId = clientId;
+    
+    const configurations = await SpiritualConfiguration.find(query);
+    
+    const customTypes = {
+      chanting: [],
+      meditation: [],
+      prayer: []
+    };
+    
+    configurations.forEach(config => {
+      if (config.chantingType && !customTypes.chanting.includes(config.chantingType)) {
+        customTypes.chanting.push(config.chantingType);
+      }
+      if (config.meditationType && !customTypes.meditation.includes(config.meditationType)) {
+        customTypes.meditation.push(config.meditationType);
+      }
+      if (config.prayerType && !customTypes.prayer.includes(config.prayerType)) {
+        customTypes.prayer.push(config.prayerType);
+      }
+    });
+    
+    res.status(200).json({
+      success: true,
+      data: customTypes
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 // Routes
 router.post('/', createConfiguration);
 router.get('/', getConfigurations);
+router.get('/custom-types', getCustomTypes);
 router.get('/:id', getSingleConfiguration);
 router.put('/:id', updateConfiguration);
 router.delete('/:id', deleteConfiguration);
