@@ -1,4 +1,11 @@
 import { getChatCompletionFromDb } from '../utils/openai.js';
+import { getPromptContent, PROMPT_KEYS } from './promptService.js';
+
+const FALLBACK_SUMMARY_PROMPT = [
+  'You summarize consultation chats between a user and an expert.',
+  'Write a single short paragraph (2-4 sentences, under 200 words) summarizing the main topics discussed.',
+  'Be concise, neutral, and do not include any headers or labels.'
+].join(' ');
 
 /**
  * Generate a short summary of conversation topics using OpenAI.
@@ -24,13 +31,20 @@ export async function generateConversationSummary(messages, clientId = null) {
 
   const conversationText = textMessages.join('\n');
 
+  let systemPrompt = FALLBACK_SUMMARY_PROMPT;
+  try {
+    const storedPrompt = await getPromptContent(PROMPT_KEYS.CONVERSATION_SUMMARY);
+    if (storedPrompt && typeof storedPrompt === 'string') {
+      systemPrompt = storedPrompt;
+    }
+  } catch (promptErr) {
+    console.warn('Failed to load summary prompt from database. Using fallback.', promptErr.message);
+  }
+
   const chatMessages = [
     {
       role: 'system',
-      content:
-        'You summarize consultation chats between a user and an expert. ' +
-        'Write a single short paragraph (2-4 sentences, under 200 words) summarizing the main topics discussed. ' +
-        'Be concise, neutral, and do not include any headers or labels.'
+      content: systemPrompt
     },
     {
       role: 'user',

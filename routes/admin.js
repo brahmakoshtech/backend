@@ -4,6 +4,7 @@ import Client from '../models/Client.js';
 import User from '../models/User.js';
 import AppSettings from '../models/AppSettings.js';
 import { authenticate, authorize, generateToken } from '../middleware/auth.js';
+import { listPrompts, updatePrompt, ensurePrompt } from '../services/promptService.js';
 
 const router = express.Router();
 
@@ -368,6 +369,66 @@ router.post('/clients/:id/login-token', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: error.message 
+    });
+  }
+});
+
+// ============ Prompt management ============
+
+router.get('/prompts', async (req, res) => {
+  try {
+    const prompts = await listPrompts();
+    res.json({
+      success: true,
+      data: { prompts }
+    });
+  } catch (error) {
+    console.error('[Admin API] Error fetching prompts:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to load prompts'
+    });
+  }
+});
+
+router.put('/prompts/:key', async (req, res) => {
+  try {
+    const { key } = req.params;
+    const { label, description, content } = req.body || {};
+
+    if (!content || typeof content !== 'string' || !content.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Prompt content is required'
+      });
+    }
+
+    await ensurePrompt(key);
+
+    const updates = {
+      content: content.trim()
+    };
+
+    if (typeof label === 'string' && label.trim()) {
+      updates.label = label.trim();
+    }
+
+    if (typeof description === 'string') {
+      updates.description = description.trim();
+    }
+
+    const prompt = await updatePrompt(key, updates);
+
+    res.json({
+      success: true,
+      message: 'Prompt updated successfully',
+      data: { prompt }
+    });
+  } catch (error) {
+    console.error('[Admin API] Error updating prompt:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to update prompt'
     });
   }
 });
