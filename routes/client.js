@@ -913,6 +913,16 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
     if (panchangData) {
       console.log('[Client API] Panchang data found in DB for date:', date);
       
+      // Daily nakshatra prediction is always for today (even when requesting another date)
+      const todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+      let dailyNakshatraPrediction = panchangData.dailyNakshatraPrediction;
+      if (date !== todayKey) {
+        const todayPanchang = await Panchang.findOne({ userId, dateKey: todayKey }).select('dailyNakshatraPrediction').lean();
+        if (todayPanchang?.dailyNakshatraPrediction) {
+          dailyNakshatraPrediction = todayPanchang.dailyNakshatraPrediction;
+        }
+      }
+
       // Enrich with numero daily prediction (lucky number, prediction for the day)
       let numeroDailyPrediction = null;
       const userName = user.profile?.name || user.profile?.firstName;
@@ -932,7 +942,7 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
         basicPanchang: panchangData.basicPanchang,
         advancedPanchang: panchangData.advancedPanchang,
         chaughadiyaMuhurta: panchangData.chaughadiyaMuhurta,
-        dailyNakshatraPrediction: panchangData.dailyNakshatraPrediction,
+        dailyNakshatraPrediction,
         numeroDailyPrediction, // lucky_number, prediction for the day from numerology
         lastCalculated: panchangData.lastCalculated,
         calculationSource: panchangData.calculationSource
@@ -1001,7 +1011,16 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
         numeroDailyPrediction = { missingFields: ['name'], message: 'Name is required for personalized daily numerology prediction' };
       }
 
-      const enrichedData = { ...fetchedPanchangData, numeroDailyPrediction };
+      // Daily nakshatra prediction is always for today
+      const todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+      let dailyNakshatraPrediction = fetchedPanchangData.dailyNakshatraPrediction;
+      if (date !== todayKey) {
+        const todayPanchang = await Panchang.findOne({ userId, dateKey: todayKey }).select('dailyNakshatraPrediction').lean();
+        if (todayPanchang?.dailyNakshatraPrediction) {
+          dailyNakshatraPrediction = todayPanchang.dailyNakshatraPrediction;
+        }
+      }
+      const enrichedData = { ...fetchedPanchangData, dailyNakshatraPrediction, numeroDailyPrediction };
 
       console.log('[Client API] Successfully auto-fetched and saved panchang for date:', date);
 
@@ -1161,6 +1180,16 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
     if (existingData) {
       console.log('[Client API] Panchang data already exists for date:', dateKey);
       
+      // Daily nakshatra prediction is always for today
+      const todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+      let dailyNakshatraPrediction = existingData.dailyNakshatraPrediction;
+      if (dateKey !== todayKey) {
+        const todayPanchang = await Panchang.findOne({ userId, dateKey: todayKey }).select('dailyNakshatraPrediction').lean();
+        if (todayPanchang?.dailyNakshatraPrediction) {
+          dailyNakshatraPrediction = todayPanchang.dailyNakshatraPrediction;
+        }
+      }
+
       // Enrich with numero daily prediction
       let numeroDailyPrediction;
       const userName = user.profile?.name || user.profile?.firstName;
@@ -1179,7 +1208,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
         basicPanchang: existingData.basicPanchang,
         advancedPanchang: existingData.advancedPanchang,
         chaughadiyaMuhurta: existingData.chaughadiyaMuhurta,
-        dailyNakshatraPrediction: existingData.dailyNakshatraPrediction,
+        dailyNakshatraPrediction,
         numeroDailyPrediction,
         lastCalculated: existingData.lastCalculated,
         calculationSource: existingData.calculationSource
@@ -1207,6 +1236,16 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       user.profile || null
     );
 
+    // Daily nakshatra prediction is always for today
+    const todayKey = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    let dailyNakshatraPrediction = panchangData.dailyNakshatraPrediction;
+    if (dateKey !== todayKey) {
+      const todayPanchang = await Panchang.findOne({ userId, dateKey: todayKey }).select('dailyNakshatraPrediction').lean();
+      if (todayPanchang?.dailyNakshatraPrediction) {
+        dailyNakshatraPrediction = todayPanchang.dailyNakshatraPrediction;
+      }
+    }
+
     // Enrich with numero daily prediction
     let numeroDailyPrediction;
     const userName = user.profile?.name || user.profile?.firstName;
@@ -1223,7 +1262,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       message: 'Panchang data fetched and saved successfully',
       source: 'api',
       dateRequested: dateKey,
-      data: { ...panchangData, numeroDailyPrediction }
+      data: { ...panchangData, dailyNakshatraPrediction, numeroDailyPrediction }
     });
 
   } catch (error) {
