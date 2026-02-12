@@ -7,7 +7,9 @@ import Remedy from '../models/Remedy.js';
 const REMEDY_ENDPOINTS = {
   puja: '/puja_suggestion',
   gemstone: '/basic_gem_suggestion',
-  rudraksha: '/rudraksha_suggestion'
+  rudraksha: '/rudraksha_suggestion',
+  // Sade Sati specific remedies (API: /sadhesati_remedies)
+  sadhesati: '/sadhesati_remedies'
 };
 
 class RemedyService {
@@ -92,7 +94,7 @@ class RemedyService {
   }
 
   /**
-   * Get remedies for a user (puja, gemstone, rudraksha)
+   * Get remedies for a user (puja, gemstone, rudraksha, sadhesati)
    * Caches in DB; uses cache unless forceRefresh is true.
    */
   async getRemedies(user, options = {}) {
@@ -110,16 +112,19 @@ class RemedyService {
       }
     }
 
-    const [pujaRes, gemRes, rudraRes] = await Promise.all([
+    const [pujaRes, gemRes, rudraRes, sadhesatiRes] = await Promise.all([
       this.fetchRemedy('puja', birthData),
       this.fetchRemedy('gemstone', birthData),
-      this.fetchRemedy('rudraksha', birthData)
+      this.fetchRemedy('rudraksha', birthData),
+      this.fetchRemedy('sadhesati', birthData)
     ]);
 
     const remedies = {
       puja: pujaRes.success ? pujaRes.data : { error: pujaRes.error },
       gemstone: gemRes.success ? gemRes.data : { error: gemRes.error },
-      rudraksha: rudraRes.success ? rudraRes.data : { error: rudraRes.error }
+      rudraksha: rudraRes.success ? rudraRes.data : { error: rudraRes.error },
+      // Sade Sati (7.5 years Saturn phase) remedies
+      sadhesati: sadhesatiRes.success ? sadhesatiRes.data : { error: sadhesatiRes.error }
     };
 
     if (userId) {
