@@ -86,12 +86,26 @@ const getUserStats = async (req, res) => {
       return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
     }, 0);
     
-    // Calculate karma points only from sessions (exclude bonus points)
-    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    // Calculate karma points breakdown
+    const totalKarmaFromActivities = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
     
-    // Get user details for profile info
+    // Get user details and bonus points
     const User = (await import('../models/User.js')).default;
-    const currentUser = await User.findById(userId).select('email profile.name profile.dob');
+    const KarmaPointsTransaction = (await import('../models/KarmaPointsTransaction.js')).default;
+    const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
+    
+    const currentUser = await User.findById(userId).select('email profile.name profile.dob karmaPoints');
+    
+    // Calculate bonus points from transactions
+    const bonusTransactions = await KarmaPointsTransaction.find({ userId });
+    const totalBonusPoints = bonusTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    
+    // Calculate spent points from redemptions
+    const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
+    const totalSpentPoints = redemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
+    
+    // Total karma = activities + bonus - spent
+    const totalKarmaPoints = Math.max(0, totalKarmaFromActivities + totalBonusPoints - totalSpentPoints);
     const averageCompletion = sessions.length > 0 ? 
       sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
     
@@ -127,6 +141,17 @@ const getUserStats = async (req, res) => {
       }
       categoryStats[category].karmaPoints += session.karmaPoints || 0;
     });
+    
+    // Add bonus and redemption stats to categoryStats
+    categoryStats.bonus = {
+      count: bonusTransactions.length,
+      totalBonusPoints: totalBonusPoints
+    };
+    
+    categoryStats.redemption = {
+      count: redemptions.length,
+      totalRedeemPoints: totalSpentPoints
+    };
     
     // Calculate average completion for each category
     Object.keys(categoryStats).forEach(category => {
@@ -238,6 +263,12 @@ const getUserStats = async (req, res) => {
         incomplete: incompleteSessions,
         minutes: totalMinutes,
         karmaPoints: totalKarmaPoints,
+        karmaPointsBreakdown: {
+          fromActivities: totalKarmaFromActivities,
+          bonus: totalBonusPoints,
+          spent: totalSpentPoints,
+          total: totalKarmaPoints
+        },
         streak: currentStreak,
         averageCompletion: Math.round(averageCompletion)
       },
@@ -306,7 +337,19 @@ const getAllUsersStats = async (req, res) => {
       return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
     }, 0);
     
-    const totalKarmaPoints = allSessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const totalKarmaFromActivities = allSessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    // Calculate bonus and spent points for all users
+    const KarmaPointsTransaction = (await import('../models/KarmaPointsTransaction.js')).default;
+    const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
+    
+    const allBonusTransactions = await KarmaPointsTransaction.find({});
+    const totalBonusPoints = allBonusTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    
+    const allRedemptions = await RewardRedemption.find({ status: 'completed' });
+    const totalSpentPoints = allRedemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
+    
+    const totalKarmaPoints = Math.max(0, totalKarmaFromActivities + totalBonusPoints - totalSpentPoints);
     const averageCompletion = allSessions.length > 0 ? 
       allSessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / allSessions.length : 0;
     
@@ -341,6 +384,17 @@ const getAllUsersStats = async (req, res) => {
       }
       categoryStats[category].karmaPoints += session.karmaPoints || 0;
     });
+    
+    // Add bonus and redemption stats to categoryStats
+    categoryStats.bonus = {
+      count: allBonusTransactions.length,
+      totalBonusPoints: totalBonusPoints
+    };
+    
+    categoryStats.redemption = {
+      count: allRedemptions.length,
+      totalRedeemPoints: totalSpentPoints
+    };
     
     // Calculate average completion for each category
     Object.keys(categoryStats).forEach(category => {
@@ -433,6 +487,12 @@ const getAllUsersStats = async (req, res) => {
         incomplete: incompleteSessions,
         minutes: totalMinutes,
         karmaPoints: totalKarmaPoints,
+        karmaPointsBreakdown: {
+          fromActivities: totalKarmaFromActivities,
+          bonus: totalBonusPoints,
+          spent: totalSpentPoints,
+          total: totalKarmaPoints
+        },
         streak: 0,
         averageCompletion: Math.round(averageCompletion)
       },
