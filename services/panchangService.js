@@ -54,10 +54,19 @@ class PanchangService {
     const d = new Date(dob);
     let hour = 12, min = 0;
     if (timeOfBirth) {
-      const parts = timeOfBirth.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-      if (parts) {
-        hour = parseInt(parts[1], 10);
-        min = parseInt(parts[2], 10);
+      const withAmPm = timeOfBirth.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+      if (withAmPm) {
+        hour = parseInt(withAmPm[1], 10);
+        min = parseInt(withAmPm[2], 10);
+        const ampm = (withAmPm[4] || '').toUpperCase();
+        if (ampm === 'PM' && hour !== 12) hour += 12;
+        if (ampm === 'AM' && hour === 12) hour = 0;
+      } else {
+        const parts = timeOfBirth.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+        if (parts) {
+          hour = parseInt(parts[1], 10);
+          min = parseInt(parts[2], 10);
+        }
       }
     }
     if (lat == null || lon == null || isNaN(parseFloat(lat)) || isNaN(parseFloat(lon))) return null;
@@ -75,21 +84,67 @@ class PanchangService {
   }
 
   /**
-   * Get list of missing birth fields needed for personalized nakshatra prediction
+   * Get list of missing birth fields needed for personalized nakshatra prediction.
+   * Uses resolvedProfile (after geocoding placeOfBirth if needed) so that having
+   * placeOfBirth string counts as place provided when geocoding succeeds.
    */
-  getMissingBirthFields(userProfile) {
+  getMissingBirthFields(userProfile, resolvedProfile = null) {
+    const profile = resolvedProfile || userProfile;
     const missing = [];
     if (!userProfile) {
       return ['dateOfBirth', 'timeOfBirth', 'placeOfBirth'];
     }
     if (!userProfile.dob || isNaN(new Date(userProfile.dob).getTime())) missing.push('dateOfBirth');
     if (!(userProfile.timeOfBirth || '').toString().trim()) missing.push('timeOfBirth');
-    const lat = userProfile.latitude;
-    const lon = userProfile.longitude;
+    const lat = profile?.latitude;
+    const lon = profile?.longitude;
     if (lat == null || lon == null || isNaN(parseFloat(lat)) || isNaN(parseFloat(lon))) {
       missing.push('placeOfBirth');
     }
     return missing;
+  }
+
+  /**
+   * Geocode a place name to coordinates using Google Geocoding API.
+   * Returns { latitude, longitude } or null if not configured or no result.
+   */
+  async geocodePlace(placeName) {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey || !(placeName && String(placeName).trim())) return null;
+    try {
+      const response = await axios.get(
+        `https://maps.googleapis.com/maps/api/geocode/json`,
+        {
+          params: { address: String(placeName).trim(), key: apiKey },
+          timeout: 10000
+        }
+      );
+      const data = response.data;
+      if (data.status !== 'OK' || !data.results?.length) return null;
+      const loc = data.results[0].geometry?.location;
+      if (!loc || typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return null;
+      return { latitude: loc.lat, longitude: loc.lng };
+    } catch (err) {
+      console.warn('[Panchang Service] Geocode failed for place:', placeName, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Resolve birth-place coordinates from profile. If profile has placeOfBirth string
+   * but no latitude/longitude, geocode and return profile with coordinates set.
+   * Caller should use returned profile for parseBirthRequestData / getMissingBirthFields.
+   */
+  async resolveBirthPlaceProfile(userProfile) {
+    if (!userProfile) return null;
+    const hasCoords = userProfile.latitude != null && userProfile.longitude != null &&
+      !isNaN(parseFloat(userProfile.latitude)) && !isNaN(parseFloat(userProfile.longitude));
+    if (hasCoords) return userProfile;
+    const place = (userProfile.placeOfBirth || '').toString().trim();
+    if (!place) return userProfile;
+    const coords = await this.geocodePlace(place);
+    if (!coords) return userProfile;
+    return { ...userProfile, latitude: coords.latitude, longitude: coords.longitude };
   }
 
   /**
@@ -125,14 +180,15 @@ class PanchangService {
       // Step 3: Prepare current date and location data for API
       const requestData = this.prepareRequestData(currentDate, latitude, longitude);
 
-      // Step 4: Fetch nakshatra only if birth data is complete; otherwise return missingFields
-      const birthData = this.parseBirthRequestData(userProfile);
+      // Step 4: Resolve birth place (geocode placeOfBirth if no lat/lon), then fetch nakshatra or return missingFields
+      const resolvedProfile = await this.resolveBirthPlaceProfile(userProfile);
+      const birthData = this.parseBirthRequestData(resolvedProfile);
       let nakshatraPredictionData;
       if (birthData) {
         nakshatraPredictionData = await this.fetchDailyNakshatraPrediction(birthData);
         console.log('[Panchang Service] Nakshatra prediction fetched with birth data');
       } else {
-        const missingFields = this.getMissingBirthFields(userProfile);
+        const missingFields = this.getMissingBirthFields(userProfile, resolvedProfile);
         nakshatraPredictionData = {
           missingFields,
           message: 'Birth details (dateOfBirth, timeOfBirth, placeOfBirth) are required for personalized daily nakshatra prediction'
