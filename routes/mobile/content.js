@@ -82,7 +82,19 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
     
     // Calculate comprehensive stats
     const totalSessions = sessions.length;
-    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const totalKarmaFromActivities = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    // Get bonus and spent points
+    const KarmaPointsTransaction = (await import('../../models/KarmaPointsTransaction.js')).default;
+    const RewardRedemption = (await import('../../models/RewardRedemption.js')).default;
+    
+    const bonusTransactions = await KarmaPointsTransaction.find({ userId });
+    const totalBonusPoints = bonusTransactions.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    
+    const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
+    const totalSpentPoints = redemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
+    
+    const totalKarmaPoints = Math.max(0, totalKarmaFromActivities + totalBonusPoints - totalSpentPoints);
     const completedSessions = sessions.filter(s => {
       const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
                             s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
@@ -143,6 +155,17 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
       }
       categoryStats[category].karmaPoints += session.karmaPoints || 0;
     });
+    
+    // Add bonus and redemption stats to categoryStats
+    categoryStats.bonus = {
+      count: bonusTransactions.length,
+      totalBonusPoints: totalBonusPoints
+    };
+    
+    categoryStats.redemption = {
+      count: redemptions.length,
+      totalRedeemPoints: totalSpentPoints
+    };
     
     // Get recent activities (last 10)
     const recentActivities = sessions.slice(0, 10).map(session => {
