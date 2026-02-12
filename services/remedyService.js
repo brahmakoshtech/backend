@@ -63,7 +63,6 @@ class RemedyService {
         minute = minute ?? 30;
       }
     }
-
     return {
       day: birthDate.getDate(),
       month: birthDate.getMonth() + 1,
