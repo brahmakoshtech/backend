@@ -178,16 +178,16 @@ const getUserStats = async (req, res) => {
         }
       }
       
-      // Generate presigned URLs if keys exist
-      let videoUrl = session.videoUrl || '';
-      let audioUrl = session.audioUrl || '';
+      // Generate presigned URLs with 7 days expiry (max allowed)
+      let videoUrl = '';
+      let audioUrl = '';
       
       try {
         if (session.videoKey) {
-          videoUrl = await getobject(session.videoKey, 3600);
+          videoUrl = await getobject(session.videoKey, 604800); // 7 days
         }
         if (session.audioKey) {
-          audioUrl = await getobject(session.audioKey, 3600);
+          audioUrl = await getobject(session.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for session:', session._id, error);
@@ -266,7 +266,6 @@ const getUserStats = async (req, res) => {
 // Get all users spiritual stats (for SpiritualManagement.jsx - client side)
 const getAllUsersStats = async (req, res) => {
   try {
-    // Check if user is authenticated
     if (!req.user || !req.user._id) {
       return res.status(401).json({
         success: false,
@@ -274,58 +273,42 @@ const getAllUsersStats = async (req, res) => {
       });
     }
 
-    // Show all users' sessions
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = 500;
     const { category } = req.query;
-    console.log('[All Users Stats] Getting stats for category:', category);
+    const skip = (page - 1) * limit;
     
-    // Query all users' sessions with proper category filtering
+    console.log('[All Users Stats] Page:', page, 'Limit:', limit, 'Category:', category);
+    
     let query = {};
     if (category && category !== 'all') {
       query.type = category;
-      console.log('[All Users Stats] Filtering by type:', category);
     }
     
-    let sessions = await SpiritualSession.find(query).sort({ createdAt: -1 });
-    console.log('[All Users Stats] Found sessions:', sessions.length, 'for query:', query);
+    let sessions = await SpiritualSession.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean();
+    const totalSessions = await SpiritualSession.countDocuments(query);
     
-    // Try to populate with User model first
-    try {
-      sessions = await SpiritualSession.populate(sessions, {
-        path: 'userId',
-        select: 'email profile.name profile.dob fullName'
-      });
-    } catch (error) {
-      // If User model fails, try Client model
-      try {
-        const Client = (await import('../models/Client.js')).default;
-        sessions = await SpiritualSession.populate(sessions, {
-          path: 'userId',
-          model: Client,
-          select: 'email fullName businessName'
-        });
-      } catch (clientError) {
-        console.log('Both User and Client model populate failed');
-      }
-    }
+    const allSessions = await SpiritualSession.find(query).select('status completionPercentage actualDuration karmaPoints type').lean();
     
-    // Calculate total stats
-    const totalSessions = sessions.length;
-    const completedSessions = sessions.filter(s => {
+    const completedSessions = allSessions.filter(s => {
       const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
                             s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
       return sessionStatus === 'completed';
     }).length;
-    const incompleteSessions = sessions.filter(s => {
+    
+    const incompleteSessions = allSessions.filter(s => {
       const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
                             s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
       return sessionStatus === 'incomplete';
     }).length;
-    const totalMinutes = sessions.reduce((sum, session) => {
+    
+    const totalMinutes = allSessions.reduce((sum, session) => {
       return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
     }, 0);
-    const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
-    const averageCompletion = sessions.length > 0 ? 
-      sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
+    
+    const totalKarmaPoints = allSessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    const averageCompletion = allSessions.length > 0 ? 
+      allSessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / allSessions.length : 0;
     
     // Calculate category-wise stats
     const categoryStats = {};
@@ -372,9 +355,28 @@ const getAllUsersStats = async (req, res) => {
       }
     });
     
-    // Get recent activities - all for the current category
-    const { getobject } = await import('../utils/s3.js');
-    const recentActivities = await Promise.all(sessions.slice(0, 50).map(async session => {
+    // Try to populate with User model first
+    try {
+      sessions = await SpiritualSession.populate(sessions, {
+        path: 'userId',
+        select: 'email profile.name profile.dob fullName'
+      });
+    } catch (error) {
+      // If User model fails, try Client model
+      try {
+        const Client = (await import('../models/Client.js')).default;
+        sessions = await SpiritualSession.populate(sessions, {
+          path: 'userId',
+          model: Client,
+          select: 'email fullName businessName'
+        });
+      } catch (clientError) {
+        console.log('Both User and Client model populate failed');
+      }
+    }
+    
+    // Return S3 keys instead of generating URLs
+    const recentActivities = sessions.map(session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -383,21 +385,6 @@ const getAllUsersStats = async (req, res) => {
         if (completionPercentage < 100) {
           status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
         }
-      }
-      
-      // Generate presigned URLs if keys exist
-      let videoUrl = session.videoUrl || '';
-      let audioUrl = session.audioUrl || '';
-      
-      try {
-        if (session.videoKey) {
-          videoUrl = await getobject(session.videoKey, 3600);
-        }
-        if (session.audioKey) {
-          audioUrl = await getobject(session.audioKey, 3600);
-        }
-      } catch (error) {
-        console.error('Error generating presigned URLs for session:', session._id, error);
       }
       
       let activityData = {
@@ -412,8 +399,10 @@ const getAllUsersStats = async (req, res) => {
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
         chantingName: session.chantingName,
-        videoUrl,
-        audioUrl,
+        videoKey: session.videoKey || '',
+        audioKey: session.audioKey || '',
+        videoUrl: session.videoUrl || '',
+        audioUrl: session.audioUrl || '',
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
           name: session.userId?.profile?.name || 
@@ -433,7 +422,7 @@ const getAllUsersStats = async (req, res) => {
       }
       
       return activityData;
-    }));
+    });
     
     console.log('[All Users Stats] Returning', recentActivities.length, 'activities for category:', category);
     
@@ -444,11 +433,18 @@ const getAllUsersStats = async (req, res) => {
         incomplete: incompleteSessions,
         minutes: totalMinutes,
         karmaPoints: totalKarmaPoints,
-        streak: 0, // Not applicable for all users
+        streak: 0,
         averageCompletion: Math.round(averageCompletion)
       },
       categoryStats,
       recentActivities,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(totalSessions / limit),
+        totalRecords: totalSessions,
+        limit: limit,
+        hasMore: skip + sessions.length < totalSessions
+      },
       userDetails: {
         email: 'All Users',
         name: 'All Users Data',
@@ -577,16 +573,16 @@ router.get('/user/:userId', async (req, res) => {
         }
       }
       
-      // Generate presigned URLs if keys exist
-      let videoUrl = session.videoUrl || '';
-      let audioUrl = session.audioUrl || '';
+      // Generate presigned URLs with 7 days expiry (max allowed)
+      let videoUrl = '';
+      let audioUrl = '';
       
       try {
         if (session.videoKey) {
-          videoUrl = await getobject(session.videoKey, 3600);
+          videoUrl = await getobject(session.videoKey, 604800); // 7 days
         }
         if (session.audioKey) {
-          audioUrl = await getobject(session.audioKey, 3600);
+          audioUrl = await getobject(session.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for session:', session._id, error);

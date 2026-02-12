@@ -68,10 +68,10 @@ router.get('/configuration/:configId', authenticate, async (req, res) => {
       try {
         // Generate presigned URLs for video and audio
         if (clipObj.videoKey) {
-          clipObj.videoUrl = await getobject(clipObj.videoKey, 3600); // 1 hour expiry
+          clipObj.videoUrl = await getobject(clipObj.videoKey, 604800); // 7 days
         }
         if (clipObj.audioKey) {
-          clipObj.audioUrl = await getobject(clipObj.audioKey, 3600); // 1 hour expiry
+          clipObj.audioUrl = await getobject(clipObj.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for clip:', clipObj._id, error);
@@ -129,10 +129,10 @@ router.get('/', authenticate, async (req, res) => {
       try {
         // Generate presigned URLs for video and audio
         if (clipObj.videoKey) {
-          clipObj.videoUrl = await getobject(clipObj.videoKey, 3600); // 1 hour expiry
+          clipObj.videoUrl = await getobject(clipObj.videoKey, 604800); // 7 days
         }
         if (clipObj.audioKey) {
-          clipObj.audioUrl = await getobject(clipObj.audioKey, 3600); // 1 hour expiry
+          clipObj.audioUrl = await getobject(clipObj.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for clip:', clipObj._id, error);
@@ -238,7 +238,7 @@ router.post('/direct', authenticate, async (req, res) => {
     
     if (clipObj.videoKey) {
       try {
-        clipObj.videoUrl = await getobject(clipObj.videoKey, 3600);
+        clipObj.videoUrl = await getobject(clipObj.videoKey, 604800);
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
       }
@@ -246,7 +246,7 @@ router.post('/direct', authenticate, async (req, res) => {
     
     if (clipObj.audioKey) {
       try {
-        clipObj.audioUrl = await getobject(clipObj.audioKey, 3600);
+        clipObj.audioUrl = await getobject(clipObj.audioKey, 604800);
       } catch (error) {
         console.error('Error generating audio presigned URL:', error);
       }
@@ -315,7 +315,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     
     if (clipObj.videoKey) {
       try {
-        clipObj.videoUrl = await getobject(clipObj.videoKey, 3600);
+        clipObj.videoUrl = await getobject(clipObj.videoKey, 604800);
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
       }
@@ -323,7 +323,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     
     if (clipObj.audioKey) {
       try {
-        clipObj.audioUrl = await getobject(clipObj.audioKey, 3600);
+        clipObj.audioUrl = await getobject(clipObj.audioKey, 604800);
       } catch (error) {
         console.error('Error generating audio presigned URL:', error);
       }
@@ -544,10 +544,10 @@ router.put('/:id', authenticate, upload.fields([{ name: 'video', maxCount: 1 }, 
     try {
       // Generate presigned URLs for video and audio
       if (clipObj.videoKey) {
-        clipObj.videoUrl = await getobject(clipObj.videoKey, 3600); // 1 hour expiry
+        clipObj.videoUrl = await getobject(clipObj.videoKey, 604800); // 7 days
       }
       if (clipObj.audioKey) {
-        clipObj.audioUrl = await getobject(clipObj.audioKey, 3600); // 1 hour expiry
+        clipObj.audioUrl = await getobject(clipObj.audioKey, 604800); // 7 days
       }
     } catch (error) {
       console.error('Error generating presigned URLs for clip:', clipObj._id, error);
@@ -686,10 +686,10 @@ router.get('/:id', authenticate, async (req, res) => {
     try {
       // Generate presigned URLs for video and audio
       if (clipObj.videoKey) {
-        clipObj.videoUrl = await getobject(clipObj.videoKey, 3600); // 1 hour expiry
+        clipObj.videoUrl = await getobject(clipObj.videoKey, 604800); // 7 days
       }
       if (clipObj.audioKey) {
-        clipObj.audioUrl = await getobject(clipObj.audioKey, 3600); // 1 hour expiry
+        clipObj.audioUrl = await getobject(clipObj.audioKey, 604800); // 7 days
       }
     } catch (error) {
       console.error('Error generating presigned URLs for clip:', clipObj._id, error);
