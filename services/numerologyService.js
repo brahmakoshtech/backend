@@ -126,7 +126,7 @@ class NumerologyService {
    * Get daily prediction only (changes daily - cached per user per date)
    * Returns { missingFields, message } when userName is missing instead of generic/default data
    */
-  async getDailyPredictionOnly(userId, dateInput, userName, forceRefresh = false) {
+  async getDailyPredictionOnly(userId, dateInput, userName, forceRefresh = true) {
     const trimmedName = (userName || '').toString().trim();
     if (!trimmedName) {
       return {
