@@ -94,7 +94,7 @@ class NumerologyService {
    * Get or create numeroReport + numeroTable (static - based on name + DOB, fetch ONCE per user)
    * Returns null if userDob not provided
    */
-  async getNumerologyStaticData(userId, userName, userDob, forceRefresh = true) {
+  async getNumerologyStaticData(userId, userName, userDob, forceRefresh = false) {
     if (!userDob) return null;
 
     const { day, month, year } = this.extractDateComponents(userDob);
@@ -123,10 +123,11 @@ class NumerologyService {
   }
 
   /**
-   * Get daily prediction only (changes daily - cached per user per date)
-   * Returns { missingFields, message } when userName is missing instead of generic/default data
+   * Get daily prediction only (changes daily - cached per user per prediction date)
+   * API is called with user DOB (day, month, year) + name; result is cached by prediction date (dateInput).
+   * Returns { missingFields, message } when name or userDob is missing.
    */
-  async getDailyPredictionOnly(userId, dateInput, userName, forceRefresh = true) {
+  async getDailyPredictionOnly(userId, dateInput, userName, userDob, forceRefresh = false) {
     const trimmedName = (userName || '').toString().trim();
     if (!trimmedName) {
       return {
@@ -138,22 +139,35 @@ class NumerologyService {
       };
     }
 
-    const { day, month, year } = this.extractDateComponents(dateInput);
-    const normalizedDate = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    if (!userDob || isNaN(new Date(userDob).getTime())) {
+      return {
+        source: 'missing',
+        data: {
+          missingFields: ['dateOfBirth'],
+          message: 'Date of birth is required for personalized daily numerology prediction'
+        }
+      };
+    }
+
+    // Cache key: prediction date (e.g. today) so we store "prediction for this day"
+    const { day: pdDay, month: pdMonth, year: pdYear } = this.extractDateComponents(dateInput);
+    const normalizedDate = new Date(Date.UTC(pdYear, pdMonth - 1, pdDay, 0, 0, 0, 0));
 
     if (!forceRefresh) {
-      const existing = await Numerology.findOne({ userId, day, month, year }).lean();
+      const existing = await Numerology.findOne({ userId, day: pdDay, month: pdMonth, year: pdYear }).lean();
       if (existing?.dailyPrediction) {
         return { source: 'database', data: existing.dailyPrediction };
       }
     }
 
-    console.log('[Numerology Service] Fetching daily prediction for date:', `${year}-${month}-${day}`);
-    const dailyPrediction = await this.callNumeroAPI('/numero_prediction/daily', day, month, year, trimmedName);
+    // API call: send DOB (day, month, year) + name, not prediction date
+    const { day: dobDay, month: dobMonth, year: dobYear } = this.extractDateComponents(userDob);
+    console.log('[Numerology Service] Fetching daily prediction with DOB:', `${dobYear}-${dobMonth}-${dobDay}`);
+    const dailyPrediction = await this.callNumeroAPI('/numero_prediction/daily', dobDay, dobMonth, dobYear, trimmedName);
 
     await Numerology.findOneAndUpdate(
-      { userId, day, month, year },
-      { userId, date: normalizedDate, day, month, year, name: userName, dailyPrediction },
+      { userId, day: pdDay, month: pdMonth, year: pdYear },
+      { userId, date: normalizedDate, day: pdDay, month: pdMonth, year: pdYear, name: userName, dailyPrediction },
       { upsert: true, new: true }
     );
 
@@ -174,8 +188,8 @@ class NumerologyService {
         staticResult = await this.getNumerologyStaticData(userId, userName, userDob, forceRefresh);
       }
 
-      // 2. Get daily prediction - uses request date, cached per date
-      const dailyResult = await this.getDailyPredictionOnly(userId, dateInput, userName, forceRefresh);
+      // 2. Get daily prediction - API called with DOB + name; cached per prediction date (dateInput)
+      const dailyResult = await this.getDailyPredictionOnly(userId, dateInput, userName, userDob, forceRefresh);
 
       const combined = staticResult?.data
         ? { ...staticResult.data, dailyPrediction: dailyResult.data }

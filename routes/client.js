@@ -928,7 +928,7 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
       const userName = user.profile?.name || user.profile?.firstName;
       if (userName) {
         try {
-          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName);
+          const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName, user.profile?.dob);
           numeroDailyPrediction = numeroResult.data; // lucky_number, prediction, etc.
         } catch (e) {
           console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
@@ -1004,7 +1004,7 @@ router.get('/users/:userId/panchang', authenticate, authorize('client', 'admin',
       let numeroDailyPrediction;
       const userName = user.profile?.name || user.profile?.firstName;
       try {
-        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName || '');
+        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, date, userName || '', user.profile?.dob);
         numeroDailyPrediction = numeroResult.data;
       } catch (e) {
         console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
@@ -1194,7 +1194,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
       let numeroDailyPrediction;
       const userName = user.profile?.name || user.profile?.firstName;
       try {
-        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName || '');
+        const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName || '', user.profile?.dob);
         numeroDailyPrediction = numeroResult.data;
       } catch (e) {
         console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
@@ -1250,7 +1250,7 @@ router.post('/users/:userId/panchang', authenticate, authorize('client', 'admin'
     let numeroDailyPrediction;
     const userName = user.profile?.name || user.profile?.firstName;
     try {
-      const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName || '');
+      const numeroResult = await numerologyService.getDailyPredictionOnly(userId, dateKey, userName || '', user.profile?.dob);
       numeroDailyPrediction = numeroResult.data;
     } catch (e) {
       console.warn('[Client API] Could not fetch numero daily prediction:', e.message);
