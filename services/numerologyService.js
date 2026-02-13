@@ -94,7 +94,7 @@ class NumerologyService {
    * Get or create numeroReport + numeroTable (static - based on name + DOB, fetch ONCE per user)
    * Returns null if userDob not provided
    */
-  async getNumerologyStaticData(userId, userName, userDob, forceRefresh = false) {
+  async getNumerologyStaticData(userId, userName, userDob, forceRefresh = true) {
     if (!userDob) return null;
 
     const { day, month, year } = this.extractDateComponents(userDob);
