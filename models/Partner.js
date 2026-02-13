@@ -235,7 +235,7 @@ const partnerSchema = new mongoose.Schema({
   },
   maxConversations: {
     type: Number,
-    default: 5 // Maximum concurrent conversations
+    default: 10 // Maximum concurrent conversations
   },
   totalConversations: {
     type: Number,
