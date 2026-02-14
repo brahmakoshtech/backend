@@ -30,7 +30,7 @@ router.get('/', async (req, res) => {
       .sort({ sortOrder: 1, createdAt: -1 })
       .lean();
     
-    // Generate presigned URLs for thumbnails
+    // Generate presigned URLs for thumbnails, audio, and video
     const pujasWithSignedUrls = await Promise.all(
       pujas.map(async (puja) => {
         if (puja.thumbnailKey) {
@@ -49,6 +49,25 @@ router.get('/', async (req, res) => {
             console.error(`Error extracting key from URL:`, error);
           }
         }
+        
+        // Generate presigned URL for audio
+        if (puja.audioKey) {
+          try {
+            puja.audioUrl = await getobject(puja.audioKey);
+          } catch (error) {
+            console.error(`Error generating presigned URL for audio ${puja.audioKey}:`, error);
+          }
+        }
+        
+        // Generate presigned URL for video
+        if (puja.videoKey) {
+          try {
+            puja.videoUrl = await getobject(puja.videoKey);
+          } catch (error) {
+            console.error(`Error generating presigned URL for video ${puja.videoKey}:`, error);
+          }
+        }
+        
         return puja;
       })
     );
@@ -84,6 +103,24 @@ router.get('/:id', async (req, res) => {
         puja.thumbnailUrl = await getobject(key);
       } catch (error) {
         console.error(`Error extracting key from URL:`, error);
+      }
+    }
+    
+    // Generate presigned URL for audio
+    if (puja.audioKey) {
+      try {
+        puja.audioUrl = await getobject(puja.audioKey);
+      } catch (error) {
+        console.error(`Error generating presigned URL for audio ${puja.audioKey}:`, error);
+      }
+    }
+    
+    // Generate presigned URL for video
+    if (puja.videoKey) {
+      try {
+        puja.videoUrl = await getobject(puja.videoKey);
+      } catch (error) {
+        console.error(`Error generating presigned URL for video ${puja.videoKey}:`, error);
       }
     }
     
@@ -160,6 +197,13 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'clientId is required' });
     }
     
+    // Auto-generate sortOrder if not provided
+    let finalSortOrder = sortOrder ? Number(sortOrder) : 0;
+    if (!sortOrder) {
+      const maxSortOrder = await PujaPadhati.findOne({ clientId }).sort({ sortOrder: -1 }).select('sortOrder');
+      finalSortOrder = maxSortOrder ? maxSortOrder.sortOrder + 1 : 1;
+    }
+    
     const puja = new PujaPadhati({
       pujaName,
       category,
@@ -182,7 +226,7 @@ router.post('/', async (req, res) => {
       videoKey,
       clientId,
       status: status || 'Active',
-      sortOrder: sortOrder ? Number(sortOrder) : 0
+      sortOrder: finalSortOrder
     });
     
     await puja.save();

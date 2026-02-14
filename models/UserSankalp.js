@@ -58,6 +58,13 @@ const userSankalpSchema = new mongoose.Schema({
     required: true,
     min: 1
   },
+  customDays: {
+    type: Number,
+    min: 1
+  },
+  reminderTime: {
+    type: String
+  },
   dailyReports: [dailyReportSchema],
   karmaEarned: {
     type: Number,

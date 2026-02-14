@@ -441,8 +441,9 @@ const getAllUsersStats = async (req, res) => {
       }
     }
     
-    // Return S3 keys instead of generating URLs
-    const recentActivities = sessions.map(session => {
+    // Generate presigned URLs for video/audio
+    const { getobject } = await import('../utils/s3.js');
+    const recentActivities = await Promise.all(sessions.map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -451,6 +452,21 @@ const getAllUsersStats = async (req, res) => {
         if (completionPercentage < 100) {
           status = completionPercentage >= 50 ? 'incomplete' : 'interrupted';
         }
+      }
+      
+      // Generate presigned URLs with 7 days expiry
+      let videoUrl = session.videoUrl || '';
+      let audioUrl = session.audioUrl || '';
+      
+      try {
+        if (session.videoKey) {
+          videoUrl = await getobject(session.videoKey, 604800); // 7 days
+        }
+        if (session.audioKey) {
+          audioUrl = await getobject(session.audioKey, 604800); // 7 days
+        }
+      } catch (error) {
+        console.error('Error generating presigned URLs for session:', session._id, error);
       }
       
       let activityData = {
@@ -465,10 +481,8 @@ const getAllUsersStats = async (req, res) => {
         isActive: session.isActive !== undefined ? session.isActive : true,
         createdAt: session.createdAt,
         chantingName: session.chantingName,
-        videoKey: session.videoKey || '',
-        audioKey: session.audioKey || '',
-        videoUrl: session.videoUrl || '',
-        audioUrl: session.audioUrl || '',
+        videoUrl,
+        audioUrl,
         userDetails: {
           email: session.userId?.email || `No-Email-${session._id}`,
           name: session.userId?.profile?.name || 
@@ -488,7 +502,7 @@ const getAllUsersStats = async (req, res) => {
       }
       
       return activityData;
-    });
+    }));
     
     console.log('[All Users Stats] Returning', recentActivities.length, 'activities for category:', category);
     
