@@ -7,10 +7,59 @@ import notificationService from '../services/notificationService.js';
 
 const router = express.Router();
 
+// GET /api/user-sankalp - Get all user sankalpas (same as my-sankalpas)
+router.get('/', authenticate, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { status } = req.query;
+
+    const query = { userId };
+    if (status) query.status = status;
+
+    const userSankalpas = await UserSankalp.find(query)
+      .populate({ path: 'sankalpId', populate: { path: 'clientId', select: 'clientId' } })
+      .populate({ path: 'clientId', select: 'clientId' })
+      .sort({ createdAt: -1 });
+
+    const { getobject } = await import('../utils/s3.js');
+    const sankalpasWithUrls = await Promise.all(
+      userSankalpas.map(async (us) => {
+        const obj = us.toObject();
+        if (obj.sankalpId?.bannerImageKey || obj.sankalpId?.bannerImage) {
+          try {
+            const imageKey = obj.sankalpId.bannerImageKey || obj.sankalpId.bannerImage;
+            if (imageKey) {
+              obj.sankalpId.bannerImage = await getobject(imageKey);
+            }
+          } catch (error) {
+            console.error('Error generating presigned URL:', error);
+          }
+        }
+        if (obj.clientId && typeof obj.clientId === 'object' && obj.clientId.clientId) {
+          obj.clientId = obj.clientId.clientId;
+        }
+        if (obj.sankalpId?.clientId && typeof obj.sankalpId.clientId === 'object' && obj.sankalpId.clientId.clientId) {
+          obj.sankalpId.clientId = obj.sankalpId.clientId.clientId;
+        }
+        return obj;
+      })
+    );
+
+    res.json({
+      success: true,
+      data: sankalpasWithUrls,
+      count: sankalpasWithUrls.length
+    });
+  } catch (error) {
+    console.error('Error fetching sankalpas:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch sankalpas', error: error.message });
+  }
+});
+
 // POST /api/user-sankalp/join - Join a sankalp
 router.post('/join', authenticate, async (req, res) => {
   try {
-    const { sankalpId } = req.body;
+    const { sankalpId, customDays, reminderTime } = req.body;
     const userId = req.user._id;
 
     if (!sankalpId) {
@@ -29,14 +78,17 @@ router.post('/join', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Already joined this sankalp' });
     }
 
+    // Use custom days if provided, otherwise use sankalp's default
+    const totalDays = customDays || sankalp.totalDays;
+
     // Calculate end date
     const startDate = new Date();
     const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + sankalp.totalDays);
+    endDate.setDate(endDate.getDate() + totalDays);
 
     // Initialize daily reports
     const dailyReports = [];
-    for (let i = 0; i < sankalp.totalDays; i++) {
+    for (let i = 0; i < totalDays; i++) {
       const reportDate = new Date(startDate);
       reportDate.setDate(reportDate.getDate() + i);
       dailyReports.push({
@@ -53,7 +105,9 @@ router.post('/join', authenticate, async (req, res) => {
       clientId: sankalp.clientId,
       startDate,
       endDate,
-      totalDays: sankalp.totalDays,
+      totalDays,
+      customDays: customDays || undefined,
+      reminderTime: reminderTime || undefined,
       dailyReports
     });
 
