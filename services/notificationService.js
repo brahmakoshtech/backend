@@ -90,8 +90,8 @@ class NotificationService {
       }
 
       if (user?.mobile) {
-        await sendSMS(user.mobile, `🙏 Reminder: Complete your ${sankalpTitle} practice today!`);
-        await sendWhatsApp(user.mobile, `🙏 Reminder: Complete your ${sankalpTitle} practice today!`);
+        await sendSMS(user.mobile, `🙏 Daily Reminder: Don't forget to complete your sankalp today. Stay committed!`);
+        await sendWhatsApp(user.mobile, `🙏 Daily Reminder: Don't forget to complete your sankalp today. Stay committed!`);
       }
 
       return notification;
@@ -160,8 +160,8 @@ class NotificationService {
       }
 
       if (user?.mobile) {
-        await sendSMS(user.mobile, `🎉 Congratulations! You completed ${sankalpTitle} and earned ${karmaEarned} karma points!`);
-        await sendWhatsApp(user.mobile, `🎉 Congratulations! You completed ${sankalpTitle} and earned ${karmaEarned} karma points!`);
+        await sendSMS(user.mobile, `🎉 Sankalp completed! You earned ${karmaEarned} karma points. Keep up the great work!`);
+        await sendWhatsApp(user.mobile, `🎉 Sankalp completed! You earned ${karmaEarned} karma points. Keep up the great work!`);
       }
 
       return notification;

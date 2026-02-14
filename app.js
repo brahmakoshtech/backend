@@ -52,6 +52,7 @@ import shlokaRoutes from './routes/shlokas.js';
 import sankalpRoutes from './routes/sankalp.js';
 import userSankalpRoutes from './routes/userSankalp.js';
 import notificationRoutes from './routes/notifications.js';
+import pujaPadhatiRoutes from './routes/pujaPadhati.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -173,6 +174,7 @@ app.use('/api/shlokas', shlokaRoutes);
 app.use('/api/sankalp', sankalpRoutes);
 app.use('/api/user-sankalp', userSankalpRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/puja-padhati', pujaPadhatiRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

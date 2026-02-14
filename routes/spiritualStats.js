@@ -93,8 +93,18 @@ const getUserStats = async (req, res) => {
     const User = (await import('../models/User.js')).default;
     const KarmaPointsTransaction = (await import('../models/KarmaPointsTransaction.js')).default;
     const RewardRedemption = (await import('../models/RewardRedemption.js')).default;
+    const UserSankalp = (await import('../models/UserSankalp.js')).default;
     
     const currentUser = await User.findById(userId).select('email profile.name profile.dob karmaPoints');
+    
+    // Use User.karmaPoints as source of truth (already includes activities + sankalp + bonus - spent)
+    const totalKarmaPoints = currentUser?.karmaPoints || 0;
+    
+    // Calculate sankalp karma points for breakdown only
+    const userSankalpas = await UserSankalp.find({ userId });
+    const totalSankalpKarma = userSankalpas.reduce((sum, us) => {
+      return sum + (us.karmaEarned || 0) + (us.completionBonusEarned || 0);
+    }, 0);
     
     // Calculate bonus points from transactions
     const bonusTransactions = await KarmaPointsTransaction.find({ userId });
@@ -103,9 +113,6 @@ const getUserStats = async (req, res) => {
     // Calculate spent points from redemptions
     const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
     const totalSpentPoints = redemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
-    
-    // Total karma = activities + bonus - spent
-    const totalKarmaPoints = Math.max(0, totalKarmaFromActivities + totalBonusPoints - totalSpentPoints);
     const averageCompletion = sessions.length > 0 ? 
       sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
     
@@ -192,7 +199,7 @@ const getUserStats = async (req, res) => {
     
     // Get recent activities based on role
     const { getobject } = await import('../utils/s3.js');
-    const recentActivities = await Promise.all(sessions.slice(0, 20).map(async session => {
+    const recentActivities = await Promise.all(sessions.map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -255,6 +262,10 @@ const getUserStats = async (req, res) => {
       return activityData;
     }));
     
+    // Apply limit after processing
+    const limit = parseInt(req.query.limit) || 500;
+    const limitedActivities = recentActivities.slice(0, limit);
+    
     // User details already fetched above as currentUser
     const stats = {
       totalStats: {
@@ -265,6 +276,7 @@ const getUserStats = async (req, res) => {
         karmaPoints: totalKarmaPoints,
         karmaPointsBreakdown: {
           fromActivities: totalKarmaFromActivities,
+          fromSankalp: totalSankalpKarma,
           bonus: totalBonusPoints,
           spent: totalSpentPoints,
           total: totalKarmaPoints
@@ -273,7 +285,7 @@ const getUserStats = async (req, res) => {
         averageCompletion: Math.round(averageCompletion)
       },
       categoryStats,
-      recentActivities,
+      recentActivities: limitedActivities,
       userDetails: {
         email: currentUser?.email || 'Unknown',
         name: currentUser?.profile?.name || 'Unknown User',

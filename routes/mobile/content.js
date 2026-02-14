@@ -80,6 +80,13 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
     // Get user spiritual stats
     const sessions = await SpiritualSession.find({ userId }).sort({ createdAt: -1 });
     
+    // Get User model for karmaPoints
+    const User = (await import('../../models/User.js')).default;
+    const currentUser = await User.findById(userId).select('karmaPoints');
+    
+    // Use User.karmaPoints as source of truth (includes activities + sankalp + bonus - spent)
+    const totalKarmaPoints = currentUser?.karmaPoints || 0;
+    
     // Calculate comprehensive stats
     const totalSessions = sessions.length;
     const totalKarmaFromActivities = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
@@ -93,8 +100,6 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
     
     const redemptions = await RewardRedemption.find({ userId, status: 'completed' });
     const totalSpentPoints = redemptions.reduce((sum, r) => sum + (r.karmaPointsSpent || 0), 0);
-    
-    const totalKarmaPoints = Math.max(0, totalKarmaFromActivities + totalBonusPoints - totalSpentPoints);
     const completedSessions = sessions.filter(s => {
       const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
                             s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');

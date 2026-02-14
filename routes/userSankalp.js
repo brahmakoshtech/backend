@@ -23,8 +23,8 @@ router.post('/join', authenticate, async (req, res) => {
       return res.status(404).json({ success: false, message: 'Sankalp not found' });
     }
 
-    // Check if already joined
-    const existing = await UserSankalp.findOne({ userId, sankalpId, status: 'active' });
+    // Check if already joined (any status - user can only join once)
+    const existing = await UserSankalp.findOne({ userId, sankalpId });
     if (existing) {
       return res.status(400).json({ success: false, message: 'Already joined this sankalp' });
     }
@@ -63,7 +63,10 @@ router.post('/join', authenticate, async (req, res) => {
     await Sankalp.findByIdAndUpdate(sankalpId, { $inc: { participantsCount: 1 } });
 
     // Populate and format response
-    const populated = await userSankalp.populate(['sankalpId', 'clientId']);
+    const populated = await userSankalp.populate([
+      { path: 'sankalpId', populate: { path: 'clientId', select: 'clientId' } },
+      { path: 'clientId', select: 'clientId' }
+    ]);
     const response = populated.toObject();
     
     // Generate presigned URL for banner
@@ -76,9 +79,14 @@ router.post('/join', authenticate, async (req, res) => {
       }
     }
     
-    // Format clientId
-    if (response.clientId?._id) {
-      response.clientId = response.clientId.clientId; // Get CLI-KBHUMT format
+    // Format root clientId
+    if (response.clientId && typeof response.clientId === 'object' && response.clientId.clientId) {
+      response.clientId = response.clientId.clientId;
+    }
+    
+    // Format nested sankalpId.clientId
+    if (response.sankalpId?.clientId && typeof response.sankalpId.clientId === 'object' && response.sankalpId.clientId.clientId) {
+      response.sankalpId.clientId = response.sankalpId.clientId.clientId;
     }
 
     res.status(201).json({
@@ -88,7 +96,7 @@ router.post('/join', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Error joining sankalp:', error);
-    res.status(500).json({ success: false, message: 'Failed to join sankalp', error: error.message });
+    res.status(500).json({ success: false, message: 'Already joined this sankalp', error: error.message });
   }
 });
 
@@ -102,7 +110,8 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
     if (status) query.status = status;
 
     const userSankalpas = await UserSankalp.find(query)
-      .populate('sankalpId')
+      .populate({ path: 'sankalpId', populate: { path: 'clientId', select: 'clientId' } })
+      .populate({ path: 'clientId', select: 'clientId' })
       .sort({ createdAt: -1 });
 
     // Generate presigned URLs for banners
@@ -120,13 +129,13 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
             console.error('Error generating presigned URL:', error);
           }
         }
-        // Format clientId to CLI-KBHUMT format
-        if (obj.clientId) {
-          const client = await import('../models/Client.js').then(m => m.default);
-          const clientDoc = await client.findById(obj.clientId);
-          if (clientDoc?.clientId) {
-            obj.clientId = clientDoc.clientId;
-          }
+        // Format root clientId
+        if (obj.clientId && typeof obj.clientId === 'object' && obj.clientId.clientId) {
+          obj.clientId = obj.clientId.clientId;
+        }
+        // Format nested sankalpId.clientId
+        if (obj.sankalpId?.clientId && typeof obj.sankalpId.clientId === 'object' && obj.sankalpId.clientId.clientId) {
+          obj.sankalpId.clientId = obj.sankalpId.clientId.clientId;
         }
         return obj;
       })
@@ -148,7 +157,8 @@ router.get('/:id', authenticate, async (req, res) => {
   try {
     const userId = req.user._id;
     const userSankalp = await UserSankalp.findOne({ _id: req.params.id, userId })
-      .populate('sankalpId');
+      .populate({ path: 'sankalpId', populate: { path: 'clientId', select: 'clientId' } })
+      .populate({ path: 'clientId', select: 'clientId' });
 
     if (!userSankalp) {
       return res.status(404).json({ success: false, message: 'User sankalp not found' });
@@ -169,13 +179,14 @@ router.get('/:id', authenticate, async (req, res) => {
       }
     }
     
-    // Format clientId to CLI-KBHUMT format
-    if (obj.clientId) {
-      const Client = await import('../models/Client.js').then(m => m.default);
-      const clientDoc = await Client.findById(obj.clientId);
-      if (clientDoc?.clientId) {
-        obj.clientId = clientDoc.clientId;
-      }
+    // Format root clientId
+    if (obj.clientId && typeof obj.clientId === 'object' && obj.clientId.clientId) {
+      obj.clientId = obj.clientId.clientId;
+    }
+    
+    // Format nested sankalpId.clientId
+    if (obj.sankalpId?.clientId && typeof obj.sankalpId.clientId === 'object' && obj.sankalpId.clientId.clientId) {
+      obj.sankalpId.clientId = obj.sankalpId.clientId.clientId;
     }
 
     res.json({ success: true, data: obj });
@@ -317,7 +328,8 @@ router.get('/:id/progress', authenticate, async (req, res) => {
   try {
     const userId = req.user._id;
     const userSankalp = await UserSankalp.findOne({ _id: req.params.id, userId })
-      .populate('sankalpId');
+      .populate({ path: 'sankalpId', populate: { path: 'clientId', select: 'clientId' } })
+      .populate({ path: 'clientId', select: 'clientId' });
 
     if (!userSankalp) {
       return res.status(404).json({ success: false, message: 'User sankalp not found' });
@@ -335,13 +347,14 @@ router.get('/:id/progress', authenticate, async (req, res) => {
       }
     }
     
-    // Format clientId
-    if (obj.clientId) {
-      const Client = await import('../models/Client.js').then(m => m.default);
-      const clientDoc = await Client.findById(obj.clientId);
-      if (clientDoc?.clientId) {
-        obj.clientId = clientDoc.clientId;
-      }
+    // Format root clientId
+    if (obj.clientId && typeof obj.clientId === 'object' && obj.clientId.clientId) {
+      obj.clientId = obj.clientId.clientId;
+    }
+    
+    // Format nested sankalpId.clientId
+    if (obj.sankalpId?.clientId && typeof obj.sankalpId.clientId === 'object' && obj.sankalpId.clientId.clientId) {
+      obj.sankalpId.clientId = obj.sankalpId.clientId.clientId;
     }
 
     const yesCount = obj.dailyReports.filter(r => r.status === 'yes').length;
@@ -401,13 +414,14 @@ router.get('/check-joined/:sankalpId', authenticate, async (req, res) => {
     const userId = req.user._id;
     const { sankalpId } = req.params;
 
-    const userSankalp = await UserSankalp.findOne({ userId, sankalpId, status: 'active' });
+    const userSankalp = await UserSankalp.findOne({ userId, sankalpId });
 
     res.json({
       success: true,
       data: {
         isJoined: !!userSankalp,
-        userSankalpId: userSankalp?._id
+        userSankalpId: userSankalp?._id,
+        status: userSankalp?.status
       }
     });
   } catch (error) {

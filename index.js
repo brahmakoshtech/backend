@@ -1,6 +1,7 @@
 // Entry point for the application
 import server from './app.js';
 import dotenv from 'dotenv';
+import './services/cronJobs.js';
 
 dotenv.config();
 
