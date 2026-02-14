@@ -798,15 +798,54 @@ router.get('/conversations/:conversationId/messages', authenticate, async (req, 
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
-      .populate('senderId', 'name email profilePicture profile')
+      .populate('senderId', 'name email profilePicture profile profileImage')
       .lean();
 
     const totalMessages = await Message.countDocuments({ conversationId, isDeleted: false });
 
     console.log(`✅ Found ${messages.length} messages (total: ${totalMessages})`);
 
+    // Replace S3 keys with presigned URLs for sender profile images
+    const messagesWithPresignedUrls = await Promise.all(
+      messages.map(async (message) => {
+        const sender = message.senderId;
+        if (!sender) return message;
+        
+        const updatedMessage = { ...message, senderId: { ...sender } };
+        const senderData = updatedMessage.senderId;
+        
+        // Partner: profilePicture may be S3 key — use presigned URL so client can show image
+        if (senderData.profilePicture && !senderData.profilePicture.startsWith('http')) {
+          try {
+            const url = await getobject(senderData.profilePicture);
+            senderData.profilePictureUrl = url;
+            senderData.profilePicture = url;
+          } catch (err) {
+            console.error('Error presigned URL for sender profilePicture:', err);
+          }
+        } else if (senderData.profilePicture && senderData.profilePicture.startsWith('http')) {
+          senderData.profilePictureUrl = senderData.profilePicture;
+        }
+        
+        // User: profileImage may be S3 key — use presigned URL so client can show image
+        if (senderData.profileImage && !senderData.profileImage.startsWith('http')) {
+          try {
+            const url = await getobject(senderData.profileImage);
+            senderData.profileImageUrl = url;
+            senderData.profileImage = url;
+          } catch (err) {
+            console.error('Error presigned URL for sender profileImage:', err);
+          }
+        } else if (senderData.profileImage && senderData.profileImage.startsWith('http')) {
+          senderData.profileImageUrl = senderData.profileImage;
+        }
+        
+        return updatedMessage;
+      })
+    );
+
     const responseData = {
-      messages: messages.reverse(),
+      messages: messagesWithPresignedUrls.reverse(),
       conversationStatus: conversation.status,
       isAccepted: conversation.isAcceptedByPartner,
       userAstrology: isPartner ? conversation.userAstrologyData : null,
