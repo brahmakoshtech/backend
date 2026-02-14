@@ -645,7 +645,6 @@ router.post('/partner/requests/:conversationId/reject', authenticate, async (req
 });
 
 // ==================== CONVERSATIONS LIST ====================
-
 // @route   GET /api/chat/conversations
 // @desc    Get all conversations (accepted/active) for logged-in user/partner
 // @access  Private
