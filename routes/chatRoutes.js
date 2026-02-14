@@ -689,7 +689,7 @@ router.get('/conversations', authenticate, async (req, res) => {
           try {
             const url = await getobject(otherUser.profilePicture);
             otherUser.profilePictureUrl = url;
-            otherUser.profilePicture = url; // so img src works without frontend change
+            otherUser.profilePicture = url;
           } catch (err) {
             console.error('Error presigned URL for partner profilePicture:', err);
           }
@@ -701,7 +701,7 @@ router.get('/conversations', authenticate, async (req, res) => {
           try {
             const url = await getobject(otherUser.profileImage);
             otherUser.profileImageUrl = url;
-            otherUser.profileImage = url; // so img src works without frontend change
+            otherUser.profileImage = url;
           } catch (err) {
             console.error('Error presigned URL for user profileImage:', err);
           }
@@ -712,9 +712,26 @@ router.get('/conversations', authenticate, async (req, res) => {
       })
     );
 
+    // Return only fields needed for conversation list (remove heavy/unnecessary payload)
+    const slimData = conversationsWithPresignedUrls.map((conv) => ({
+      _id: conv._id,
+      conversationId: conv.conversationId,
+      status: conv.status,
+      isAcceptedByPartner: conv.isAcceptedByPartner,
+      acceptedAt: conv.acceptedAt,
+      lastMessage: conv.lastMessage,
+      lastMessageAt: conv.lastMessageAt,
+      unreadCount: conv.unreadCount,
+      otherUser: conv.otherUser,
+      userAstrology: conv.userAstrology,
+      startedAt: conv.startedAt,
+      endedAt: conv.endedAt,
+      createdAt: conv.createdAt
+    }));
+
     res.json({
       success: true,
-      data: conversationsWithPresignedUrls
+      data: slimData
     });
   } catch (error) {
     console.error('❌ Error fetching conversations:', error.message);
