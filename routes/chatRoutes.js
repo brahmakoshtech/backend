@@ -13,6 +13,7 @@ import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
+import { getobject } from '../utils/s3.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
@@ -676,9 +677,45 @@ router.get('/conversations', authenticate, async (req, res) => {
       userAstrology: isPartner ? conv.userAstrologyData : null
     }));
 
+    // Replace S3 keys with presigned URLs for otherUser profile images (bucket is private)
+    const conversationsWithPresignedUrls = await Promise.all(
+      conversationsData.map(async (conv) => {
+        const other = conv.otherUser;
+        if (!other) return conv;
+        const updated = { ...conv, otherUser: other ? { ...other } : other };
+        const otherUser = updated.otherUser;
+        if (!otherUser) return updated;
+        // Partner: profilePicture may be S3 key — use presigned URL so client can show image
+        if (otherUser.profilePicture && !otherUser.profilePicture.startsWith('http')) {
+          try {
+            const url = await getobject(otherUser.profilePicture);
+            otherUser.profilePictureUrl = url;
+            otherUser.profilePicture = url; // so img src works without frontend change
+          } catch (err) {
+            console.error('Error presigned URL for partner profilePicture:', err);
+          }
+        } else if (otherUser.profilePicture && otherUser.profilePicture.startsWith('http')) {
+          otherUser.profilePictureUrl = otherUser.profilePicture;
+        }
+        // User: profileImage may be S3 key — use presigned URL so client can show image
+        if (otherUser.profileImage && !otherUser.profileImage.startsWith('http')) {
+          try {
+            const url = await getobject(otherUser.profileImage);
+            otherUser.profileImageUrl = url;
+            otherUser.profileImage = url; // so img src works without frontend change
+          } catch (err) {
+            console.error('Error presigned URL for user profileImage:', err);
+          }
+        } else if (otherUser.profileImage && otherUser.profileImage.startsWith('http')) {
+          otherUser.profileImageUrl = otherUser.profileImage;
+        }
+        return updated;
+      })
+    );
+
     res.json({
       success: true,
-      data: conversationsData
+      data: conversationsWithPresignedUrls
     });
   } catch (error) {
     console.error('❌ Error fetching conversations:', error.message);
