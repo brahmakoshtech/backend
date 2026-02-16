@@ -426,6 +426,11 @@ router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_a
       }
     }
 
+    const birthFieldsChanged = profile && (
+      profile.dob !== undefined || profile.timeOfBirth !== undefined ||
+      profile.latitude !== undefined || profile.longitude !== undefined
+    );
+
     if (profile) {
       user.profile = { ...user.profile, ...profile };
     }
@@ -434,6 +439,22 @@ router.put('/users/:userId', authenticate, authorize('client', 'admin', 'super_a
     }
 
     await user.save();
+
+    // Refresh astrology data when birth details are updated
+    if (birthFieldsChanged) {
+      const userWithLoc = await User.findById(userId).select('profile liveLocation').lean();
+      const profileWithLocation = {
+        ...userWithLoc?.profile,
+        latitude: userWithLoc?.liveLocation?.latitude ?? userWithLoc?.profile?.latitude,
+        longitude: userWithLoc?.liveLocation?.longitude ?? userWithLoc?.profile?.longitude
+      };
+      if (profileWithLocation.dob && profileWithLocation.timeOfBirth &&
+          profileWithLocation.latitude != null && profileWithLocation.longitude != null) {
+        astrologyService.refreshAstrologyData(userId, profileWithLocation)
+          .then(() => console.log('[Client API] Astrology data refreshed after profile update'))
+          .catch(err => console.warn('[Client API] Astrology refresh failed:', err.message));
+      }
+    }
 
     const updatedUser = await User.findById(userId)
       .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')
@@ -521,6 +542,20 @@ router.put('/users/:userId/live-location', authenticate, authorize('client', 'ad
     };
 
     await user.save();
+
+    // Refresh astrology when live location changes (used for coords if profile has none)
+    const userWithLoc = await User.findById(userId).select('profile liveLocation').lean();
+    const profileWithLocation = {
+      ...userWithLoc?.profile,
+      latitude: userWithLoc?.liveLocation?.latitude ?? userWithLoc?.profile?.latitude,
+      longitude: userWithLoc?.liveLocation?.longitude ?? userWithLoc?.profile?.longitude
+    };
+    if (profileWithLocation.dob && profileWithLocation.timeOfBirth &&
+        profileWithLocation.latitude != null && profileWithLocation.longitude != null) {
+      astrologyService.refreshAstrologyData(userId, profileWithLocation)
+        .then(() => console.log('[Client API] Astrology data refreshed after live-location update'))
+        .catch(err => console.warn('[Client API] Astrology refresh failed:', err.message));
+    }
 
     const updatedUser = await User.findById(userId)
       .select('-password -emailOtp -emailOtpExpiry -mobileOtp -mobileOtpExpiry')

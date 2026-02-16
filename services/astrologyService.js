@@ -50,13 +50,14 @@ class AstrologyService {
       // Step 3: Prepare birth data for API
       const birthData = this.prepareBirthData(profile);
 
-      // Step 4: Fetch data from all 4 API endpoints in parallel
-      console.log('[Astrology Service] Fetching from 4 API endpoints...');
-      const [birthDetailsData, astroDetailsData, planetsData, planetsExtendedData] = await Promise.all([
+      // Step 4: Fetch data from core 4 API endpoints + extended astrology APIs
+      console.log('[Astrology Service] Fetching from core + extended API endpoints...');
+      const [birthDetailsData, astroDetailsData, planetsData, planetsExtendedData, extendedData] = await Promise.all([
         this.fetchBirthDetails(birthData),
         this.fetchAstroDetails(birthData),
         this.fetchPlanets(birthData),
-        this.fetchPlanetsExtended(birthData)
+        this.fetchPlanetsExtended(birthData),
+        this.fetchAllExtendedAstrologyData(birthData)
       ]);
 
       console.log('[Astrology Service] All API calls completed successfully');
@@ -68,7 +69,8 @@ class AstrologyService {
         birthDetailsData,
         astroDetailsData,
         planetsData,
-        planetsExtendedData
+        planetsExtendedData,
+        extendedData
       );
 
       // Step 6: Save to database
@@ -201,9 +203,233 @@ class AstrologyService {
   }
 
   /**
-   * Process and structure astrology data from all 4 API responses
+   * Fetch additional astrology APIs (non-blocking - failures don't break main flow)
    */
-  processAstrologyData(userId, profile, birthDetailsData, astroDetailsData, planetsData, planetsExtendedData) {
+  async fetchGhatChakra(birthData) {
+    try {
+      const response = await this.apiClient.post('/ghat_chakra', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] ghat_chakra error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchAyanamsha(birthData) {
+    try {
+      const response = await this.apiClient.post('/ayanamsha', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] ayanamsha error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchBhavMadhya(birthData) {
+    try {
+      const response = await this.apiClient.post('/bhav_madhya', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] bhav_madhya error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchPlanetNature(birthData) {
+    try {
+      const response = await this.apiClient.post('/planet_nature', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] planet_nature error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchPanchadaMaitri(birthData) {
+    try {
+      const response = await this.apiClient.post('/panchada_maitri', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] panchada_maitri error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchPlanetAshtak(birthData, planetName) {
+    try {
+      const response = await this.apiClient.post(`/planet_ashtak/${planetName}`, birthData);
+      return response.data;
+    } catch (error) {
+      console.warn(`[Astrology Service] planet_ashtak/${planetName} error:`, error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchSarvashtak(birthData) {
+    try {
+      const response = await this.apiClient.post('/sarvashtak', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] sarvashtak error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchCurrentVdasha(birthData) {
+    try {
+      const response = await this.apiClient.post('/current_vdasha', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] current_vdasha error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchCurrentVdashaAll(birthData) {
+    try {
+      const response = await this.apiClient.post('/current_vdasha_all', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] current_vdasha_all error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchMajorVdasha(birthData) {
+    try {
+      const response = await this.apiClient.post('/major_vdasha', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] major_vdasha error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchCurrentChardasha(birthData) {
+    try {
+      const response = await this.apiClient.post('/current_chardasha', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] current_chardasha error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchMajorChardasha(birthData) {
+    try {
+      const response = await this.apiClient.post('/major_chardasha', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] major_chardasha error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchCurrentYoginiDasha(birthData) {
+    try {
+      const response = await this.apiClient.post('/current_yogini_dasha', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] current_yogini_dasha error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchSadhesatiLifeDetails(birthData) {
+    try {
+      const response = await this.apiClient.post('/sadhesati_life_details', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] sadhesati_life_details error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchPitraDoshaReport(birthData) {
+    try {
+      const response = await this.apiClient.post('/pitra_dosha_report', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] pitra_dosha_report error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async fetchGemstoneSuggestion(birthData) {
+    try {
+      const response = await this.apiClient.post('/basic_gem_suggestion', birthData);
+      return response.data;
+    } catch (error) {
+      console.warn('[Astrology Service] basic_gem_suggestion error:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch all extended astrology data (runs in parallel, individual failures don't break flow)
+   */
+  async fetchAllExtendedAstrologyData(birthData) {
+    const planets = ['sun', 'moon', 'mars', 'mercury', 'jupiter', 'venus', 'saturn', 'rahu', 'ketu'];
+    const planetAshtakPromises = planets.map(p => this.fetchPlanetAshtak(birthData, p).then(data => ({ planet: p, data })));
+
+    const [
+      ghatChakra,
+      ayanamsha,
+      bhavMadhya,
+      planetNature,
+      panchadaMaitri,
+      ...planetAshtakResults
+    ] = await Promise.all([
+      this.fetchGhatChakra(birthData),
+      this.fetchAyanamsha(birthData),
+      this.fetchBhavMadhya(birthData),
+      this.fetchPlanetNature(birthData),
+      this.fetchPanchadaMaitri(birthData),
+      ...planetAshtakPromises
+    ]);
+
+    const [sarvashtak, currentVdasha, currentVdashaAll, majorVdasha, currentChardasha, majorChardasha, currentYoginiDasha, sadhesatiLifeDetails, pitraDoshaReport, gemstoneSuggestion] = await Promise.all([
+      this.fetchSarvashtak(birthData),
+      this.fetchCurrentVdasha(birthData),
+      this.fetchCurrentVdashaAll(birthData),
+      this.fetchMajorVdasha(birthData),
+      this.fetchCurrentChardasha(birthData),
+      this.fetchMajorChardasha(birthData),
+      this.fetchCurrentYoginiDasha(birthData),
+      this.fetchSadhesatiLifeDetails(birthData),
+      this.fetchPitraDoshaReport(birthData),
+      this.fetchGemstoneSuggestion(birthData)
+    ]);
+
+    const planetAshtak = {};
+    planetAshtakResults.forEach(({ planet, data }) => {
+      if (data) planetAshtak[planet] = data;
+    });
+
+    return {
+      ghatChakra,
+      ayanamsha,
+      bhavMadhya,
+      planetNature,
+      panchadaMaitri,
+      planetAshtak: Object.keys(planetAshtak).length ? planetAshtak : null,
+      sarvashtak,
+      currentVdasha,
+      currentVdashaAll,
+      majorVdasha,
+      currentChardasha,
+      majorChardasha,
+      currentYoginiDasha,
+      sadhesatiLifeDetails,
+      pitraDoshaReport,
+      gemstoneSuggestion
+    };
+  }
+
+  /**
+   * Process and structure astrology data from all API responses
+   */
+  processAstrologyData(userId, profile, birthDetailsData, astroDetailsData, planetsData, planetsExtendedData, extendedData = {}) {
     const birthDate = new Date(profile.dob);
     
     // Parse time - handle both "4:45 AM" and "04:45" formats
@@ -273,6 +499,23 @@ class AstrologyService {
       planetsExtended: this.normalizePlanetsExtended(planetsExtendedData),
       birthChart: this.generateBirthChart(planetsData),
       birthExtendedChart: this.generateBirthChart(planetsExtendedData),
+      // Extended astrology data
+      ghatChakra: extendedData?.ghatChakra || null,
+      ayanamsha: extendedData?.ayanamsha || null,
+      bhavMadhya: extendedData?.bhavMadhya || null,
+      planetNature: extendedData?.planetNature || null,
+      panchadaMaitri: extendedData?.panchadaMaitri || null,
+      planetAshtak: extendedData?.planetAshtak || null,
+      sarvashtak: extendedData?.sarvashtak || null,
+      currentVdasha: extendedData?.currentVdasha || null,
+      currentVdashaAll: extendedData?.currentVdashaAll || null,
+      majorVdasha: extendedData?.majorVdasha || null,
+      currentChardasha: extendedData?.currentChardasha || null,
+      majorChardasha: extendedData?.majorChardasha || null,
+      currentYoginiDasha: extendedData?.currentYoginiDasha || null,
+      sadhesatiLifeDetails: extendedData?.sadhesatiLifeDetails || null,
+      pitraDoshaReport: extendedData?.pitraDoshaReport || null,
+      gemstoneSuggestion: extendedData?.gemstoneSuggestion || null,
       lastCalculated: new Date(),
       calculationSource: 'api'
     };
@@ -386,6 +629,23 @@ class AstrologyService {
       birthExtendedChart: {
         houses: formatHouses(obj.birthExtendedChart?.houses)
       },
+      // Extended astrology data
+      ghatChakra: obj.ghatChakra,
+      ayanamsha: obj.ayanamsha,
+      bhavMadhya: obj.bhavMadhya,
+      planetNature: obj.planetNature,
+      panchadaMaitri: obj.panchadaMaitri,
+      planetAshtak: obj.planetAshtak,
+      sarvashtak: obj.sarvashtak,
+      currentVdasha: obj.currentVdasha,
+      currentVdashaAll: obj.currentVdashaAll,
+      majorVdasha: obj.majorVdasha,
+      currentChardasha: obj.currentChardasha,
+      majorChardasha: obj.majorChardasha,
+      currentYoginiDasha: obj.currentYoginiDasha,
+      sadhesatiLifeDetails: obj.sadhesatiLifeDetails,
+      pitraDoshaReport: obj.pitraDoshaReport,
+      gemstoneSuggestion: obj.gemstoneSuggestion,
       lastCalculated: obj.lastCalculated,
       calculationSource: obj.calculationSource
     };

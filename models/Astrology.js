@@ -82,6 +82,23 @@ const astrologySchema = new mongoose.Schema({
       of: [String]
     }
   },
+  // Extended astrology data from additional API endpoints
+  ghatChakra: { type: mongoose.Schema.Types.Mixed },
+  ayanamsha: { type: mongoose.Schema.Types.Mixed },
+  bhavMadhya: { type: mongoose.Schema.Types.Mixed },
+  planetNature: { type: mongoose.Schema.Types.Mixed },
+  panchadaMaitri: { type: mongoose.Schema.Types.Mixed },
+  planetAshtak: { type: mongoose.Schema.Types.Mixed }, // Per-planet ashtakvarga
+  sarvashtak: { type: mongoose.Schema.Types.Mixed },
+  currentVdasha: { type: mongoose.Schema.Types.Mixed },
+  currentVdashaAll: { type: mongoose.Schema.Types.Mixed },
+  majorVdasha: { type: mongoose.Schema.Types.Mixed },
+  currentChardasha: { type: mongoose.Schema.Types.Mixed },
+  majorChardasha: { type: mongoose.Schema.Types.Mixed },
+  currentYoginiDasha: { type: mongoose.Schema.Types.Mixed },
+  sadhesatiLifeDetails: { type: mongoose.Schema.Types.Mixed },
+  pitraDoshaReport: { type: mongoose.Schema.Types.Mixed },
+  gemstoneSuggestion: { type: mongoose.Schema.Types.Mixed },
   // Metadata for tracking
   lastCalculated: {
     type: Date,

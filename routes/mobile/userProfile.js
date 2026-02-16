@@ -6,6 +6,7 @@ import User from '../../models/User.js';
 import { OAuth2Client } from 'google-auth-library';
 import Client from '../../models/Client.js';
 import { generateToken, authenticate } from '../../middleware/auth.js';
+import astrologyService from '../../services/astrologyService.js';
 import {
   generateOTP,
   getOTPExpiry,
@@ -873,6 +874,14 @@ router.post('/register/step3', async (req, res) => {
     user.isActive = true;
     await user.save();
 
+    // Pre-fetch astrology data when profile has full birth details
+    if (user.profile?.dob && user.profile?.timeOfBirth &&
+        user.profile?.latitude != null && user.profile?.longitude != null) {
+      astrologyService.refreshAstrologyData(user._id, user.profile)
+        .then(() => console.log('[UserProfile] Astrology data prefetched on registration complete'))
+        .catch(err => console.warn('[UserProfile] Astrology prefetch failed:', err.message));
+    }
+
     // Generate JWT token
     const token = generateToken(user._id, 'user', user.clientId);
 
@@ -1320,6 +1329,26 @@ router.put('/profile', authenticate, async (req, res) => {
     }
 
     await user.save();
+
+    // Refresh astrology data when birth details are updated
+    const birthFieldsUpdated = req.body.dob || req.body.timeOfBirth ||
+      req.body.latitude !== undefined || req.body.longitude !== undefined ||
+      (req.body.profile && (req.body.profile.dob || req.body.profile.timeOfBirth ||
+        req.body.profile.latitude !== undefined || req.body.profile.longitude !== undefined));
+    if (birthFieldsUpdated) {
+      const userWithLoc = await User.findById(user._id).select('profile liveLocation').lean();
+      const profileWithLocation = {
+        ...userWithLoc?.profile,
+        latitude: userWithLoc?.liveLocation?.latitude ?? userWithLoc?.profile?.latitude,
+        longitude: userWithLoc?.liveLocation?.longitude ?? userWithLoc?.profile?.longitude
+      };
+      if (profileWithLocation.dob && profileWithLocation.timeOfBirth &&
+          profileWithLocation.latitude != null && profileWithLocation.longitude != null) {
+        astrologyService.refreshAstrologyData(user._id, profileWithLocation)
+          .then(() => console.log('[UserProfile] Astrology data refreshed after profile update'))
+          .catch(err => console.warn('[UserProfile] Astrology refresh failed:', err.message));
+      }
+    }
 
     const token = generateToken(user._id, 'user', user.clientId);
 
@@ -1812,6 +1841,20 @@ router.post('/get-location', authenticate, async (req, res) => {
     };
 
     await user.save();
+
+    // Refresh astrology when live location changes
+    const userWithLoc = await User.findById(user._id).select('profile liveLocation').lean();
+    const profileWithLocation = {
+      ...userWithLoc?.profile,
+      latitude: userWithLoc?.liveLocation?.latitude ?? userWithLoc?.profile?.latitude,
+      longitude: userWithLoc?.liveLocation?.longitude ?? userWithLoc?.profile?.longitude
+    };
+    if (profileWithLocation.dob && profileWithLocation.timeOfBirth &&
+        profileWithLocation.latitude != null && profileWithLocation.longitude != null) {
+      astrologyService.refreshAstrologyData(user._id, profileWithLocation)
+        .then(() => console.log('[UserProfile] Astrology data refreshed after get-location'))
+        .catch(err => console.warn('[UserProfile] Astrology refresh failed:', err.message));
+    }
 
     console.log(`Live location saved for user ${user._id}:`, {
       lat,
