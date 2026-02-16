@@ -53,6 +53,8 @@ import sankalpRoutes from './routes/sankalp.js';
 import userSankalpRoutes from './routes/userSankalp.js';
 import notificationRoutes from './routes/notifications.js';
 import pujaPadhatiRoutes from './routes/pujaPadhati.js';
+import swapnaDecoderRoutes from './routes/swapnaDecoder.js';
+import dreamRequestRoutes from './routes/dreamRequest.js';
 
 // ============ NEW: Import Chat Routes ============
 import partnerUserChatRoutes from './routes/chatRoutes.js';
@@ -175,6 +177,8 @@ app.use('/api/sankalp', sankalpRoutes);
 app.use('/api/user-sankalp', userSankalpRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/puja-padhati', pujaPadhatiRoutes);
+app.use('/api/swapna-decoder', swapnaDecoderRoutes);
+app.use('/api/dream-requests', dreamRequestRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -3,10 +3,12 @@ import axios from 'axios';
 
 // Brevo Email Service
 const sendEmail = async (to, subject, htmlContent) => {
-  if (!process.env.USE_BREVO || !process.env.BREVO_API_KEY) return;
+  if (!process.env.USE_BREVO || !process.env.BREVO_API_KEY) {
+    return;
+  }
   
   try {
-    await axios.post('https://api.brevo.com/v3/smtp/email', {
+    const response = await axios.post('https://api.brevo.com/v3/smtp/email', {
       sender: { name: process.env.BREVO_FROM_NAME, email: process.env.BREVO_FROM_EMAIL },
       to: [{ email: to }],
       subject,
@@ -17,9 +19,9 @@ const sendEmail = async (to, subject, htmlContent) => {
         'Content-Type': 'application/json'
       }
     });
-    console.log('✅ Email sent to:', to);
   } catch (error) {
-    console.error('❌ Email error:', error.response?.data || error.message);
+    console.error('[Email] Error:', error.response?.data || error.message);
+    throw error;
   }
 };
 
@@ -236,6 +238,92 @@ class NotificationService {
       return true;
     } catch (error) {
       console.error('Error marking all as read:', error);
+      throw error;
+    }
+  }
+
+  // ============ DREAM REQUEST NOTIFICATIONS ============
+  
+  // Send dream request received confirmation
+  async sendDreamRequestReceived(userEmail, userName, dreamSymbol) {
+    try {
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="margin: 0; font-size: 28px;">✅ Request Received!</h1>
+          </div>
+          <div style="background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px;">
+            <p>Dear ${userName || 'User'},</p>
+            <p>Thank you for your dream request. We have received your request for:</p>
+            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981;">
+              <h3 style="margin: 0 0 10px 0; color: #10b981;">Dream Symbol</h3>
+              <p style="font-size: 18px; font-weight: 600; margin: 0;">${dreamSymbol}</p>
+            </div>
+            <p>Our team will review your request and add the dream meaning to our database soon.</p>
+            <p><strong>What happens next?</strong></p>
+            <ul>
+              <li>📝 Our experts will research the dream meaning</li>
+              <li>✍️ We'll add detailed interpretation with Vedic insights</li>
+              <li>📧 You'll receive an email when it's ready</li>
+              <li>🔍 You can then search and view the meaning</li>
+            </ul>
+            <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+              We typically process requests within 24-48 hours. Thank you for your patience!
+            </p>
+          </div>
+          <div style="text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px;">
+            <p>© ${new Date().getFullYear()} Brahmakosh. All rights reserved.</p>
+          </div>
+        </div>
+      `;
+
+      await sendEmail(userEmail, `✅ Dream Request Received - ${dreamSymbol}`, htmlContent);
+      console.log('✅ Dream request confirmation sent to:', userEmail);
+    } catch (error) {
+      console.error('Error sending dream request confirmation:', error);
+    }
+  }
+
+  // Send dream ready notification
+  async sendDreamReady(userEmail, userName, dreamSymbol, dreamUrl) {
+    try {
+      const htmlContent = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <div style="background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="margin: 0; font-size: 28px;">🌙 Dream Meaning Ready!</h1>
+          </div>
+          <div style="background: #f9fafb; padding: 30px; border-radius: 0 0 10px 10px;">
+            <p>Dear ${userName || 'User'},</p>
+            <p>Great news! The dream meaning you requested is now available in our database.</p>
+            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #6366f1;">
+              <h3 style="margin: 0 0 10px 0; color: #6366f1;">Dream Symbol</h3>
+              <p style="font-size: 18px; font-weight: 600; margin: 0;">${dreamSymbol}</p>
+            </div>
+            <p>You can now search for "<strong>${dreamSymbol}</strong>" in the Swapna Decoder to view:</p>
+            <ul>
+              <li>✅ Detailed interpretation</li>
+              <li>✅ Positive & negative aspects</li>
+              <li>✅ Vedic references</li>
+              <li>✅ Astrological significance</li>
+              <li>✅ Remedies & mantras</li>
+            </ul>
+            <div style="text-align: center; margin: 20px 0;">
+              <a href="${dreamUrl || 'https://brahmakosh.com/swapna-decoder'}" style="display: inline-block; background: #6366f1; color: white; padding: 12px 30px; text-decoration: none; border-radius: 8px; font-weight: 600;">View Dream Meaning</a>
+            </div>
+            <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+              Thank you for using Brahmakosh Swapna Decoder. We hope this helps you understand your dreams better.
+            </p>
+          </div>
+          <div style="text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px;">
+            <p>© ${new Date().getFullYear()} Brahmakosh. All rights reserved.</p>
+            <p>Decode your dreams with Vedic wisdom</p>
+          </div>
+        </div>
+      `;
+
+      await sendEmail(userEmail, `🌙 Your Dream "${dreamSymbol}" is Ready!`, htmlContent);
+    } catch (error) {
+      console.error('[NotificationService] Error sending dream ready notification:', error);
       throw error;
     }
   }
