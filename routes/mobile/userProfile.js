@@ -1242,12 +1242,43 @@ router.get('/profile', authenticate, async (req, res) => {
 
     const token = generateToken(user._id, 'user', user.clientId);
 
+    // Calculate benchmark data
+    const karmaPoints = user.karmaPoints || 0;
+    
+    // Helper function to get benchmark tier
+    const getBenchmarkTier = (points) => {
+      if (points >= 25000) return { name: 'Platinum', icon: '💎', min: 25000, max: null };
+      if (points >= 12000) return { name: 'Gold', icon: '🏆', min: 12000, max: 24999 };
+      if (points >= 5000) return { name: 'Silver', icon: '🥈', min: 5000, max: 11999 };
+      if (points >= 1000) return { name: 'Bronze', icon: '🥉', min: 1000, max: 4999 };
+      return { name: 'Beginner', icon: '🌿', min: 0, max: 999 };
+    };
+
+    const currentTier = getBenchmarkTier(karmaPoints);
+    const nextTier = currentTier.max ? getBenchmarkTier(currentTier.max + 1) : null;
+    
+    let progress = 100;
+    let pointsToNext = 0;
+    
+    if (nextTier) {
+      const range = currentTier.max - currentTier.min + 1;
+      const earned = karmaPoints - currentTier.min;
+      progress = Math.min(100, (earned / range) * 100);
+      pointsToNext = nextTier.min - karmaPoints;
+    }
+
     res.json({
       success: true,
       message: 'Profile retrieved successfully',
       data: {
         user: { ...userData, role: 'user' },
-        token
+        token,
+        benchmark: {
+          current: currentTier,
+          next: nextTier,
+          progress: Math.round(progress * 10) / 10,
+          pointsToNext: pointsToNext
+        }
       }
     });
   } catch (error) {

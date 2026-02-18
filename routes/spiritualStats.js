@@ -583,7 +583,6 @@ router.get('/user/:userId', async (req, res) => {
     }
     
     // Calculate stats for this specific user
-    const totalSessions = sessions.length;
     const completedSessions = sessions.filter(s => {
       const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
                             s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
@@ -594,12 +593,24 @@ router.get('/user/:userId', async (req, res) => {
                             s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
       return sessionStatus === 'incomplete';
     }).length;
+    const interruptedSessions = sessions.filter(s => {
+      const sessionStatus = s.status || (s.completionPercentage >= 100 ? 'completed' : 
+                            s.completionPercentage >= 50 ? 'incomplete' : 'interrupted');
+      return sessionStatus === 'interrupted';
+    }).length;
+    const totalSessions = completedSessions + incompleteSessions + interruptedSessions;
     const totalMinutes = sessions.reduce((sum, session) => {
       return sum + (session.type !== 'chanting' ? (session.actualDuration || 0) : 0);
     }, 0);
     const totalKarmaPoints = sessions.reduce((sum, session) => sum + (session.karmaPoints || 0), 0);
+    
+    // Calculate average completion for all sessions
     const averageCompletion = sessions.length > 0 ? 
-      sessions.reduce((sum, session) => sum + (session.completionPercentage || 100), 0) / sessions.length : 0;
+      sessions.reduce((sum, session) => {
+        const sessionCompletion = session.completionPercentage !== undefined ? session.completionPercentage :
+                                 (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
+        return sum + sessionCompletion;
+      }, 0) / sessions.length : 0;
     
     // Calculate category-wise stats for this user
     const categoryStats = {};
@@ -648,7 +659,7 @@ router.get('/user/:userId', async (req, res) => {
     
     // Get recent activities for this user
     const { getobject } = await import('../utils/s3.js');
-    const recentActivities = await Promise.all(sessions.slice(0, 20).map(async session => {
+    const recentActivities = await Promise.all(sessions.map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
       
@@ -712,6 +723,7 @@ router.get('/user/:userId', async (req, res) => {
         sessions: totalSessions,
         completed: completedSessions,
         incomplete: incompleteSessions,
+        interrupted: interruptedSessions,
         minutes: totalMinutes,
         karmaPoints: totalKarmaPoints,
         averageCompletion: Math.round(averageCompletion)
