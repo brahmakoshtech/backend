@@ -84,16 +84,32 @@ class NotificationService {
       await notification.save();
 
       if (user?.email) {
-        await sendEmail(
-          user.email,
-          '🙏 Daily Sankalp Reminder',
-          `<h2>Time to practice!</h2><p>Don't forget to complete your <strong>${sankalpTitle}</strong> today!</p>`
-        );
+        try {
+          await sendEmail(
+            user.email,
+            '🙏 Daily Sankalp Reminder',
+            `<h2>Time to practice!</h2><p>Don't forget to complete your <strong>${sankalpTitle}</strong> today!</p>`
+          );
+          console.log('✅ Email sent to:', user.email);
+        } catch (error) {
+          console.error('❌ Email error:', error.message);
+        }
       }
 
       if (user?.mobile) {
-        await sendSMS(user.mobile, `🙏 Daily Reminder: Don't forget to complete your sankalp today. Stay committed!`);
-        await sendWhatsApp(user.mobile, `🙏 Daily Reminder: Don't forget to complete your sankalp today. Stay committed!`);
+        console.log('📱 User mobile:', user.mobile);
+        try {
+          await sendSMS(user.mobile, `🙏 Daily Reminder: Don't forget to complete your "${sankalpTitle}" today. Stay committed!`);
+        } catch (error) {
+          console.error('❌ SMS error:', error.message);
+        }
+        try {
+          await sendWhatsApp(user.mobile, `🙏 Daily Reminder: Don't forget to complete your "${sankalpTitle}" today. Stay committed!`);
+        } catch (error) {
+          console.error('❌ WhatsApp error:', error.message);
+        }
+      } else {
+        console.log('⚠️ No mobile number for user:', userId);
       }
 
       return notification;

@@ -25,6 +25,12 @@ router.get('/', authenticate, async (req, res) => {
     const sankalpasWithUrls = await Promise.all(
       userSankalpas.map(async (us) => {
         const obj = us.toObject();
+        
+        // Skip if sankalp was deleted
+        if (!obj.sankalpId) {
+          return null;
+        }
+        
         if (obj.sankalpId?.bannerImageKey || obj.sankalpId?.bannerImage) {
           try {
             const imageKey = obj.sankalpId.bannerImageKey || obj.sankalpId.bannerImage;
@@ -45,10 +51,13 @@ router.get('/', authenticate, async (req, res) => {
       })
     );
 
+    // Filter out null entries (deleted sankalpas)
+    const validSankalpas = sankalpasWithUrls.filter(s => s !== null);
+
     res.json({
       success: true,
-      data: sankalpasWithUrls,
-      count: sankalpasWithUrls.length
+      data: validSankalpas,
+      count: validSankalpas.length
     });
   } catch (error) {
     console.error('Error fetching sankalpas:', error);
@@ -66,6 +75,11 @@ router.post('/join', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Sankalp ID required' });
     }
 
+    // Validate custom days
+    if (customDays && (customDays < 1 || customDays > 365)) {
+      return res.status(400).json({ success: false, message: 'Custom days must be between 1 and 365' });
+    }
+
     // Check if sankalp exists
     const sankalp = await Sankalp.findById(sankalpId);
     if (!sankalp) {
@@ -75,7 +89,37 @@ router.post('/join', authenticate, async (req, res) => {
     // Check if already joined (any status - user can only join once)
     const existing = await UserSankalp.findOne({ userId, sankalpId });
     if (existing) {
-      return res.status(400).json({ success: false, message: 'Already joined this sankalp' });
+      // Return 200 with already joined status instead of 400 error
+      const populated = await existing.populate([
+        { path: 'sankalpId', populate: { path: 'clientId', select: 'clientId' } },
+        { path: 'clientId', select: 'clientId' }
+      ]);
+      const response = populated.toObject();
+      
+      // Generate presigned URL for banner
+      if (response.sankalpId?.bannerImageKey) {
+        try {
+          const { getobject } = await import('../utils/s3.js');
+          response.sankalpId.bannerImage = await getobject(response.sankalpId.bannerImageKey);
+        } catch (error) {
+          console.error('Error generating presigned URL:', error);
+        }
+      }
+      
+      // Format clientIds
+      if (response.clientId && typeof response.clientId === 'object' && response.clientId.clientId) {
+        response.clientId = response.clientId.clientId;
+      }
+      if (response.sankalpId?.clientId && typeof response.sankalpId.clientId === 'object' && response.sankalpId.clientId.clientId) {
+        response.sankalpId.clientId = response.sankalpId.clientId.clientId;
+      }
+      
+      return res.status(200).json({
+        success: true,
+        alreadyJoined: true,
+        message: 'Already joined this sankalp',
+        data: response
+      });
     }
 
     // Use custom days if provided, otherwise use sankalp's default
@@ -113,7 +157,7 @@ router.post('/join', authenticate, async (req, res) => {
 
     await userSankalp.save();
 
-    // Update participants count
+    // Update participants count AFTER successful save
     await Sankalp.findByIdAndUpdate(sankalpId, { $inc: { participantsCount: 1 } });
 
     // Populate and format response
@@ -150,7 +194,7 @@ router.post('/join', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Error joining sankalp:', error);
-    res.status(500).json({ success: false, message: 'Already joined this sankalp', error: error.message });
+    res.status(500).json({ success: false, message: 'Failed to join sankalp', error: error.message });
   }
 });
 
@@ -173,6 +217,12 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
     const sankalpasWithUrls = await Promise.all(
       userSankalpas.map(async (us) => {
         const obj = us.toObject();
+        
+        // Skip if sankalp was deleted
+        if (!obj.sankalpId) {
+          return null;
+        }
+        
         if (obj.sankalpId?.bannerImageKey || obj.sankalpId?.bannerImage) {
           try {
             const imageKey = obj.sankalpId.bannerImageKey || obj.sankalpId.bannerImage;
@@ -195,14 +245,72 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
       })
     );
 
+    // Filter out null entries (deleted sankalpas)
+    const validSankalpas = sankalpasWithUrls.filter(s => s !== null);
+
     res.json({
       success: true,
-      data: sankalpasWithUrls,
-      count: sankalpasWithUrls.length
+      data: validSankalpas,
+      count: validSankalpas.length
     });
   } catch (error) {
     console.error('Error fetching my sankalpas:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch sankalpas', error: error.message });
+  }
+});
+
+// PATCH /api/user-sankalp/:id/reminder-time - Update reminder time
+router.patch('/:id/reminder-time', authenticate, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { reminderTime } = req.body;
+
+    if (!reminderTime || !/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(reminderTime)) {
+      return res.status(400).json({ success: false, message: 'Valid reminderTime required (HH:MM format)' });
+    }
+
+    const userSankalp = await UserSankalp.findOne({ _id: req.params.id, userId });
+
+    if (!userSankalp) {
+      return res.status(404).json({ success: false, message: 'User sankalp not found' });
+    }
+
+    userSankalp.reminderTime = reminderTime;
+    await userSankalp.save();
+
+    res.json({
+      success: true,
+      message: 'Reminder time updated successfully',
+      data: {
+        _id: userSankalp._id,
+        reminderTime: userSankalp.reminderTime
+      }
+    });
+  } catch (error) {
+    console.error('Error updating reminder time:', error);
+    res.status(500).json({ success: false, message: 'Failed to update reminder time', error: error.message });
+  }
+});
+
+// GET /api/user-sankalp/check-joined/:sankalpId - Check if user joined
+router.get('/check-joined/:sankalpId', authenticate, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { sankalpId } = req.params;
+
+    const userSankalp = await UserSankalp.findOne({ userId, sankalpId });
+
+    res.json({
+      success: true,
+      data: {
+        isJoined: !!userSankalp,
+        userSankalpId: userSankalp?._id,
+        status: userSankalp?.status
+      }
+    });
+  } catch (error) {
+    console.error('Error checking joined status:', error);
+    res.status(500).json({ success: false, message: 'Failed to check status', error: error.message });
   }
 });
 
@@ -254,7 +362,7 @@ router.get('/:id', authenticate, async (req, res) => {
 router.post('/:id/report', authenticate, async (req, res) => {
   try {
     const userId = req.user._id;
-    const { status } = req.body; // 'yes' or 'no'
+    const { status, reportDay } = req.body; // 'yes' or 'no', optional reportDay
 
     if (!['yes', 'no'].includes(status)) {
       return res.status(400).json({ success: false, message: 'Status must be yes or no' });
@@ -271,22 +379,67 @@ router.post('/:id/report', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Sankalp is not active' });
     }
 
-    if (!userSankalp.canReportToday()) {
-      return res.status(400).json({ success: false, message: 'Already reported today' });
-    }
-
-    // Find today's report
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const reportIndex = userSankalp.dailyReports.findIndex(report => {
-      const reportDate = new Date(report.date);
+    // Find the report to update
+    let reportIndex;
+    if (reportDay) {
+      // Reporting for a specific past day
+      reportIndex = userSankalp.dailyReports.findIndex(r => r.day === reportDay);
+      if (reportIndex === -1) {
+        return res.status(400).json({ success: false, message: 'Invalid report day' });
+      }
+      
+      // Check if already reported
+      if (userSankalp.dailyReports[reportIndex].status !== 'not_reported') {
+        return res.status(200).json({ 
+          success: true, 
+          alreadyReported: true,
+          message: 'Already reported for this day',
+          data: {
+            _id: userSankalp._id,
+            currentDay: userSankalp.currentDay,
+            status: userSankalp.status,
+            karmaEarned: userSankalp.karmaEarned
+          }
+        });
+      }
+      
+      // Check if day is in the past (before today)
+      const reportDate = new Date(userSankalp.dailyReports[reportIndex].date);
       reportDate.setHours(0, 0, 0, 0);
-      return reportDate.getTime() === today.getTime();
-    });
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      if (reportDate.getTime() > today.getTime()) {
+        return res.status(400).json({ success: false, message: 'Cannot report for future days' });
+      }
+    } else {
+      // Reporting for today
+      if (!userSankalp.canReportToday()) {
+        return res.status(200).json({ 
+          success: true, 
+          alreadyReported: true,
+          message: 'Already reported today',
+          data: {
+            _id: userSankalp._id,
+            currentDay: userSankalp.currentDay,
+            status: userSankalp.status,
+            karmaEarned: userSankalp.karmaEarned
+          }
+        });
+      }
 
-    if (reportIndex === -1) {
-      return res.status(400).json({ success: false, message: 'No report slot for today' });
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      reportIndex = userSankalp.dailyReports.findIndex(report => {
+        const reportDate = new Date(report.date);
+        reportDate.setHours(0, 0, 0, 0);
+        return reportDate.getTime() === today.getTime();
+      });
+
+      if (reportIndex === -1) {
+        return res.status(400).json({ success: false, message: 'No report slot for today' });
+      }
     }
 
     // Update report
@@ -323,10 +476,10 @@ router.post('/:id/report', authenticate, async (req, res) => {
       }
     }
 
-    // Update current day
-    userSankalp.currentDay = reportIndex + 2; // Next day
+    // Update current day - ensure it doesn't go backwards
+    userSankalp.currentDay = Math.max(userSankalp.currentDay, reportIndex + 2);
 
-    // Check if completed
+    // Check if completed - all days reported
     const allReported = userSankalp.dailyReports.every(r => r.status !== 'not_reported');
     if (allReported) {
       userSankalp.status = 'completed';
@@ -459,28 +612,6 @@ router.delete('/:id/abandon', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Error abandoning sankalp:', error);
     res.status(500).json({ success: false, message: 'Failed to abandon sankalp', error: error.message });
-  }
-});
-
-// GET /api/user-sankalp/check-joined/:sankalpId - Check if user joined
-router.get('/check-joined/:sankalpId', authenticate, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const { sankalpId } = req.params;
-
-    const userSankalp = await UserSankalp.findOne({ userId, sankalpId });
-
-    res.json({
-      success: true,
-      data: {
-        isJoined: !!userSankalp,
-        userSankalpId: userSankalp?._id,
-        status: userSankalp?.status
-      }
-    });
-  } catch (error) {
-    console.error('Error checking joined status:', error);
-    res.status(500).json({ success: false, message: 'Failed to check status', error: error.message });
   }
 });
 

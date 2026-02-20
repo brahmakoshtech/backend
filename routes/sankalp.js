@@ -55,7 +55,43 @@ const getClientId = async (req) => {
 router.get('/', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
+    const { search, category, subcategory, sortBy } = req.query;
     let sankalpas = [];
+
+    // Build filter query
+    const buildFilter = (baseFilter) => {
+      const filter = { ...baseFilter };
+      
+      // Search by title or description
+      if (search) {
+        filter.$or = [
+          { title: { $regex: search, $options: 'i' } },
+          { description: { $regex: search, $options: 'i' } }
+        ];
+      }
+      
+      // Filter by category
+      if (category) {
+        filter.category = category;
+      }
+      
+      // Filter by subcategory
+      if (subcategory) {
+        filter.subcategory = subcategory;
+      }
+      
+      return filter;
+    };
+
+    // Determine sort order
+    let sortOrder = { createdAt: -1 }; // Default: newest first
+    if (sortBy === 'popular') {
+      sortOrder = { participantsCount: -1 };
+    } else if (sortBy === 'karma') {
+      sortOrder = { karmaPointsPerDay: -1 };
+    } else if (sortBy === 'duration') {
+      sortOrder = { totalDays: 1 };
+    }
 
     if (authHeader && authHeader.startsWith('Bearer ')) {
       // Authenticated request
@@ -69,34 +105,39 @@ router.get('/', async (req, res) => {
           // For users, get sankalpas by their clientId
           const clientId = decoded.clientId;
           if (clientId) {
-            sankalpas = await Sankalp.find({ clientId, status: 'Active', visibility: 'Public' })
+            const filter = buildFilter({ clientId, status: 'Active', visibility: 'Public' });
+            sankalpas = await Sankalp.find(filter)
               .populate('clientId', 'clientId')
-              .sort({ createdAt: -1 });
+              .sort(sortOrder);
           } else {
             // No clientId, return all public
-            sankalpas = await Sankalp.find({ status: 'Active', visibility: 'Public' })
+            const filter = buildFilter({ status: 'Active', visibility: 'Public' });
+            sankalpas = await Sankalp.find(filter)
               .populate('clientId', 'clientId')
-              .sort({ createdAt: -1 });
+              .sort(sortOrder);
           }
         } else if (decoded.role === 'client') {
           // For clients, get their own sankalpas
           const clientId = decoded.userId || decoded.id;
-          sankalpas = await Sankalp.find({ clientId })
+          const filter = buildFilter({ clientId });
+          sankalpas = await Sankalp.find(filter)
             .populate('clientId', 'clientId')
-            .sort({ createdAt: -1 });
+            .sort(sortOrder);
         }
       } catch (error) {
         console.error('Auth error, falling back to public:', error.message);
         // If authentication fails, fall back to public sankalpas
-        sankalpas = await Sankalp.find({ status: 'Active', visibility: 'Public' })
+        const filter = buildFilter({ status: 'Active', visibility: 'Public' });
+        sankalpas = await Sankalp.find(filter)
           .populate('clientId', 'clientId')
-          .sort({ createdAt: -1 });
+          .sort(sortOrder);
       }
     } else {
       // Unauthenticated request - return only public sankalpas
-      sankalpas = await Sankalp.find({ status: 'Active', visibility: 'Public' })
+      const filter = buildFilter({ status: 'Active', visibility: 'Public' });
+      sankalpas = await Sankalp.find(filter)
         .populate('clientId', 'clientId')
-        .sort({ createdAt: -1 });
+        .sort(sortOrder);
     }
 
     // Ensure sankalpas is an array

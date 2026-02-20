@@ -134,6 +134,11 @@ const userSchema = new mongoose.Schema({
     default: 0,
     min: 0
   },
+  // User timezone for notifications
+  timezone: {
+    type: String,
+    default: 'Asia/Kolkata' // Default to IST
+  },
   createdAt: {
     type: Date,
     default: Date.now
