@@ -34,7 +34,11 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
     const User = (await import('../../models/User.js')).default;
     const userProfile = await User.findById(req.user._id).select('profile astrology numerology doshas').lean();
 
-    console.log('[Avatar Chat] User profile:', JSON.stringify(userProfile, null, 2));
+    // Set chat title from first user message
+    if (chat.messages.length === 1) {
+      const firstMessage = message.trim();
+      chat.title = firstMessage.length > 50 ? firstMessage.substring(0, 50) + '...' : firstMessage;
+    }
 
     let systemPrompt = `You are ${avatarName || 'a spiritual guide'}, a divine AI avatar providing personalized spiritual guidance. Always respond in English.`;
 
@@ -84,6 +88,7 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
       success: true,
       data: {
         chatId: chat._id,
+        response: aiResponse.content,
         assistantMessage: { role: 'assistant', content: aiResponse.content }
       }
     });
