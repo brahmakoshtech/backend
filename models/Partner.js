@@ -15,6 +15,15 @@ const partnerSchema = new mongoose.Schema({
     default: null,
     index: true
   },
+  clientCode: {
+    type: String,
+    default: null
+  },
+  // 0=start, 1=email verified, 2=phone verified, 3=profile complete, 4=profile picture uploaded
+  registrationStep: {
+    type: Number,
+    default: 0
+  },
   // Optional category (compatible with ExpertCategory usage)
   categoryId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -359,6 +368,7 @@ const partnerSchema = new mongoose.Schema({
 
 // Indexes for performance
 partnerSchema.index({ email: 1 });
+partnerSchema.index({ clientId: 1, registrationStep: 1, isActive: 1 });
 partnerSchema.index({ isActive: 1, isVerified: 1 });
 partnerSchema.index({ onlineStatus: 1 });
 partnerSchema.index({ rating: -1, totalSessions: -1 });

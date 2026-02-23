@@ -6,6 +6,7 @@ import express from 'express';
 import { authenticate, authorize } from '../middleware/auth.js';
 import User from '../models/User.js';
 import Client from '../models/Client.js';
+import Partner from '../models/Partner.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
 import Credit from '../models/Credit.js';
@@ -385,6 +386,259 @@ router.get('/users/:userId/karma-points/history', authenticate, authorize('clien
     res.status(500).json({
       success: false,
       message: 'Failed to fetch karma points history',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ============================================
+// PARTNERS - Pending approval & management
+// ============================================
+
+/**
+ * List partners awaiting client approval (registered but not yet approved to login)
+ * GET /api/client/partners/pending
+ * Query: ?page=1&limit=25&search=query
+ * Access: client (own partners), admin, super_admin
+ */
+router.get('/partners/pending', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { search, page = 1, limit = 25 } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(limit) || 25, 1), 100);
+    const skip = (pageNum - 1) * pageSize;
+
+    const query = {
+      registrationStep: { $gte: 3 },
+      isActive: false,
+      isDeleted: { $ne: true }
+    };
+
+    if (req.user.role === 'client') {
+      query.clientId = req.user._id;
+    } else if (req.query.clientId) {
+      const client = await Client.findOne({ clientId: String(req.query.clientId).toUpperCase() });
+      if (client) query.clientId = client._id;
+    }
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { email: regex },
+        { name: regex },
+        { phone: regex }
+      ];
+    }
+
+    const [partners, total] = await Promise.all([
+      Partner.find(query)
+        .select('-password -emailOtp -emailOtpExpiry -phoneOtp -phoneOtpExpiry')
+        .populate('clientId', 'clientId businessName email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      Partner.countDocuments(query)
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        partners,
+        total,
+        page: pageNum,
+        limit: pageSize,
+        hasMore: total > skip + partners.length
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Get pending partners error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch pending partners',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Approve partner - allow them to login
+ * POST /api/client/partners/:partnerId/approve
+ * Access: client (own partners), admin, super_admin
+ */
+router.post('/partners/:partnerId/approve', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { partnerId } = req.params;
+
+    const partner = await Partner.findById(partnerId);
+    if (!partner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Partner not found'
+      });
+    }
+
+    if (req.user.role === 'client') {
+      if (!partner.clientId || partner.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only approve partners registered under your client account'
+        });
+      }
+    }
+
+    if (partner.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'Partner is already approved and can login'
+      });
+    }
+
+    partner.isActive = true;
+    await partner.save();
+
+    res.json({
+      success: true,
+      message: 'Partner approved successfully. They can now login.',
+      data: {
+        partner: {
+          _id: partner._id,
+          email: partner.email,
+          name: partner.name,
+          phone: partner.phone,
+          isActive: partner.isActive
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Approve partner error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to approve partner',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Reject partner (optional - keeps record but they cannot login)
+ * POST /api/client/partners/:partnerId/reject
+ * Access: client (own partners), admin, super_admin
+ */
+router.post('/partners/:partnerId/reject', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { partnerId } = req.params;
+    const { reason } = req.body;
+
+    const partner = await Partner.findById(partnerId);
+    if (!partner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Partner not found'
+      });
+    }
+
+    if (req.user.role === 'client') {
+      if (!partner.clientId || partner.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only reject partners registered under your client account'
+        });
+      }
+    }
+
+    partner.isActive = false;
+    partner.verificationStatus = 'rejected';
+    if (reason) partner.blockedReason = reason;
+    await partner.save();
+
+    res.json({
+      success: true,
+      message: 'Partner registration rejected',
+      data: {
+        partner: {
+          _id: partner._id,
+          email: partner.email,
+          name: partner.name
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Reject partner error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to reject partner',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * List all partners (approved and pending) for client
+ * GET /api/client/partners
+ * Query: ?page=1&limit=25&search=query&status=all|pending|approved
+ * Access: client (own partners), admin, super_admin
+ */
+router.get('/partners', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { search, page = 1, limit = 25, status = 'all' } = req.query;
+    const pageNum = Math.max(parseInt(page) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(limit) || 25, 1), 100);
+    const skip = (pageNum - 1) * pageSize;
+
+    const query = {
+      registrationStep: { $gte: 3 },
+      isDeleted: { $ne: true }
+    };
+
+    if (status === 'pending') {
+      query.isActive = false;
+    } else if (status === 'approved') {
+      query.isActive = true;
+    }
+
+    if (req.user.role === 'client') {
+      query.clientId = req.user._id;
+    } else if (req.query.clientId) {
+      const client = await Client.findOne({ clientId: req.query.clientId.toUpperCase() });
+      if (client) query.clientId = client._id;
+    }
+
+    if (search && search.trim()) {
+      const regex = new RegExp(search.trim(), 'i');
+      query.$or = [
+        { email: regex },
+        { name: regex },
+        { phone: regex }
+      ];
+    }
+
+    const [partners, total] = await Promise.all([
+      Partner.find(query)
+        .select('-password -emailOtp -emailOtpExpiry -phoneOtp -phoneOtpExpiry')
+        .populate('clientId', 'clientId businessName email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(pageSize)
+        .lean(),
+      Partner.countDocuments(query)
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        partners,
+        total,
+        page: pageNum,
+        limit: pageSize,
+        hasMore: total > skip + partners.length
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Get partners error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch partners',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

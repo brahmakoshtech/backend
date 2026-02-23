@@ -558,9 +558,9 @@ router.post('/register/step3', async (req, res) => {
       }
     }
 
-    // Mark registration as complete
+    // Mark registration as complete - isActive=false until client approves (waiting for permission)
     partner.registrationStep = 3;
-    partner.isActive = true;
+    partner.isActive = false; // Client must approve before partner can login
     partner.isVerified = false; // Admin needs to verify
     await partner.save();
 
@@ -569,7 +569,7 @@ router.post('/register/step3', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Profile completed successfully. Registration complete! Awaiting admin verification.',
+      message: 'Profile completed successfully. Awaiting client approval to login. You will be notified once approved.',
       data: {
         partner: { ...partner.toObject(), role: 'partner' },
         token,
@@ -851,9 +851,18 @@ router.post('/check-email', async (req, res) => {
     }
 
     if (!partner.isActive) {
+      // Partner completed registration but waiting for client approval
+      const pendingApproval = partner.registrationStep >= 3;
       return res.status(401).json({ 
         success: false, 
-        message: 'Account is inactive. Please contact administrator.' 
+        message: pendingApproval 
+          ? 'Your registration is pending. Please wait for client approval before you can login.' 
+          : 'Account is inactive. Please contact administrator.',
+        data: { 
+          pendingApproval: !!pendingApproval,
+          registered: true,
+          email: partner.email
+        }
       });
     }
 
@@ -938,9 +947,14 @@ router.post('/login', async (req, res) => {
     }
 
     if (!partner.isActive) {
+      // Partner completed registration but waiting for client approval
+      const pendingApproval = partner.registrationStep >= 3;
       return res.status(401).json({ 
         success: false, 
-        message: 'Account is inactive. Please contact administrator.' 
+        message: pendingApproval 
+          ? 'Your registration is pending. Please wait for client approval before you can login.' 
+          : 'Account is inactive. Please contact administrator.',
+        data: pendingApproval ? { pendingApproval: true } : undefined
       });
     }
 
