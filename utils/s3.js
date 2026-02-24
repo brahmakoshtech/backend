@@ -52,12 +52,7 @@ export const generateUploadUrl = async (fileName, contentType, folder) => {
       Bucket: process.env.AWS_BUCKET_NAME,
       Key: key,
       ContentType: contentType,
-      CacheControl: 'max-age=31536000',
-      Metadata: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, HEAD',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-      }
+      CacheControl: 'max-age=31536000'
     });
 
     const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });

@@ -71,6 +71,7 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
           desc: activityObj.description,
           icon: activityObj.icon || '🌟',
           image: activityObj.image,
+          imageKey: activityObj.imageKey,
           route: getActivityRoute(activityObj.title.toLowerCase()),
           isActive: activityObj.isActive
         };
