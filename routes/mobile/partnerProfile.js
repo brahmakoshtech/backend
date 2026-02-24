@@ -926,17 +926,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    if (partner.registrationStep < 3) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Registration incomplete. Please complete all registration steps.',
-        data: {
-          registrationStep: partner.registrationStep,
-          emailVerified: partner.emailVerified,
-          phoneVerified: partner.phoneVerified
-        }
-      });
-    }
+    
 
     const isPasswordValid = await partner.comparePassword(password);
     if (!isPasswordValid) {
