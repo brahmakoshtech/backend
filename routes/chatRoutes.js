@@ -1179,6 +1179,37 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       });
     }
 
+    // If there were no messages at all in an accepted conversation,
+    // end it as non-billable and skip feedback/summary.
+    if (totalMessages === 0) {
+      const startTime = conversation.sessionDetails?.startTime || conversation.acceptedAt || conversation.startedAt || conversation.createdAt;
+      conversation.status = 'ended';
+      conversation.endedAt = endTime;
+      conversation.sessionDetails = {
+        ...(conversation.sessionDetails || {}),
+        startTime,
+        endTime,
+        duration: 0,
+        messagesCount: 0,
+        creditsUsed: 0,
+        partnerCreditsEarned: 0,
+        userRatePerMinute: USER_RATE_PER_MIN,
+        partnerRatePerMinute: PARTNER_RATE_PER_MIN
+      };
+
+      await conversation.save();
+
+      const dataNoMsg = conversation.toObject ? conversation.toObject() : conversation;
+      return res.json({
+        success: true,
+        data: {
+          ...dataNoMsg,
+          sessionDetails: conversation.sessionDetails,
+          rating: conversation.rating
+        }
+      });
+    }
+
     const startTime = conversation.acceptedAt || conversation.sessionDetails?.startTime || conversation.startedAt || conversation.createdAt;
     const rawMinutes = startTime ? (endTime - new Date(startTime)) / (1000 * 60) : 0;
     // Billing: per started minute. Only accepted conversations are billable, minimum 1 minute when accepted.
@@ -1192,7 +1223,7 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
 
     // Compute credits: user pays 4/min, partner earns 3/min (proportional to actual debit)
     const user = await User.findById(conversation.userId).select('credits email profile');
-    const partner = await Partner.findById(conversation.partnerId).select('creditsEarnedTotal creditsEarnedBalance email name');
+    const partner = await Partner.findById(conversation.partnerId).select('creditsEarnedTotal creditsEarnedBalance email name activeConversationsCount');
 
     const userPreviousBalance = user?.credits || 0;
     const intendedUserDebit = billableMinutes * USER_RATE_PER_MIN;
@@ -1212,7 +1243,13 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
     if (partner) {
       partner.creditsEarnedBalance = partnerNewBalance;
       partner.creditsEarnedTotal = partnerNewTotal;
-      await partner.save();
+      // Decrease active conversations count when conversation truly ends
+      if (partner.activeConversationsCount > 0) {
+        partner.activeConversationsCount -= 1;
+        await partner.updateBusyStatus();
+      } else {
+        await partner.updateBusyStatus();
+      }
     }
 
     conversation.sessionDetails = {
@@ -1258,14 +1295,6 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       },
       { upsert: true, new: true }
     );
-
-    if (isPartner) {
-      const partner = await Partner.findById(req.userId);
-      if (partner.activeConversationsCount > 0) {
-        partner.activeConversationsCount -= 1;
-        await partner.updateBusyStatus();
-      }
-    }
 
     await ConversationSession.findOneAndUpdate(
       { conversationId },
