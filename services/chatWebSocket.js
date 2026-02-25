@@ -4,12 +4,14 @@ import Message from '../models/Message.js';
 import Conversation from '../models/Conversation.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
+import ServiceCreditLedger from '../models/ServiceCreditLedger.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
 const activeConnections = new Map();
 const socketMetadata = new Map();
 const activeVoiceCalls = new Map(); // userId -> conversationId for ongoing voice calls
+const voiceCallStartedAt = new Map(); // conversationId -> Date when voice call started
 
 export const setupChatWebSocket = (server) => {
   console.log('\n🔧🔧🔧 [ChatWebSocket] Setting up Chat WebSocket server...\n');
@@ -378,6 +380,7 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Peer is offline' });
         }
 
+        const startedAt = new Date();
         const payload = {
           conversationId,
           from: {
@@ -386,8 +389,11 @@ export const setupChatWebSocket = (server) => {
             name: user.email || user.name
           },
           to: peerInfo,
-          startedAt: new Date()
+          startedAt
         };
+
+        // Track start time for billing
+        voiceCallStartedAt.set(conversationId, startedAt);
 
         // Mark both participants as being in a voice call for this conversation
         activeVoiceCalls.set(callerKey, conversationId);
@@ -497,6 +503,7 @@ export const setupChatWebSocket = (server) => {
           const calleeKey = userId.toString();
           activeVoiceCalls.delete(callerKey);
           activeVoiceCalls.delete(calleeKey);
+          voiceCallStartedAt.delete(conversationId);
         }
 
         callback?.({ success: true, message: 'Call rejected' });
@@ -522,6 +529,7 @@ export const setupChatWebSocket = (server) => {
         }
 
         const peerSocketId = activeConnections.get(peerId);
+        const endedAt = new Date();
         const payload = {
           conversationId,
           endedBy: {
@@ -529,7 +537,7 @@ export const setupChatWebSocket = (server) => {
             type: userType,
             name: user.email || user.name
           },
-          endedAt: new Date()
+          endedAt
         };
 
         if (peerSocketId) {
@@ -542,6 +550,67 @@ export const setupChatWebSocket = (server) => {
           const enderKey = userId.toString();
           activeVoiceCalls.delete(callerKey);
           activeVoiceCalls.delete(enderKey);
+        }
+
+        // Voice billing + unified ledger (does not depend on chat acceptance)
+        try {
+          const startTime =
+            voiceCallStartedAt.get(conversationId) ||
+            conversation.startedAt ||
+            new Date(endedAt.getTime() - 60 * 1000); // fallback ~1 min before
+
+          voiceCallStartedAt.delete(conversationId);
+
+          const durationMs = Math.max(0, endedAt.getTime() - startTime.getTime());
+          const rawMinutes = durationMs / (1000 * 60);
+          const billableMinutes = Math.max(1, Math.ceil(isFinite(rawMinutes) ? rawMinutes : 1));
+
+          const USER_RATE_PER_MIN = parseInt(process.env.CHAT_USER_RATE_PER_MIN, 10) || 4;
+          const PARTNER_RATE_PER_MIN = parseInt(process.env.CHAT_PARTNER_RATE_PER_MIN, 10) || 3;
+
+          const userDoc = await User.findById(conversation.userId);
+          const partnerDoc = await Partner.findById(conversation.partnerId);
+
+          if (userDoc && partnerDoc) {
+            const userPreviousBalance = typeof userDoc.credits === 'number' ? userDoc.credits : 0;
+            const partnerPreviousBalance = typeof partnerDoc.credits === 'number' ? partnerDoc.credits : 0;
+
+            const maxDebit = billableMinutes * USER_RATE_PER_MIN;
+            const userDebited = Math.min(userPreviousBalance, maxDebit);
+            const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
+
+            const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
+            const partnerNewBalance = partnerPreviousBalance + partnerCredited;
+
+            userDoc.credits = userNewBalance;
+            partnerDoc.credits = partnerNewBalance;
+            await userDoc.save();
+            await partnerDoc.save();
+
+            await ServiceCreditLedger.findOneAndUpdate(
+              { conversationId, serviceType: 'voice' },
+              {
+                conversationId,
+                serviceType: 'voice',
+                userId: conversation.userId,
+                partnerId: conversation.partnerId,
+                billableMinutes,
+                userDebited,
+                partnerCredited,
+                userPreviousBalance,
+                userNewBalance,
+                partnerPreviousBalance,
+                partnerNewBalance,
+                userRatePerMinute: USER_RATE_PER_MIN,
+                partnerRatePerMinute: PARTNER_RATE_PER_MIN,
+                startTime,
+                endTime: endedAt
+              },
+              { upsert: true, new: true }
+            );
+          }
+        } catch (billingErr) {
+          console.error('❌ Voice billing / ledger failed:', billingErr.message);
         }
 
         callback?.({ success: true, message: 'Call ended', call: payload });
