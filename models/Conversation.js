@@ -174,7 +174,20 @@ const conversationSchema = new mongoose.Schema({
     source: { type: String, default: 'web' }, // web, mobile, api
     deviceType: { type: String, default: null },
     ipAddress: { type: String, default: null },
-    userAgent: { type: String, default: null }
+    userAgent: { type: String, default: null },
+    // Optional voice call recordings stored in S3
+    voiceRecordings: {
+      user: {
+        key: { type: String, default: null },
+        url: { type: String, default: null },
+        uploadedAt: { type: Date, default: null }
+      },
+      partner: {
+        key: { type: String, default: null },
+        url: { type: String, default: null },
+        uploadedAt: { type: Date, default: null }
+      }
+    }
   },
   
   // Notes (for internal use)
