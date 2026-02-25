@@ -623,8 +623,19 @@ router.post('/partner/requests/:conversationId/reject', authenticate, async (req
       });
     }
 
+    // Only pending, not-yet-accepted requests can be rejected
+    if (conversation.status !== 'pending' || conversation.isAcceptedByPartner) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only pending requests can be rejected'
+      });
+    }
+
     conversation.status = 'rejected';
     conversation.rejectedAt = new Date();
+    if (reason) {
+      conversation.rejectedReason = reason;
+    }
     await conversation.save();
 
     console.log('✅ Conversation rejected');
@@ -639,6 +650,85 @@ router.post('/partner/requests/:conversationId/reject', authenticate, async (req
     res.status(500).json({
       success: false,
       message: 'Failed to reject conversation',
+      error: error.message
+    });
+  }
+});
+
+// @route   POST /api/chat/user/requests/:conversationId/cancel
+// @desc    Cancel a pending conversation request before partner acceptance
+// @access  Private (User only)
+router.post('/user/requests/:conversationId/cancel', authenticate, async (req, res) => {
+  try {
+    console.log('🛑 CANCEL CONVERSATION REQUEST (USER) - START');
+    console.log('Conversation ID:', req.params.conversationId);
+
+    if (req.userType !== 'user') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only users can cancel conversation requests'
+      });
+    }
+
+    const { conversationId } = req.params;
+    const { reason } = req.body || {};
+
+    const conversation = await Conversation.findOne({ conversationId });
+
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+
+    if (conversation.userId.toString() !== req.userId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    // Only pending, not-yet-accepted requests can be cancelled
+    if (conversation.status !== 'pending' || conversation.isAcceptedByPartner) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only pending requests can be cancelled before partner acceptance'
+      });
+    }
+
+    conversation.status = 'cancelled';
+    conversation.cancelledAt = new Date();
+    conversation.cancelledBy = 'user';
+    if (reason) {
+      conversation.cancelReason = reason;
+    }
+
+    // Ensure there is no duration / billing information
+    conversation.sessionDetails = {
+      ...(conversation.sessionDetails || {}),
+      startTime: conversation.sessionDetails?.startTime || conversation.createdAt,
+      endTime: conversation.cancelledAt,
+      duration: 0,
+      messagesCount: 0,
+      creditsUsed: 0,
+      partnerCreditsEarned: 0
+    };
+
+    await conversation.save();
+
+    console.log('✅ Conversation request cancelled by user');
+
+    res.json({
+      success: true,
+      message: 'Conversation request cancelled',
+      data: conversation
+    });
+  } catch (error) {
+    console.error('❌ Error cancelling conversation request:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cancel conversation request',
       error: error.message
     });
   }
@@ -1053,20 +1143,53 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       isDeleted: false
     });
 
-    const startTime = conversation.acceptedAt || conversation.sessionDetails?.startTime || conversation.startedAt || conversation.createdAt;
-    const rawMinutes = startTime ? (endTime - new Date(startTime)) / (1000 * 60) : 0;
-    // Billing: per started minute. If accepted and had any activity, minimum 1 minute.
-    const billableMinutes = startTime
-      ? Math.max((conversation.isAcceptedByPartner ? 1 : 0), Math.ceil(rawMinutes))
-      : 0;
-    const durationMinutes = billableMinutes;
-
-    // Credit billing rates
+    // Credit billing rates (shared for all flows)
     const USER_RATE_PER_MIN = 4;
     const PARTNER_RATE_PER_MIN = 3;
 
+    // If conversation was never accepted by partner (still pending),
+    // treat this as a non-billable end: no credits, no summary.
+    if (!conversation.isAcceptedByPartner) {
+      const startTime = conversation.sessionDetails?.startTime || conversation.acceptedAt || conversation.startedAt || conversation.createdAt;
+
+      conversation.status = conversation.status === 'pending' ? 'cancelled' : conversation.status;
+      conversation.endedAt = endTime;
+      conversation.sessionDetails = {
+        ...(conversation.sessionDetails || {}),
+        startTime,
+        endTime,
+        duration: 0,
+        messagesCount: totalMessages,
+        creditsUsed: 0,
+        partnerCreditsEarned: 0,
+        userRatePerMinute: USER_RATE_PER_MIN,
+        partnerRatePerMinute: PARTNER_RATE_PER_MIN
+      };
+
+      await conversation.save();
+
+      const dataNoBill = conversation.toObject ? conversation.toObject() : conversation;
+      return res.json({
+        success: true,
+        data: {
+          ...dataNoBill,
+          sessionDetails: conversation.sessionDetails,
+          rating: conversation.rating
+        }
+      });
+    }
+
+    const startTime = conversation.acceptedAt || conversation.sessionDetails?.startTime || conversation.startedAt || conversation.createdAt;
+    const rawMinutes = startTime ? (endTime - new Date(startTime)) / (1000 * 60) : 0;
+    // Billing: per started minute. Only accepted conversations are billable, minimum 1 minute when accepted.
+    const billableMinutes = startTime
+      ? Math.max(1, Math.ceil(rawMinutes))
+      : 0;
+    const durationMinutes = billableMinutes;
+
     conversation.status = 'ended';
     conversation.endedAt = endTime;
+
     // Compute credits: user pays 4/min, partner earns 3/min (proportional to actual debit)
     const user = await User.findById(conversation.userId).select('credits email profile');
     const partner = await Partner.findById(conversation.partnerId).select('creditsEarnedTotal creditsEarnedBalance email name');
@@ -1167,17 +1290,21 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
         .sort({ createdAt: 1 })
         .select('content senderModel')
         .lean();
-      const userDoc = await User.findById(conversation.userId).select('clientId').lean();
-      const userClientId = userDoc?.clientId || null;
-      summary = await generateConversationSummary(messagesForSummary, userClientId);
-      if (summary) {
-        conversation.sessionDetails = conversation.sessionDetails || {};
-        conversation.sessionDetails.summary = summary;
-        await conversation.save();
-        await ConversationSession.findOneAndUpdate(
-          { conversationId },
-          { summary }
-        );
+
+      // Only attempt a summary if we have at least one real message
+      if (messagesForSummary.length > 0) {
+        const userDoc = await User.findById(conversation.userId).select('clientId').lean();
+        const userClientId = userDoc?.clientId || null;
+        summary = await generateConversationSummary(messagesForSummary, userClientId);
+        if (summary) {
+          conversation.sessionDetails = conversation.sessionDetails || {};
+          conversation.sessionDetails.summary = summary;
+          await conversation.save();
+          await ConversationSession.findOneAndUpdate(
+            { conversationId },
+            { summary }
+          );
+        }
       }
     } catch (summaryErr) {
       console.warn('Conversation summary generation failed:', summaryErr.message);
