@@ -13,7 +13,7 @@ import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
-import { getobject } from '../utils/s3.js';
+import { getobject, generateUploadUrl } from '../utils/s3.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
@@ -1410,6 +1410,124 @@ router.patch('/conversations/:conversationId/feedback', authenticate, async (req
     res.status(500).json({
       success: false,
       message: 'Failed to save feedback',
+      error: error.message
+    });
+  }
+});
+
+// @route   PATCH /api/chat/conversations/:conversationId/voice-recording
+// @desc    Attach uploaded voice call recording (S3 key/url) to conversation metadata
+// @access  Private
+router.patch('/conversations/:conversationId/voice-recording', authenticate, async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const { audioKey, audioUrl } = req.body || {};
+
+    if (!audioKey) {
+      return res.status(400).json({
+        success: false,
+        message: 'audioKey is required'
+      });
+    }
+
+    const conversation = await Conversation.findOne({ conversationId });
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+
+    const isPartner = req.userType === 'partner';
+    const hasAccess = isPartner
+      ? conversation.partnerId.toString() === req.userId
+      : conversation.userId.toString() === req.userId;
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const roleKey = isPartner ? 'partner' : 'user';
+
+    conversation.metadata = conversation.metadata || {};
+    const existing = conversation.metadata.voiceRecordings || {};
+    existing[roleKey] = {
+      key: audioKey,
+      url: audioUrl || null,
+      uploadedAt: new Date()
+    };
+    conversation.metadata.voiceRecordings = existing;
+
+    await conversation.save();
+
+    res.json({
+      success: true,
+      message: 'Voice recording attached',
+      data: conversation.metadata.voiceRecordings
+    });
+  } catch (error) {
+    console.error('❌ Error saving voice recording:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to save voice recording',
+      error: error.message
+    });
+  }
+});
+
+// @route   POST /api/chat/voice/recording/upload-url
+// @desc    Generate a presigned S3 upload URL for a voice call recording
+// @access  Private
+router.post('/voice/recording/upload-url', authenticate, async (req, res) => {
+  try {
+    const { conversationId, role } = req.body || {};
+    if (!conversationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'conversationId is required'
+      });
+    }
+
+    const conversation = await Conversation.findOne({ conversationId });
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+
+    const isPartner = req.userType === 'partner';
+    const hasAccess = isPartner
+      ? conversation.partnerId.toString() === req.userId
+      : conversation.userId.toString() === req.userId;
+    if (!hasAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied'
+      });
+    }
+
+    const effectiveRole = role || (isPartner ? 'partner' : 'user');
+    const fileName = `voice-call-${conversationId}-${effectiveRole}-${Date.now()}.webm`;
+    const folder = `voice-calls/${conversationId}`;
+
+    const { uploadUrl, key, fileUrl } = await generateUploadUrl(fileName, 'audio/webm', folder);
+
+    res.json({
+      success: true,
+      data: {
+        uploadUrl,
+        key,
+        fileUrl
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error generating voice recording upload URL:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate upload URL for voice recording',
       error: error.message
     });
   }

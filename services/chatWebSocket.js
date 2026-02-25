@@ -9,6 +9,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 const activeConnections = new Map();
 const socketMetadata = new Map();
+const activeVoiceCalls = new Map(); // userId -> conversationId for ongoing voice calls
 
 export const setupChatWebSocket = (server) => {
   console.log('\n🔧🔧🔧 [ChatWebSocket] Setting up Chat WebSocket server...\n');
@@ -353,6 +354,25 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Access denied for this conversation' });
         }
 
+        // Prevent multiple simultaneous voice calls per participant
+        const callerKey = userId.toString();
+        const peerKey = peerId;
+        const existingCallerCall = activeVoiceCalls.get(callerKey);
+        const existingPeerCall = activeVoiceCalls.get(peerKey);
+        if (existingCallerCall && existingCallerCall !== conversationId) {
+          return callback?.({ success: false, message: 'You are already in another voice call' });
+        }
+        if (existingPeerCall && existingPeerCall !== conversationId) {
+          return callback?.({ success: false, message: 'Peer is currently busy in another call' });
+        }
+
+        // Basic credit check for user before starting call
+        if (conversation.userId?.credits !== undefined) {
+          if (conversation.userId.credits <= 0) {
+            return callback?.({ success: false, message: 'Insufficient credits to start a voice call' });
+          }
+        }
+
         const targetSocketId = activeConnections.get(peerId);
         if (!targetSocketId) {
           return callback?.({ success: false, message: 'Peer is offline' });
@@ -368,6 +388,10 @@ export const setupChatWebSocket = (server) => {
           to: peerInfo,
           startedAt: new Date()
         };
+
+        // Mark both participants as being in a voice call for this conversation
+        activeVoiceCalls.set(callerKey, conversationId);
+        activeVoiceCalls.set(peerKey, conversationId);
 
         io.to(targetSocketId).emit('voice:call:incoming', payload);
 
@@ -446,7 +470,7 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'conversationId is required' });
         }
 
-        const { peerId, error } = await getCallPeer(conversationId);
+        const { conversation, peerId, error } = await getCallPeer(conversationId);
         if (error) {
           return callback?.({ success: false, message: error });
         }
@@ -467,6 +491,14 @@ export const setupChatWebSocket = (server) => {
           io.to(callerSocketId).emit('voice:call:rejected', payload);
         }
 
+        // Clear active call state for both participants
+        if (conversation) {
+          const callerKey = peerId;
+          const calleeKey = userId.toString();
+          activeVoiceCalls.delete(callerKey);
+          activeVoiceCalls.delete(calleeKey);
+        }
+
         callback?.({ success: true, message: 'Call rejected' });
       } catch (err) {
         console.error('voice:call:reject error:', err);
@@ -484,7 +516,7 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'conversationId is required' });
         }
 
-        const { peerId, error } = await getCallPeer(conversationId);
+        const { conversation, peerId, error } = await getCallPeer(conversationId);
         if (error) {
           return callback?.({ success: false, message: error });
         }
@@ -502,6 +534,14 @@ export const setupChatWebSocket = (server) => {
 
         if (peerSocketId) {
           io.to(peerSocketId).emit('voice:call:ended', payload);
+        }
+
+        // Clear active call state for both participants
+        if (conversation) {
+          const callerKey = peerId;
+          const enderKey = userId.toString();
+          activeVoiceCalls.delete(callerKey);
+          activeVoiceCalls.delete(enderKey);
         }
 
         callback?.({ success: true, message: 'Call ended', call: payload });
