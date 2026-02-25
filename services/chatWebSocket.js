@@ -150,6 +150,37 @@ export const setupChatWebSocket = (server) => {
     });
 
     // ============ EVENT HANDLERS ============
+
+    // Helper: find the other party for a conversation (user ↔ partner)
+    const getCallPeer = async (conversationId) => {
+      const conversation = await Conversation.findOne({ conversationId })
+        .populate('partnerId', 'name email profilePicture onlineStatus status')
+        .populate('userId', 'email profile profileImage');
+
+      if (!conversation) {
+        return { error: 'Conversation not found' };
+      }
+
+      const isCallerPartner = userType === 'partner';
+      const peerDoc = isCallerPartner ? conversation.userId : conversation.partnerId;
+
+      if (!peerDoc) {
+        return { error: 'Peer not found for this conversation' };
+      }
+
+      return {
+        conversation,
+        peerId: peerDoc._id.toString(),
+        peerInfo: {
+          id: peerDoc._id,
+          name: peerDoc.name || peerDoc.profile?.name || peerDoc.email,
+          email: peerDoc.email,
+          profilePicture: peerDoc.profilePicture || peerDoc.profileImage || null,
+          onlineStatus: peerDoc.onlineStatus || peerDoc.status || null
+        }
+      };
+    };
+
     socket.on('conversation:join', async (data, callback) => {
       console.log(`📥 [${userType}] conversation:join`);
       
@@ -293,6 +324,216 @@ export const setupChatWebSocket = (server) => {
         isTyping: false,
         timestamp: new Date()
       });
+    });
+
+    // ============ VOICE CALL SIGNALING ============
+
+    // Caller starts a voice call for an existing conversation
+    socket.on('voice:call:initiate', async (data, callback) => {
+      console.log(`📞 [${userType}] voice:call:initiate`, data);
+
+      try {
+        const { conversationId } = data || {};
+        if (!conversationId) {
+          return callback?.({ success: false, message: 'conversationId is required' });
+        }
+
+        const { conversation, peerId, peerInfo, error } = await getCallPeer(conversationId);
+        if (error) {
+          return callback?.({ success: false, message: error });
+        }
+
+        // Ensure caller belongs to this conversation
+        const isCallerPartner = userType === 'partner';
+        const hasAccess = isCallerPartner
+          ? conversation.partnerId?._id?.toString() === userId
+          : conversation.userId?._id?.toString() === userId;
+
+        if (!hasAccess) {
+          return callback?.({ success: false, message: 'Access denied for this conversation' });
+        }
+
+        const targetSocketId = activeConnections.get(peerId);
+        if (!targetSocketId) {
+          return callback?.({ success: false, message: 'Peer is offline' });
+        }
+
+        const payload = {
+          conversationId,
+          from: {
+            id: userId,
+            type: userType,
+            name: user.email || user.name
+          },
+          to: peerInfo,
+          startedAt: new Date()
+        };
+
+        io.to(targetSocketId).emit('voice:call:incoming', payload);
+
+        callback?.({
+          success: true,
+          message: 'Call initiated',
+          call: payload
+        });
+      } catch (err) {
+        console.error('voice:call:initiate error:', err);
+        callback?.({ success: false, message: 'Failed to initiate call' });
+      }
+    });
+
+    // Callee accepts the call
+    socket.on('voice:call:accept', async (data, callback) => {
+      console.log(`📞 [${userType}] voice:call:accept`, data);
+
+      try {
+        const { conversationId } = data || {};
+        if (!conversationId) {
+          return callback?.({ success: false, message: 'conversationId is required' });
+        }
+
+        const { conversation, peerId, peerInfo, error } = await getCallPeer(conversationId);
+        if (error) {
+          return callback?.({ success: false, message: error });
+        }
+
+        // Ensure callee belongs to this conversation
+        const isCalleePartner = userType === 'partner';
+        const hasAccess = isCalleePartner
+          ? conversation.partnerId?._id?.toString() === userId
+          : conversation.userId?._id?.toString() === userId;
+
+        if (!hasAccess) {
+          return callback?.({ success: false, message: 'Access denied for this conversation' });
+        }
+
+        const callerSocketId = activeConnections.get(peerId);
+        if (!callerSocketId) {
+          return callback?.({ success: false, message: 'Caller is offline' });
+        }
+
+        const payload = {
+          conversationId,
+          acceptedBy: {
+            id: userId,
+            type: userType,
+            name: user.email || user.name
+          },
+          peer: peerInfo,
+          acceptedAt: new Date()
+        };
+
+        io.to(callerSocketId).emit('voice:call:accepted', payload);
+
+        callback?.({
+          success: true,
+          message: 'Call accepted',
+          call: payload
+        });
+      } catch (err) {
+        console.error('voice:call:accept error:', err);
+        callback?.({ success: false, message: 'Failed to accept call' });
+      }
+    });
+
+    // Callee rejects the call
+    socket.on('voice:call:reject', async (data, callback) => {
+      console.log(`📞 [${userType}] voice:call:reject`, data);
+
+      try {
+        const { conversationId, reason } = data || {};
+        if (!conversationId) {
+          return callback?.({ success: false, message: 'conversationId is required' });
+        }
+
+        const { peerId, error } = await getCallPeer(conversationId);
+        if (error) {
+          return callback?.({ success: false, message: error });
+        }
+
+        const callerSocketId = activeConnections.get(peerId);
+        const payload = {
+          conversationId,
+          rejectedBy: {
+            id: userId,
+            type: userType,
+            name: user.email || user.name
+          },
+          reason: reason || null,
+          rejectedAt: new Date()
+        };
+
+        if (callerSocketId) {
+          io.to(callerSocketId).emit('voice:call:rejected', payload);
+        }
+
+        callback?.({ success: true, message: 'Call rejected' });
+      } catch (err) {
+        console.error('voice:call:reject error:', err);
+        callback?.({ success: false, message: 'Failed to reject call' });
+      }
+    });
+
+    // Either side ends the call
+    socket.on('voice:call:end', async (data, callback) => {
+      console.log(`📞 [${userType}] voice:call:end`, data);
+
+      try {
+        const { conversationId } = data || {};
+        if (!conversationId) {
+          return callback?.({ success: false, message: 'conversationId is required' });
+        }
+
+        const { peerId, error } = await getCallPeer(conversationId);
+        if (error) {
+          return callback?.({ success: false, message: error });
+        }
+
+        const peerSocketId = activeConnections.get(peerId);
+        const payload = {
+          conversationId,
+          endedBy: {
+            id: userId,
+            type: userType,
+            name: user.email || user.name
+          },
+          endedAt: new Date()
+        };
+
+        if (peerSocketId) {
+          io.to(peerSocketId).emit('voice:call:ended', payload);
+        }
+
+        callback?.({ success: true, message: 'Call ended', call: payload });
+      } catch (err) {
+        console.error('voice:call:end error:', err);
+        callback?.({ success: false, message: 'Failed to end call' });
+      }
+    });
+
+    // Generic WebRTC / RTC signaling relay (offer/answer/ice-candidate, etc.)
+    socket.on('voice:signal', async (data) => {
+      try {
+        const { conversationId, signal } = data || {};
+        if (!conversationId || !signal) return;
+
+        const { peerId, error } = await getCallPeer(conversationId);
+        if (error) return;
+
+        const peerSocketId = activeConnections.get(peerId);
+        if (!peerSocketId) return;
+
+        io.to(peerSocketId).emit('voice:signal', {
+          conversationId,
+          from: {
+            id: userId,
+            type: userType
+          },
+          signal
+        });
+      } catch (err) {
+        console.error('voice:signal error:', err);
+      }
     });
 
     socket.on('disconnect', async () => {
