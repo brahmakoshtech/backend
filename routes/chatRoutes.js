@@ -5,6 +5,7 @@ import Message from '../models/Message.js';
 import Conversation from '../models/Conversation.js';
 import ConversationSession from '../models/ConversationSession.js';
 import ChatCreditLedger from '../models/ChatCreditLedger.js';
+import ServiceCreditLedger from '../models/ServiceCreditLedger.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
 import astrologyService from '../services/astrologyService.js';
@@ -1296,6 +1297,30 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       { upsert: true, new: true }
     );
 
+    // Unified ledger entry (chat/video)
+    const serviceType = conversation.conversationType === 'video' ? 'video' : 'chat';
+    await ServiceCreditLedger.findOneAndUpdate(
+      { conversationId, serviceType },
+      {
+        conversationId,
+        serviceType,
+        userId: conversation.userId,
+        partnerId: conversation.partnerId,
+        billableMinutes,
+        userDebited,
+        partnerCredited,
+        userPreviousBalance,
+        userNewBalance,
+        partnerPreviousBalance,
+        partnerNewBalance,
+        userRatePerMinute: USER_RATE_PER_MIN,
+        partnerRatePerMinute: PARTNER_RATE_PER_MIN,
+        startTime: conversation.sessionDetails?.startTime || null,
+        endTime
+      },
+      { upsert: true, new: true }
+    );
+
     await ConversationSession.findOneAndUpdate(
       { conversationId },
       {
@@ -1622,23 +1647,51 @@ router.get('/credits/history/user', authenticate, async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
     const skip = (page - 1) * limit;
 
+    // Prefer unified ledger; fall back to legacy chat-only ledger if empty
+    const unifiedCount = await ServiceCreditLedger.countDocuments({ userId: req.userId });
+    const useUnified = unifiedCount > 0;
+
     const [items, total] = await Promise.all([
-      ChatCreditLedger.find({ userId: req.userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('partnerId', 'name email profilePicture')
-        .lean(),
-      ChatCreditLedger.countDocuments({ userId: req.userId })
+      useUnified
+        ? ServiceCreditLedger.find({ userId: req.userId })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate('partnerId', 'name email profilePicture')
+            .lean()
+        : ChatCreditLedger.find({ userId: req.userId })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate('partnerId', 'name email profilePicture')
+            .lean(),
+      useUnified
+        ? ServiceCreditLedger.countDocuments({ userId: req.userId })
+        : ChatCreditLedger.countDocuments({ userId: req.userId })
     ]);
 
-    const data = items.map((entry) => ({
-      conversationId: entry.conversationId,
-      billableMinutes: entry.billableMinutes,
-      creditsUsed: entry.userDebited,
-      createdAt: entry.createdAt,
-      partner: entry.partnerId
-    }));
+    // Join conversation recordings (keys only) so UI can play via presigned-url
+    const convIds = items.map((i) => i.conversationId).filter(Boolean);
+    const convDocs = await Conversation.find({ conversationId: { $in: convIds } })
+      .select('conversationId metadata.voiceRecordings')
+      .lean();
+    const convMap = new Map(convDocs.map((c) => [c.conversationId, c]));
+
+    const data = items.map((entry) => {
+      const serviceType = entry.serviceType || 'chat';
+      const conv = convMap.get(entry.conversationId);
+      const recordings = conv?.metadata?.voiceRecordings || null;
+
+      return {
+        conversationId: entry.conversationId,
+        serviceType,
+        billableMinutes: entry.billableMinutes,
+        creditsUsed: entry.userDebited,
+        createdAt: entry.createdAt,
+        partner: entry.partnerId,
+        voiceRecordings: recordings
+      };
+    });
 
     res.json({
       success: true,
@@ -1672,23 +1725,49 @@ router.get('/credits/history/partner', authenticate, async (req, res) => {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
     const skip = (page - 1) * limit;
 
+    const unifiedCount = await ServiceCreditLedger.countDocuments({ partnerId: req.userId });
+    const useUnified = unifiedCount > 0;
+
     const [items, total] = await Promise.all([
-      ChatCreditLedger.find({ partnerId: req.userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('userId', 'email profile profileImage')
-        .lean(),
-      ChatCreditLedger.countDocuments({ partnerId: req.userId })
+      useUnified
+        ? ServiceCreditLedger.find({ partnerId: req.userId })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate('userId', 'email profile profileImage')
+            .lean()
+        : ChatCreditLedger.find({ partnerId: req.userId })
+            .sort({ createdAt: -1 })
+            .skip(skip)
+            .limit(limit)
+            .populate('userId', 'email profile profileImage')
+            .lean(),
+      useUnified
+        ? ServiceCreditLedger.countDocuments({ partnerId: req.userId })
+        : ChatCreditLedger.countDocuments({ partnerId: req.userId })
     ]);
 
-    const data = items.map((entry) => ({
-      conversationId: entry.conversationId,
-      billableMinutes: entry.billableMinutes,
-      creditsEarned: entry.partnerCredited,
-      createdAt: entry.createdAt,
-      user: entry.userId
-    }));
+    const convIds = items.map((i) => i.conversationId).filter(Boolean);
+    const convDocs = await Conversation.find({ conversationId: { $in: convIds } })
+      .select('conversationId metadata.voiceRecordings')
+      .lean();
+    const convMap = new Map(convDocs.map((c) => [c.conversationId, c]));
+
+    const data = items.map((entry) => {
+      const serviceType = entry.serviceType || 'chat';
+      const conv = convMap.get(entry.conversationId);
+      const recordings = conv?.metadata?.voiceRecordings || null;
+
+      return {
+        conversationId: entry.conversationId,
+        serviceType,
+        billableMinutes: entry.billableMinutes,
+        creditsEarned: entry.partnerCredited,
+        createdAt: entry.createdAt,
+        user: entry.userId,
+        voiceRecordings: recordings
+      };
+    });
 
     res.json({
       success: true,
