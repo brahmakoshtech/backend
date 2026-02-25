@@ -437,6 +437,38 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Access denied for this conversation' });
         }
 
+        // If partner is accepting a still-pending chat request, auto-accept the conversation for chat as well
+        if (isCalleePartner && conversation.status === 'pending' && !conversation.isAcceptedByPartner) {
+          const partnerDoc = await Partner.findById(userId);
+          if (partnerDoc) {
+            const activeCount = partnerDoc.activeConversationsCount || 0;
+            const maxConversations = partnerDoc.maxConversations || 5;
+            if (activeCount >= maxConversations) {
+              return callback?.({
+                success: false,
+                message: 'Maximum concurrent conversations reached. Please end some conversations first.'
+              });
+            }
+
+            const acceptedAt = new Date();
+            conversation.status = 'accepted';
+            conversation.isAcceptedByPartner = true;
+            conversation.acceptedAt = acceptedAt;
+            conversation.startedAt = conversation.startedAt || acceptedAt;
+            conversation.sessionDetails = {
+              ...(conversation.sessionDetails || {}),
+              startTime: conversation.sessionDetails?.startTime || acceptedAt,
+              duration: conversation.sessionDetails?.duration || 0,
+              messagesCount: conversation.sessionDetails?.messagesCount || 0,
+              creditsUsed: conversation.sessionDetails?.creditsUsed || 0
+            };
+            await conversation.save();
+
+            partnerDoc.activeConversationsCount = activeCount + 1;
+            await partnerDoc.updateBusyStatus();
+          }
+        }
+
         const callerSocketId = activeConnections.get(peerId);
         if (!callerSocketId) {
           return callback?.({ success: false, message: 'Caller is offline' });
