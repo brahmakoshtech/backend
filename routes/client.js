@@ -57,6 +57,55 @@ const checkUserAccess = (requestingUser, targetUser) => {
   return false;
 };
 
+// TEMPORARY DEBUG ROUTE - remove after diagnosis
+// GET /api/client/partners/debug
+router.get('/partners/debug', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    // Get ALL partners for this client with NO filters
+    const allPartners = await Partner.find({ 
+      clientId: req.user._id 
+    })
+    .select('email name isActive isDeleted verificationStatus registrationStep createdAt')
+    .lean();
+
+    const summary = {
+      total: allPartners.length,
+      byIsDeleted: {
+        false: allPartners.filter(p => p.isDeleted === false).length,
+        true: allPartners.filter(p => p.isDeleted === true).length,
+        missing: allPartners.filter(p => p.isDeleted === undefined || p.isDeleted === null).length,
+      },
+      byIsActive: {
+        true: allPartners.filter(p => p.isActive === true).length,
+        false: allPartners.filter(p => p.isActive === false).length,
+      },
+      byVerificationStatus: {
+        pending: allPartners.filter(p => p.verificationStatus === 'pending').length,
+        approved: allPartners.filter(p => p.verificationStatus === 'approved').length,
+        rejected: allPartners.filter(p => p.verificationStatus === 'rejected').length,
+        missing: allPartners.filter(p => !p.verificationStatus).length,
+      },
+      byRegistrationStep: allPartners.reduce((acc, p) => {
+        const step = p.registrationStep ?? 'missing';
+        acc[step] = (acc[step] || 0) + 1;
+        return acc;
+      }, {}),
+      partners: allPartners.map(p => ({
+        email: p.email,
+        name: p.name,
+        isActive: p.isActive,
+        isDeleted: p.isDeleted,
+        verificationStatus: p.verificationStatus,
+        registrationStep: p.registrationStep,
+      }))
+    };
+
+    res.json({ success: true, data: summary });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 /**
  * Get client's own users
  * GET /api/client/users
@@ -409,17 +458,9 @@ router.get('/partners/pending', authenticate, authorize('client', 'admin', 'supe
     const skip = (pageNum - 1) * pageSize;
 
     const query = {
-      isActive: false,
-      verificationStatus: { $ne: 'rejected' },
-      isDeleted: { $ne: true }
+      isDeleted: { $ne: true },
+      verificationStatus: 'pending'   // ✅ Simple and consistent
     };
-
-    // Some older partner records may not have registrationStep set.
-    // Treat missing registrationStep as "eligible" for listing.
-    query.$or = [
-      { registrationStep: { $gte: 3 } },
-      { registrationStep: { $exists: false } }
-    ];
 
     if (req.user.role === 'client') {
       query.clientId = req.user._id;
@@ -430,10 +471,9 @@ router.get('/partners/pending', authenticate, authorize('client', 'admin', 'supe
 
     if (search && search.trim()) {
       const regex = new RegExp(search.trim(), 'i');
-      query.$or = [
-        { email: regex },
-        { name: regex },
-        { phone: regex }
+      query.$and = [
+        ...(query.$and || []),
+        { $or: [{ email: regex }, { name: regex }, { phone: regex }] }
       ];
     }
 
@@ -467,7 +507,6 @@ router.get('/partners/pending', authenticate, authorize('client', 'admin', 'supe
     });
   }
 });
-
 /**
  * Approve partner - allow them to login
  * POST /api/client/partners/:partnerId/approve
@@ -658,16 +697,16 @@ router.get('/partners', authenticate, authorize('client', 'admin', 'super_admin'
     };
 
     if (status === 'pending') {
-      query.isActive = false;
-      query.verificationStatus = { $ne: 'rejected' };
+      // ✅ Pending = verificationStatus is 'pending' (regardless of isActive)
+      query.verificationStatus = 'pending';
     } else if (status === 'approved') {
+      query.verificationStatus = 'approved';
       query.isActive = true;
-      query.verificationStatus = { $ne: 'rejected' };
     } else if (status === 'rejected') {
-      query.isActive = false;
       query.verificationStatus = 'rejected';
     }
 
+    // ✅ Always filter by clientId for client role
     if (req.user.role === 'client') {
       query.clientId = req.user._id;
     } else if (req.query.clientId) {
@@ -677,10 +716,9 @@ router.get('/partners', authenticate, authorize('client', 'admin', 'super_admin'
 
     if (search && search.trim()) {
       const regex = new RegExp(search.trim(), 'i');
-      query.$or = [
-        { email: regex },
-        { name: regex },
-        { phone: regex }
+      query.$and = [
+        ...(query.$and || []),
+        { $or: [{ email: regex }, { name: regex }, { phone: regex }] }
       ];
     }
 
