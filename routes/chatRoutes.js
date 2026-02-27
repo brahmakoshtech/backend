@@ -1622,10 +1622,37 @@ router.get('/voice/calls/history/user', authenticate, async (req, res) => {
       .lean();
     const convMap = new Map(convDocs.map((c) => [c.conversationId, c]));
 
-    const data = items.map((i) => ({
-      ...i,
-      voiceRecordings: convMap.get(i.conversationId)?.metadata?.voiceRecordings || null
-    }));
+    const signVoiceRecordings = async (voiceRecordings) => {
+      if (!voiceRecordings) return null;
+      const out = { ...voiceRecordings };
+
+      for (const side of ['user', 'partner']) {
+        const rec = out?.[side];
+        if (!rec || !rec.key) continue;
+        try {
+          const signedUrl = await getobject(rec.key);
+          out[side] = {
+            ...rec,
+            // Provide a directly playable URL (raw S3 URLs can be AccessDenied)
+            signedUrl,
+            // Avoid encouraging clients to open the raw URL
+            url: null
+          };
+        } catch (e) {
+          out[side] = { ...rec, signedUrl: null };
+        }
+      }
+
+      return out;
+    };
+
+    const data = await Promise.all(
+      items.map(async (i) => {
+        const voiceRecordings = convMap.get(i.conversationId)?.metadata?.voiceRecordings || null;
+        const signed = await signVoiceRecordings(voiceRecordings);
+        return { ...i, voiceRecordings: signed };
+      })
+    );
 
     res.json({
       success: true,
@@ -1666,10 +1693,35 @@ router.get('/voice/calls/history/partner', authenticate, async (req, res) => {
       .lean();
     const convMap = new Map(convDocs.map((c) => [c.conversationId, c]));
 
-    const data = items.map((i) => ({
-      ...i,
-      voiceRecordings: convMap.get(i.conversationId)?.metadata?.voiceRecordings || null
-    }));
+    const signVoiceRecordings = async (voiceRecordings) => {
+      if (!voiceRecordings) return null;
+      const out = { ...voiceRecordings };
+
+      for (const side of ['user', 'partner']) {
+        const rec = out?.[side];
+        if (!rec || !rec.key) continue;
+        try {
+          const signedUrl = await getobject(rec.key);
+          out[side] = {
+            ...rec,
+            signedUrl,
+            url: null
+          };
+        } catch (e) {
+          out[side] = { ...rec, signedUrl: null };
+        }
+      }
+
+      return out;
+    };
+
+    const data = await Promise.all(
+      items.map(async (i) => {
+        const voiceRecordings = convMap.get(i.conversationId)?.metadata?.voiceRecordings || null;
+        const signed = await signVoiceRecordings(voiceRecordings);
+        return { ...i, voiceRecordings: signed };
+      })
+    );
 
     res.json({
       success: true,
