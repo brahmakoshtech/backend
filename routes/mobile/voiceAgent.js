@@ -3,19 +3,20 @@ import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
 import OpenAI from 'openai';
 import fetch from 'node-fetch';
 import Chat from '../../models/Chat.js';
+import VoiceConfig from '../../models/VoiceConfig.js';
 
-// Validate environment variables
-const deepgramApiKey = process.env.DEEPGRAM_API_KEY;
+// ─── Validate environment variables ──────────────────────────────────────────
+const deepgramApiKey   = process.env.DEEPGRAM_API_KEY;
 const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
-const openaiApiKey = process.env.OPENAI_API_KEY;
+const openaiApiKey     = process.env.OPENAI_API_KEY;
 
 // Log API key status
 console.log('[VoiceAgent] API Keys Status:');
-console.log('  Deepgram:', deepgramApiKey ? `${deepgramApiKey.substring(0, 4)}...${deepgramApiKey.substring(deepgramApiKey.length - 4)} (length: ${deepgramApiKey.length})` : '❌ MISSING');
-console.log('  OpenAI:', openaiApiKey ? `${openaiApiKey.substring(0, 7)}...${openaiApiKey.substring(openaiApiKey.length - 4)}` : '❌ MISSING');
-console.log('  ElevenLabs:', elevenLabsApiKey ? `${elevenLabsApiKey.substring(0, 4)}...${elevenLabsApiKey.substring(elevenLabsApiKey.length - 4)}` : '❌ MISSING');
+console.log('  Deepgram:',    deepgramApiKey   ? `${deepgramApiKey.substring(0, 4)}...${deepgramApiKey.substring(deepgramApiKey.length - 4)} (length: ${deepgramApiKey.length})` : '❌ MISSING');
+console.log('  OpenAI:',      openaiApiKey     ? `${openaiApiKey.substring(0, 7)}...${openaiApiKey.substring(openaiApiKey.length - 4)}` : '❌ MISSING');
+console.log('  ElevenLabs:',  elevenLabsApiKey ? `${elevenLabsApiKey.substring(0, 4)}...${elevenLabsApiKey.substring(elevenLabsApiKey.length - 4)}` : '❌ MISSING');
 
-// Initialize clients
+// ─── Initialize clients ───────────────────────────────────────────────────────
 let deepgramClient = null;
 let openai = null;
 
@@ -29,12 +30,14 @@ if (openaiApiKey) {
   console.log('[VoiceAgent] ✅ OpenAI client initialized');
 }
 
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
-const ELEVENLABS_MODEL_ID = 'eleven_turbo_v2_5';
+// Fallback constants (used only if no VoiceConfig is found in DB)
+const FALLBACK_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
+const FALLBACK_MODEL_ID = 'eleven_turbo_v2_5';
+const DEFAULT_PROMPT    = 'Give the answer within two lines.';
 
-/**
- * WebSocket Voice Agent Handler
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket Voice Agent Handler
+// ─────────────────────────────────────────────────────────────────────────────
 export const handleVoiceAgentWebSocket = (wss) => {
   wss.on('connection', async (ws, req) => {
     console.log('[VoiceAgent] New WebSocket connection');
@@ -45,28 +48,29 @@ export const handleVoiceAgentWebSocket = (wss) => {
       ws.send(JSON.stringify({
         type: 'error',
         message: 'Server configuration error: Missing API keys',
-        error: 'MISSING_API_KEYS'
+        error: 'MISSING_API_KEYS',
       }));
       ws.close();
       return;
     }
 
-    // Connection state
-    let deepgramConnection = null;
-    let silenceTimer = null;
+    // ─── Connection state ─────────────────────────────────────────────────────
+    let deepgramConnection   = null;
+    let silenceTimer         = null;
     let accumulatedTranscript = '';
-    let isProcessingLLM = false;
-    let chat = null;
-    let userId = null;
-    let isActive = false;
-    let audioChunkCount = 0;
+    let isProcessingLLM      = false;
+    let chat                 = null;
+    let userId               = null;
+    let isActive             = false;
+    let audioChunkCount      = 0;
+    let voiceConfig          = null;   // ← resolved VoiceConfig document
 
     const SILENCE_THRESHOLD = 2000;
 
-    // Cleanup function
+    // ─── Cleanup ──────────────────────────────────────────────────────────────
     const cleanup = () => {
       console.log('[VoiceAgent] Cleaning up...');
-      
+
       if (silenceTimer) {
         clearTimeout(silenceTimer);
         silenceTimer = null;
@@ -81,294 +85,42 @@ export const handleVoiceAgentWebSocket = (wss) => {
         deepgramConnection = null;
       }
 
-      isActive = false;
+      isActive       = false;
       audioChunkCount = 0;
       console.log('[VoiceAgent] Cleanup complete');
     };
 
-    // Handle incoming messages
-    ws.on('message', async (message) => {
-      try {
-        const data = JSON.parse(message);
-        
-        if (data.type === 'start') {
-          console.log('[VoiceAgent] Start command received:', {
-            chatId: data.chatId,
-            userId: data.userId
-          });
-
-          userId = data.userId;
-          isActive = true;
-
-          // Find or create chat
-          if (data.chatId && data.chatId !== 'new') {
-            chat = await Chat.findOne({ _id: data.chatId, userId: userId });
-          }
-
-          if (!chat) {
-            chat = new Chat({
-              userId: userId,
-              title: 'Voice Agent Chat',
-              messages: []
-            });
-            await chat.save();
-            console.log('[VoiceAgent] Created new chat:', chat._id);
-          }
-
-          // Initialize Deepgram - UPDATED CONFIGURATION
-          try {
-            console.log('[VoiceAgent] Creating Deepgram connection...');
-            
-            // Configuration for 16-bit PCM audio at 16kHz
-            deepgramConnection = deepgramClient.listen.live({
-              model: 'nova-2',
-              language: 'en',
-              encoding: 'linear16', // 16-bit PCM
-              sample_rate: 16000, // 16kHz
-              channels: 1,
-              interim_results: true,
-              utterance_end_ms: 2000,
-              vad_events: true,
-              punctuate: true,
-              smart_format: true,
-            });
-
-            // Handle Open event
-            deepgramConnection.on(LiveTranscriptionEvents.Open, () => {
-              console.log('[VoiceAgent] ✅ Deepgram connection opened');
-              
-              ws.send(JSON.stringify({
-                type: 'deepgram_connected',
-                message: 'Speech recognition active'
-              }));
-
-              ws.send(JSON.stringify({
-                type: 'started',
-                chatId: chat._id,
-                message: 'Voice agent started'
-              }));
-            });
-
-            // Handle Transcript
-            deepgramConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
-              const transcript = data.channel?.alternatives?.[0]?.transcript;
-              const isFinal = data.is_final;
-              const speechFinal = data.speech_final;
-
-              if (transcript && transcript.trim()) {
-                console.log('[VoiceAgent] 🎤 Transcript:', {
-                  text: transcript,
-                  isFinal,
-                  speechFinal,
-                  confidence: data.channel?.alternatives?.[0]?.confidence
-                });
-
-                ws.send(JSON.stringify({
-                  type: 'transcript',
-                  text: transcript,
-                  isFinal: isFinal
-                }));
-
-                if (isFinal) {
-                  accumulatedTranscript += (accumulatedTranscript ? ' ' : '') + transcript;
-                  
-                  if (silenceTimer) {
-                    clearTimeout(silenceTimer);
-                  }
-
-                  silenceTimer = setTimeout(async () => {
-                    await processTurnComplete();
-                  }, SILENCE_THRESHOLD);
-                }
-              }
-            });
-
-            // Handle UtteranceEnd
-            deepgramConnection.on(LiveTranscriptionEvents.UtteranceEnd, async () => {
-              console.log('[VoiceAgent] 🔚 Utterance end detected');
-              if (silenceTimer) {
-                clearTimeout(silenceTimer);
-              }
-              await processTurnComplete();
-            });
-
-            // Handle Metadata (useful for debugging)
-            deepgramConnection.on(LiveTranscriptionEvents.Metadata, (data) => {
-              console.log('[VoiceAgent] 📊 Metadata:', {
-                request_id: data.request_id,
-                model_info: data.model_info
-              });
-            });
-
-            // Handle Error
-            deepgramConnection.on(LiveTranscriptionEvents.Error, (error) => {
-              console.error('[VoiceAgent] ❌ Deepgram error:', {
-                message: error.message,
-                type: error.type
-              });
-              
-              ws.send(JSON.stringify({
-                type: 'error',
-                message: 'Speech recognition error',
-                error: error.message
-              }));
-
-              cleanup();
-            });
-
-            // Handle Close
-            deepgramConnection.on(LiveTranscriptionEvents.Close, () => {
-              console.log('[VoiceAgent] Deepgram connection closed');
-            });
-
-            console.log('[VoiceAgent] Deepgram connection configured and waiting for open event...');
-
-          } catch (error) {
-            console.error('[VoiceAgent] Failed to initialize Deepgram:', error);
-            
-            ws.send(JSON.stringify({
-              type: 'error',
-              message: 'Failed to initialize speech recognition',
-              error: error.message
-            }));
-            
-            cleanup();
-          }
-
-        } else if (data.type === 'stop') {
-          console.log('[VoiceAgent] Stop command received');
-          cleanup();
-          ws.send(JSON.stringify({
-            type: 'stopped',
-            message: 'Voice agent stopped'
-          }));
-
-        } else if (data.type === 'audio') {
-          // Forward audio to Deepgram
-          if (deepgramConnection && isActive) {
-            try {
-              const audioBuffer = Buffer.from(data.audio, 'base64');
-              deepgramConnection.send(audioBuffer);
-              
-              audioChunkCount++;
-              if (audioChunkCount % 50 === 0) {
-                console.log(`[VoiceAgent] 📤 Sent ${audioChunkCount} audio chunks to Deepgram`);
-              }
-            } catch (error) {
-              console.error('[VoiceAgent] Error sending audio to Deepgram:', error.message);
-            }
-          } else {
-            if (!deepgramConnection) {
-              console.warn('[VoiceAgent] ⚠️ Received audio but Deepgram connection is null');
-            }
-            if (!isActive) {
-              console.warn('[VoiceAgent] ⚠️ Received audio but session is not active');
-            }
-          }
-        }
-      } catch (error) {
-        console.error('[VoiceAgent] Error processing message:', error);
-        ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Error processing message',
-          error: error.message
-        }));
-      }
-    });
-
-    // Process complete turn
-    const processTurnComplete = async () => {
-      if (!accumulatedTranscript.trim() || isProcessingLLM || !isActive) {
-        return;
-      }
-
-      const userMessage = accumulatedTranscript.trim();
-      accumulatedTranscript = '';
-      isProcessingLLM = true;
-
-      console.log('[VoiceAgent] 💬 Processing turn:', userMessage);
-
-      try {
-        // Save user message
-        chat.messages.push({
-          role: 'user',
-          content: userMessage
-        });
-        await chat.save();
-
-        ws.send(JSON.stringify({
-          type: 'user_message',
-          text: userMessage
-        }));
-
-        // Get OpenAI response
-        console.log('[VoiceAgent] 🤖 Requesting OpenAI response...');
-        const messages = chat.messages.map(msg => ({
-          role: msg.role,
-          content: msg.content
-        }));
-
-        const completion = await openai.chat.completions.create({
-          model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-          messages: messages,
-          temperature: 0.7,
-          max_tokens: 500
-        });
-
-        const aiResponse = completion.choices[0].message.content;
-        console.log('[VoiceAgent] ✅ OpenAI response received:', aiResponse.substring(0, 100) + '...');
-
-        // Save assistant message
-        chat.messages.push({
-          role: 'assistant',
-          content: aiResponse
-        });
-        await chat.save();
-
-        ws.send(JSON.stringify({
-          type: 'ai_response',
-          text: aiResponse
-        }));
-
-        // Generate speech
-        await streamElevenLabsTTS(aiResponse, ws);
-
-      } catch (error) {
-        console.error('[VoiceAgent] Error processing turn:', error);
-        ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Error processing response',
-          error: error.message
-        }));
-      } finally {
-        isProcessingLLM = false;
-      }
-    };
-
-    // Stream TTS from ElevenLabs
+    // ─── Stream TTS from ElevenLabs ───────────────────────────────────────────
     const streamElevenLabsTTS = async (text, ws) => {
       try {
         console.log('[VoiceAgent] 🔊 Starting ElevenLabs TTS...');
 
-        const url = `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream`;
-        
+        // Use values from voiceConfig if available, otherwise fall back to defaults
+        const voiceId  = voiceConfig?.voiceId || FALLBACK_VOICE_ID;
+        const modelId  = voiceConfig?.modelId || FALLBACK_MODEL_ID;
+        const settings = voiceConfig?.voiceSettings || {
+          stability:         0.5,
+          similarity_boost:  0.75,
+          style:             0.0,
+          use_speaker_boost: true,
+        };
+
+        console.log(`[VoiceAgent] TTS voice: ${voiceId}, model: ${modelId}`);
+
+        const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
+
         const response = await fetch(url, {
           method: 'POST',
           headers: {
-            'Accept': 'audio/mpeg',
-            'Content-Type': 'application/json',
-            'xi-api-key': elevenLabsApiKey
+            Accept:           'audio/mpeg',
+            'Content-Type':   'application/json',
+            'xi-api-key':     elevenLabsApiKey,
           },
           body: JSON.stringify({
-            text: text,
-            model_id: ELEVENLABS_MODEL_ID,
-            voice_settings: {
-              stability: 0.5,
-              similarity_boost: 0.75,
-              style: 0.0,
-              use_speaker_boost: true
-            }
-          })
+            text,
+            model_id:       modelId,
+            voice_settings: settings,
+          }),
         });
 
         if (!response.ok) {
@@ -378,26 +130,23 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
         console.log('[VoiceAgent] 📡 Streaming TTS audio...');
 
-        const reader = response.body;
         let chunkCount = 0;
-
-        for await (const chunk of reader) {
+        for await (const chunk of response.body) {
           if (!isActive) {
             console.log('[VoiceAgent] Session stopped, ending TTS');
             break;
           }
-
           chunkCount++;
           ws.send(JSON.stringify({
-            type: 'audio_chunk',
-            audio: chunk.toString('base64'),
-            chunkIndex: chunkCount
+            type:       'audio_chunk',
+            audio:      chunk.toString('base64'),
+            chunkIndex: chunkCount,
           }));
         }
 
         ws.send(JSON.stringify({
-          type: 'audio_complete',
-          totalChunks: chunkCount
+          type:        'audio_complete',
+          totalChunks: chunkCount,
         }));
 
         console.log('[VoiceAgent] ✅ TTS complete:', chunkCount, 'chunks');
@@ -405,14 +154,266 @@ export const handleVoiceAgentWebSocket = (wss) => {
       } catch (error) {
         console.error('[VoiceAgent] ElevenLabs TTS error:', error.message);
         ws.send(JSON.stringify({
-          type: 'error',
+          type:    'error',
           message: 'Error generating speech',
-          error: error.message
+          error:   error.message,
         }));
       }
     };
 
-    // Handle disconnect
+    // ─── Process complete conversation turn ───────────────────────────────────
+    const processTurnComplete = async () => {
+      if (!accumulatedTranscript.trim() || isProcessingLLM || !isActive) return;
+
+      const userMessage     = accumulatedTranscript.trim();
+      accumulatedTranscript = '';
+      isProcessingLLM       = true;
+
+      console.log('[VoiceAgent] 💬 Processing turn:', userMessage);
+
+      try {
+        // Save user message to chat history
+        chat.messages.push({ role: 'user', content: userMessage });
+        await chat.save();
+
+        ws.send(JSON.stringify({ type: 'user_message', text: userMessage }));
+
+        // ── Build OpenAI messages array ──────────────────────────────────────
+        // Prepend the voice's prompt as a system message
+        const systemPrompt = voiceConfig?.prompt || DEFAULT_PROMPT;
+
+        const messages = [
+          { role: 'system', content: systemPrompt },
+          ...chat.messages.map(msg => ({ role: msg.role, content: msg.content })),
+        ];
+
+        console.log('[VoiceAgent] 🤖 Requesting OpenAI response with system prompt:', systemPrompt);
+
+        const completion = await openai.chat.completions.create({
+          model:       process.env.OPENAI_MODEL || 'gpt-4o-mini',
+          messages,
+          temperature: 0.7,
+          max_tokens:  500,
+        });
+
+        const aiResponse = completion.choices[0].message.content;
+        console.log('[VoiceAgent] ✅ OpenAI response received:', aiResponse.substring(0, 100) + '...');
+
+        // Save assistant message
+        chat.messages.push({ role: 'assistant', content: aiResponse });
+        await chat.save();
+
+        ws.send(JSON.stringify({ type: 'ai_response', text: aiResponse }));
+
+        // Generate and stream speech using the resolved voiceConfig
+        await streamElevenLabsTTS(aiResponse, ws);
+
+      } catch (error) {
+        console.error('[VoiceAgent] Error processing turn:', error);
+        ws.send(JSON.stringify({
+          type:    'error',
+          message: 'Error processing response',
+          error:   error.message,
+        }));
+      } finally {
+        isProcessingLLM = false;
+      }
+    };
+
+    // ─── Handle incoming messages ─────────────────────────────────────────────
+    ws.on('message', async (message) => {
+      try {
+        const data = JSON.parse(message);
+
+        // ── START ────────────────────────────────────────────────────────────
+        if (data.type === 'start') {
+          console.log('[VoiceAgent] Start command received:', {
+            chatId:    data.chatId,
+            userId:    data.userId,
+            voiceName: data.voiceName,
+          });
+
+          userId   = data.userId;
+          isActive = true;
+
+          // ── Resolve VoiceConfig from DB ─────────────────────────────────────
+          const requestedVoice = data.voiceName || 'krishna1';
+          voiceConfig = await VoiceConfig.findOne({ name: requestedVoice, isActive: true });
+
+          if (!voiceConfig) {
+            console.warn(`[VoiceAgent] ⚠️ Voice '${requestedVoice}' not found or inactive — falling back to defaults`);
+            // Continue with null voiceConfig; streamElevenLabsTTS + processTurnComplete handle fallback
+          } else {
+            console.log(`[VoiceAgent] 🎙️ Voice resolved: ${voiceConfig.displayName} (${voiceConfig.voiceId})`);
+          }
+
+          // ── Find or create chat ─────────────────────────────────────────────
+          if (data.chatId && data.chatId !== 'new') {
+            chat = await Chat.findOne({ _id: data.chatId, userId });
+          }
+
+          if (!chat) {
+            chat = new Chat({
+              userId,
+              title:    'Voice Agent Chat',
+              messages: [],
+            });
+            await chat.save();
+            console.log('[VoiceAgent] Created new chat:', chat._id);
+          }
+
+          // ── Initialize Deepgram ─────────────────────────────────────────────
+          try {
+            console.log('[VoiceAgent] Creating Deepgram connection...');
+
+            deepgramConnection = deepgramClient.listen.live({
+              model:           'nova-2',
+              language:        'en',
+              encoding:        'linear16',
+              sample_rate:     16000,
+              channels:        1,
+              interim_results: true,
+              utterance_end_ms: 2000,
+              vad_events:      true,
+              punctuate:       true,
+              smart_format:    true,
+            });
+
+            // Open
+            deepgramConnection.on(LiveTranscriptionEvents.Open, () => {
+              console.log('[VoiceAgent] ✅ Deepgram connection opened');
+
+              ws.send(JSON.stringify({
+                type:    'deepgram_connected',
+                message: 'Speech recognition active',
+              }));
+
+              ws.send(JSON.stringify({
+                type:      'started',
+                chatId:    chat._id,
+                voiceName: voiceConfig?.name || requestedVoice,
+                message:   'Voice agent started',
+              }));
+            });
+
+            // Transcript
+            deepgramConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
+              const transcript  = data.channel?.alternatives?.[0]?.transcript;
+              const isFinal     = data.is_final;
+              const speechFinal = data.speech_final;
+
+              if (transcript && transcript.trim()) {
+                console.log('[VoiceAgent] 🎤 Transcript:', {
+                  text:        transcript,
+                  isFinal,
+                  speechFinal,
+                  confidence:  data.channel?.alternatives?.[0]?.confidence,
+                });
+
+                ws.send(JSON.stringify({
+                  type:    'transcript',
+                  text:    transcript,
+                  isFinal,
+                }));
+
+                if (isFinal) {
+                  accumulatedTranscript += (accumulatedTranscript ? ' ' : '') + transcript;
+
+                  if (silenceTimer) clearTimeout(silenceTimer);
+                  silenceTimer = setTimeout(async () => {
+                    await processTurnComplete();
+                  }, SILENCE_THRESHOLD);
+                }
+              }
+            });
+
+            // UtteranceEnd
+            deepgramConnection.on(LiveTranscriptionEvents.UtteranceEnd, async () => {
+              console.log('[VoiceAgent] 🔚 Utterance end detected');
+              if (silenceTimer) clearTimeout(silenceTimer);
+              await processTurnComplete();
+            });
+
+            // Metadata
+            deepgramConnection.on(LiveTranscriptionEvents.Metadata, (data) => {
+              console.log('[VoiceAgent] 📊 Metadata:', {
+                request_id: data.request_id,
+                model_info: data.model_info,
+              });
+            });
+
+            // Error
+            deepgramConnection.on(LiveTranscriptionEvents.Error, (error) => {
+              console.error('[VoiceAgent] ❌ Deepgram error:', {
+                message: error.message,
+                type:    error.type,
+              });
+
+              ws.send(JSON.stringify({
+                type:    'error',
+                message: 'Speech recognition error',
+                error:   error.message,
+              }));
+
+              cleanup();
+            });
+
+            // Close
+            deepgramConnection.on(LiveTranscriptionEvents.Close, () => {
+              console.log('[VoiceAgent] Deepgram connection closed');
+            });
+
+            console.log('[VoiceAgent] Deepgram connection configured and waiting for open event...');
+
+          } catch (error) {
+            console.error('[VoiceAgent] Failed to initialize Deepgram:', error);
+
+            ws.send(JSON.stringify({
+              type:    'error',
+              message: 'Failed to initialize speech recognition',
+              error:   error.message,
+            }));
+
+            cleanup();
+          }
+
+        // ── STOP ─────────────────────────────────────────────────────────────
+        } else if (data.type === 'stop') {
+          console.log('[VoiceAgent] Stop command received');
+          cleanup();
+          ws.send(JSON.stringify({ type: 'stopped', message: 'Voice agent stopped' }));
+
+        // ── AUDIO ─────────────────────────────────────────────────────────────
+        } else if (data.type === 'audio') {
+          if (deepgramConnection && isActive) {
+            try {
+              const audioBuffer = Buffer.from(data.audio, 'base64');
+              deepgramConnection.send(audioBuffer);
+
+              audioChunkCount++;
+              if (audioChunkCount % 50 === 0) {
+                console.log(`[VoiceAgent] 📤 Sent ${audioChunkCount} audio chunks to Deepgram`);
+              }
+            } catch (error) {
+              console.error('[VoiceAgent] Error sending audio to Deepgram:', error.message);
+            }
+          } else {
+            if (!deepgramConnection) console.warn('[VoiceAgent] ⚠️ Received audio but Deepgram connection is null');
+            if (!isActive)          console.warn('[VoiceAgent] ⚠️ Received audio but session is not active');
+          }
+        }
+
+      } catch (error) {
+        console.error('[VoiceAgent] Error processing message:', error);
+        ws.send(JSON.stringify({
+          type:    'error',
+          message: 'Error processing message',
+          error:   error.message,
+        }));
+      }
+    });
+
+    // ─── Handle disconnect ────────────────────────────────────────────────────
     ws.on('close', () => {
       console.log('[VoiceAgent] Client disconnected');
       cleanup();
@@ -425,15 +426,17 @@ export const handleVoiceAgentWebSocket = (wss) => {
   });
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
 // Export setup function
+// ─────────────────────────────────────────────────────────────────────────────
 export const setupVoiceAgentWebSocket = (server) => {
-  const wss = new WebSocketServer({ 
+  const wss = new WebSocketServer({
     server,
-    path: '/api/voice/agent'
+    path: '/api/voice/agent',
   });
 
   handleVoiceAgentWebSocket(wss);
-  
+
   console.log('[VoiceAgent] ✅ WebSocket server initialized at /api/voice/agent');
   return wss;
 };

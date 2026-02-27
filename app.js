@@ -7,210 +7,220 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-// Import routes
-import partnerRoutes from './routes/partners.js';
-import superAdminAuthRoutes from './routes/auth/superAdminAuth.js';
-import adminAuthRoutes from './routes/auth/adminAuth.js';
-import clientAuthRoutes from './routes/auth/clientAuth.js';
-import userAuthRoutes from './routes/auth/userAuth.js';
-import passwordResetRoutes from './routes/auth/passwordReset.js';
-import userRoutes from './routes/users.js';
-import adminRoutes from './routes/admin.js';
-import clientRoutes from './routes/client.js';
-import superAdminRoutes from './routes/superAdmin.js';
-import clientProfileMobileRoutes from './routes/mobile/clientProfile.js';
-import userProfileMobileRoutes from './routes/mobile/userProfile.js';
-import partnerProfileMobileRoutes from './routes/mobile/partnerProfile.js';
-import mobileContentRoutes from './routes/mobile/content.js';
-import chatRoutes from './routes/mobile/chat.js';
-import avatarChatRoutes from './routes/mobile/avatarChat.js';
-import voiceRoutes from './routes/mobile/voice.js';
-import uploadRoutes from './routes/upload.js';
-import mediaRoutes from './routes/media.js';
-import testimonialRoutes from './routes/testimonials/index.js';
-import reviewRoutes from './routes/reviews.js';
-import founderMessageRoutes from './routes/founderMessages/index.js';
-import brandAssetRoutes from './routes/brandAssets/index.js';
-import sponsorRoutes from './routes/sponsors.js';
-import expertCategoryRoutes from './routes/expertCategories.js';
-import expertRoutes from './routes/experts.js';
-import meditationRoutes from './routes/meditations.js';
-import liveAvatarRoutes from './routes/liveAvatars.js';
-import brahmAvatarRoutes from './routes/brahmAvatars.js';
-import chantingRoutes from './routes/chantings.js';
-import prathanaRoutes from './routes/prathanas.js';
-import spiritualActivityRoutes from './routes/spiritualActivities.js';
+// ─── Route imports ────────────────────────────────────────────────────────────
+import partnerRoutes               from './routes/partners.js';
+import superAdminAuthRoutes        from './routes/auth/superAdminAuth.js';
+import adminAuthRoutes             from './routes/auth/adminAuth.js';
+import clientAuthRoutes            from './routes/auth/clientAuth.js';
+import userAuthRoutes              from './routes/auth/userAuth.js';
+import passwordResetRoutes         from './routes/auth/passwordReset.js';
+import userRoutes                  from './routes/users.js';
+import adminRoutes                 from './routes/admin.js';
+import clientRoutes                from './routes/client.js';
+import superAdminRoutes            from './routes/superAdmin.js';
+import clientProfileMobileRoutes   from './routes/mobile/clientProfile.js';
+import userProfileMobileRoutes     from './routes/mobile/userProfile.js';
+import partnerProfileMobileRoutes  from './routes/mobile/partnerProfile.js';
+import mobileContentRoutes         from './routes/mobile/content.js';
+import chatRoutes                  from './routes/mobile/chat.js';
+import avatarChatRoutes            from './routes/mobile/avatarChat.js';
+import voiceRoutes                 from './routes/mobile/voice.js';
+import uploadRoutes                from './routes/upload.js';
+import mediaRoutes                 from './routes/media.js';
+import testimonialRoutes           from './routes/testimonials/index.js';
+import reviewRoutes                from './routes/reviews.js';
+import founderMessageRoutes        from './routes/founderMessages/index.js';
+import brandAssetRoutes            from './routes/brandAssets/index.js';
+import sponsorRoutes               from './routes/sponsors.js';
+import expertCategoryRoutes        from './routes/expertCategories.js';
+import expertRoutes                from './routes/experts.js';
+import meditationRoutes            from './routes/meditations.js';
+import liveAvatarRoutes            from './routes/liveAvatars.js';
+import brahmAvatarRoutes           from './routes/brahmAvatars.js';
+import chantingRoutes              from './routes/chantings.js';
+import prathanaRoutes              from './routes/prathanas.js';
+import spiritualActivityRoutes     from './routes/spiritualActivities.js';
 import spiritualConfigurationRoutes from './routes/spiritualConfigurations.js';
-import spiritualClipRoutes from './routes/spiritualClips.js';
-import spiritualStatsRoutes from './routes/spiritualStats.js';
-import spiritualRewardsRoutes from './routes/spiritualRewards.js';
-import karmaPointsRoutes from './routes/karmaPoints.js';
-import rewardRedemptionsRoutes from './routes/rewardRedemptions.js';
-import chapterRoutes from './routes/chapters.js';
-import shlokaRoutes from './routes/shlokas.js';
-import sankalpRoutes from './routes/sankalp.js';
-import userSankalpRoutes from './routes/userSankalp.js';
-import leaderboardRoutes from './routes/leaderboard.js';
-import analyticsRoutes from './routes/analytics.js';
-import notificationRoutes from './routes/notifications.js';
-import pujaPadhatiRoutes from './routes/pujaPadhati.js';
-import swapnaDecoderRoutes from './routes/swapnaDecoder.js';
-import dreamRequestRoutes from './routes/dreamRequest.js';
+import spiritualClipRoutes         from './routes/spiritualClips.js';
+import spiritualStatsRoutes        from './routes/spiritualStats.js';
+import spiritualRewardsRoutes      from './routes/spiritualRewards.js';
+import karmaPointsRoutes           from './routes/karmaPoints.js';
+import rewardRedemptionsRoutes     from './routes/rewardRedemptions.js';
+import chapterRoutes               from './routes/chapters.js';
+import shlokaRoutes                from './routes/shlokas.js';
+import sankalpRoutes               from './routes/sankalp.js';
+import userSankalpRoutes           from './routes/userSankalp.js';
+import leaderboardRoutes           from './routes/leaderboard.js';
+import analyticsRoutes             from './routes/analytics.js';
+import notificationRoutes          from './routes/notifications.js';
+import pujaPadhatiRoutes           from './routes/pujaPadhati.js';
+import swapnaDecoderRoutes         from './routes/swapnaDecoder.js';
+import dreamRequestRoutes          from './routes/dreamRequest.js';
+import partnerUserChatRoutes       from './routes/chatRoutes.js';
 
-// ============ NEW: Import Chat Routes ============
-import partnerUserChatRoutes from './routes/chatRoutes.js';
+// ─── NEW: Voice Config Routes ─────────────────────────────────────────────────
+import voiceConfigRoutes           from './routes/voiceConfig.js';
 
-// Import services
-import { initializeSuperAdmin } from './config/initSuperAdmin.js';
+// ─── Service imports ──────────────────────────────────────────────────────────
+import { initializeSuperAdmin }    from './config/initSuperAdmin.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
-import './services/cronJobs.js';
+import { setupChatWebSocket }       from './services/chatWebSocket.js';
 
-// ============ NEW: Import Chat WebSocket Service ============
-import { setupChatWebSocket } from './services/chatWebSocket.js';
+// ─── NEW: Voice Config Seeder ─────────────────────────────────────────────────
+import { seedVoiceConfigs }         from './config/seedVoiceConfigs.js';
+
+import './services/cronJobs.js';
 
 dotenv.config();
 
-const app = express();
-
-// IMPORTANT: Create HTTP server FIRST before setting up WebSocket
+const app    = express();
 const server = http.createServer(app);
 
-// CORS Configuration - MUST BE BEFORE OTHER MIDDLEWARE
+// ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  origin:             true,
+  credentials:        true,
+  methods:            ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders:     ['Content-Type', 'Authorization'],
+  exposedHeaders:     ['Content-Range', 'X-Content-Range'],
+  preflightContinue:  false,
+  optionsSuccessStatus: 204,
 }));
 
-
-// Security Headers
+// ─── Security headers ─────────────────────────────────────────────────────────
 app.use((req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.setHeader('Cross-Origin-Opener-Policy',    'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Embedder-Policy',  'unsafe-none');
+  res.setHeader('Cross-Origin-Resource-Policy',  'cross-origin');
+  res.setHeader('Access-Control-Allow-Origin',   req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
+  res.setHeader('Access-Control-Allow-Methods',  'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers',  'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
-// Increase body parser limit for audio data (50MB)
+// ─── Body parsers ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Serve static files from uploads directory
+// ─── Static files ─────────────────────────────────────────────────────────────
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-// MongoDB Connection
+
+// ─── MongoDB + startup tasks ──────────────────────────────────────────────────
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/brahmakosh';
+
 mongoose.connect(MONGODB_URI)
-.then(async () => {
-  console.log('MongoDB connected successfully');
-  await initializeSuperAdmin();
-})
-.catch((err) => console.error('MongoDB connection error:', err));
+  .then(async () => {
+    console.log('MongoDB connected successfully');
+    await initializeSuperAdmin();
+    await seedVoiceConfigs(); // ← seed the 6 default voices on every startup (safe, uses $setOnInsert)
+  })
+  .catch((err) => console.error('MongoDB connection error:', err));
 
-// ============ REST API ROUTES ============
+// ─────────────────────────────────────────────────────────────────────────────
+// REST API ROUTES
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Partner Routes
+// Partner
 app.use('/api/partners', partnerRoutes);
 
-// Auth Routes
+// Auth
 app.use('/api/auth/super-admin', superAdminAuthRoutes);
-app.use('/api/auth/admin', adminAuthRoutes);
-app.use('/api/auth/client', clientAuthRoutes);
-app.use('/api/auth/user', userAuthRoutes);
-app.use('/api/auth/user', passwordResetRoutes);
+app.use('/api/auth/admin',       adminAuthRoutes);
+app.use('/api/auth/client',      clientAuthRoutes);
+app.use('/api/auth/user',        userAuthRoutes);
+app.use('/api/auth/user',        passwordResetRoutes);
 
-// Application Routes
-app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/client', clientRoutes);
+// Core application
+app.use('/api/users',       userRoutes);
+app.use('/api/admin',       adminRoutes);
+app.use('/api/client',      clientRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 
-// Mobile API Routes
-app.use('/api/mobile/client', clientProfileMobileRoutes);
-app.use('/api/mobile/user', userProfileMobileRoutes);
-// app.use('/api/mobile/realtime-agent', realtimeAgentRoutes);
-app.use('/api/mobile/chat', chatRoutes);
+// Mobile
+app.use('/api/mobile/client',  clientProfileMobileRoutes);
+app.use('/api/mobile/user',    userProfileMobileRoutes);
+app.use('/api/mobile/chat',    chatRoutes);
 app.use('/api/mobile/avatar-chat', avatarChatRoutes);
-app.use('/api/mobile/voice', voiceRoutes);
+app.use('/api/mobile/voice',   voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
 app.use('/api/mobile/content', mobileContentRoutes);
-// Partner–User Chat (partners list, conversations, messages)
+
+// Partner–User Chat
 app.use('/api/chat', partnerUserChatRoutes);
 
-// Upload & Media Routes
-app.use('/api/upload', uploadRoutes);
-app.use('/api/media', mediaRoutes);
+// ─── NEW: Voice Configuration ─────────────────────────────────────────────────
+// Endpoints:
+//   GET    /api/voice-config              → list all voices
+//   GET    /api/voice-config?gender=male  → filter by gender
+//   GET    /api/voice-config/:name        → single voice
+//   PUT    /api/voice-config/:name/voice-id  → change ElevenLabs voice ID
+//   PUT    /api/voice-config/:name/prompt    → update AI prompt
+//   PUT    /api/voice-config/:name/prompt/reset → reset prompt to default
+//   PATCH  /api/voice-config/:name/toggle    → toggle active/inactive
+//   PUT    /api/voice-config/:name           → full update
+app.use('/api/voice-config', voiceConfigRoutes);
 
-// Content Routes
-app.use('/api/testimonials', testimonialRoutes);
-app.use('/api/reviews', reviewRoutes);
-app.use('/api/sponsors', sponsorRoutes);
-app.use('/api/expert-categories', expertCategoryRoutes);
-app.use('/api/experts', expertRoutes);
-app.use('/api/meditations', meditationRoutes);
-app.use('/api/live-avatars', liveAvatarRoutes);
-app.use('/api/brahm-avatars', brahmAvatarRoutes);
-app.use('/api/chantings', chantingRoutes);
-app.use('/api/prathanas', prathanaRoutes);
-app.use('/api/spiritual-activities', spiritualActivityRoutes);
-app.use('/api/spiritual-configurations', spiritualConfigurationRoutes);
-app.use('/api/spiritual-clips', spiritualClipRoutes);
-app.use('/api/founder-messages', founderMessageRoutes);
-app.use('/api/brand-assets', brandAssetRoutes);
-app.use('/api/spiritual-stats', spiritualStatsRoutes);
-app.use('/api/spiritual-rewards', spiritualRewardsRoutes);
-app.use('/api/karma-points', karmaPointsRoutes);
-app.use('/api/reward-redemptions', rewardRedemptionsRoutes);
-app.use('/api/chapters', chapterRoutes);
-app.use('/api/shlokas', shlokaRoutes);
-app.use('/api/sankalp', sankalpRoutes);
-app.use('/api/user-sankalp', userSankalpRoutes);
-app.use('/api/leaderboard', leaderboardRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/notifications', notificationRoutes);
-app.use('/api/puja-padhati', pujaPadhatiRoutes);
-app.use('/api/swapna-decoder', swapnaDecoderRoutes);
-app.use('/api/dream-requests', dreamRequestRoutes);
+// Upload & Media
+app.use('/api/upload', uploadRoutes);
+app.use('/api/media',  mediaRoutes);
+
+// Content
+app.use('/api/testimonials',              testimonialRoutes);
+app.use('/api/reviews',                   reviewRoutes);
+app.use('/api/sponsors',                  sponsorRoutes);
+app.use('/api/expert-categories',         expertCategoryRoutes);
+app.use('/api/experts',                   expertRoutes);
+app.use('/api/meditations',               meditationRoutes);
+app.use('/api/live-avatars',              liveAvatarRoutes);
+app.use('/api/brahm-avatars',             brahmAvatarRoutes);
+app.use('/api/chantings',                 chantingRoutes);
+app.use('/api/prathanas',                 prathanaRoutes);
+app.use('/api/spiritual-activities',      spiritualActivityRoutes);
+app.use('/api/spiritual-configurations',  spiritualConfigurationRoutes);
+app.use('/api/spiritual-clips',           spiritualClipRoutes);
+app.use('/api/founder-messages',          founderMessageRoutes);
+app.use('/api/brand-assets',              brandAssetRoutes);
+app.use('/api/spiritual-stats',           spiritualStatsRoutes);
+app.use('/api/spiritual-rewards',         spiritualRewardsRoutes);
+app.use('/api/karma-points',              karmaPointsRoutes);
+app.use('/api/reward-redemptions',        rewardRedemptionsRoutes);
+app.use('/api/chapters',                  chapterRoutes);
+app.use('/api/shlokas',                   shlokaRoutes);
+app.use('/api/sankalp',                   sankalpRoutes);
+app.use('/api/user-sankalp',              userSankalpRoutes);
+app.use('/api/leaderboard',               leaderboardRoutes);
+app.use('/api/analytics',                 analyticsRoutes);
+app.use('/api/notifications',             notificationRoutes);
+app.use('/api/puja-padhati',              pujaPadhatiRoutes);
+app.use('/api/swapna-decoder',            swapnaDecoderRoutes);
+app.use('/api/dream-requests',            dreamRequestRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Server is running' });
 });
 
-// Error handling middleware
+// Error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ 
-    success: false, 
-    message: 'Something went wrong!', 
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+  res.status(500).json({
+    success: false,
+    message: 'Something went wrong!',
+    error:   process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 
-// ============ WEBSOCKET SETUP ============
-// Setup WebSocket AFTER all routes are configured
+// ─────────────────────────────────────────────────────────────────────────────
+// WEBSOCKET SETUP (after all REST routes)
+// ─────────────────────────────────────────────────────────────────────────────
+setupVoiceAgentWebSocket(server);   // /api/voice/agent
+setupChatWebSocket(server);         // Partner-User Chat WebSocket
 
-// 1. Voice Agent WebSocket (existing)
-setupVoiceAgentWebSocket(server);
-
-// ============ NEW: 2. Chat WebSocket for Partner-User Communication ============
-setupChatWebSocket(server);
-
-// ============ EXPORT SERVER (NOT APP) ============
-// This ensures WebSocket is attached to the actual running server
+// ─────────────────────────────────────────────────────────────────────────────
 export default server;
 export { app };

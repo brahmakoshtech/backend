@@ -706,9 +706,17 @@ router.get('/partners', authenticate, authorize('client', 'admin', 'super_admin'
       query.verificationStatus = 'rejected';
     }
 
-    // ✅ Always filter by clientId for client role
     if (req.user.role === 'client') {
-      query.clientId = req.user._id;
+      // Support both newer partners linked by clientId and older ones linked by clientCode
+      query.$and = [
+        ...(query.$and || []),
+        {
+          $or: [
+            { clientId: req.user._id },
+            { clientCode: req.user.clientId }
+          ]
+        }
+      ];
     } else if (req.query.clientId) {
       const client = await Client.findOne({ clientId: req.query.clientId.toUpperCase() });
       if (client) query.clientId = client._id;
