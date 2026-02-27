@@ -409,10 +409,17 @@ router.get('/partners/pending', authenticate, authorize('client', 'admin', 'supe
     const skip = (pageNum - 1) * pageSize;
 
     const query = {
-      registrationStep: { $gte: 3 },
       isActive: false,
+      verificationStatus: { $ne: 'rejected' },
       isDeleted: { $ne: true }
     };
+
+    // Some older partner records may not have registrationStep set.
+    // Treat missing registrationStep as "eligible" for listing.
+    query.$or = [
+      { registrationStep: { $gte: 3 } },
+      { registrationStep: { $exists: false } }
+    ];
 
     if (req.user.role === 'client') {
       query.clientId = req.user._id;
@@ -495,6 +502,8 @@ router.post('/partners/:partnerId/approve', authenticate, authorize('client', 'a
     }
 
     partner.isActive = true;
+    partner.verificationStatus = 'approved';
+    partner.verifiedAt = new Date();
     await partner.save();
 
     res.json({
@@ -574,9 +583,67 @@ router.post('/partners/:partnerId/reject', authenticate, authorize('client', 'ad
 });
 
 /**
+ * Soft delete a partner (hide from lists)
+ * DELETE /api/client/partners/:partnerId
+ * Access: client (own partners), admin, super_admin
+ */
+router.delete('/partners/:partnerId', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { partnerId } = req.params;
+
+    const partner = await Partner.findById(partnerId);
+    if (!partner) {
+      return res.status(404).json({
+        success: false,
+        message: 'Partner not found'
+      });
+    }
+
+    if (req.user.role === 'client') {
+      if (!partner.clientId || partner.clientId.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'You can only delete partners registered under your client account'
+        });
+      }
+    }
+
+    if (partner.isDeleted) {
+      return res.status(400).json({
+        success: false,
+        message: 'Partner already deleted'
+      });
+    }
+
+    partner.isDeleted = true;
+    partner.isActive = false;
+    await partner.save();
+
+    res.json({
+      success: true,
+      message: 'Partner deleted successfully',
+      data: {
+        partner: {
+          _id: partner._id,
+          email: partner.email,
+          name: partner.name
+        }
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Delete partner error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete partner',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
  * List all partners (approved and pending) for client
  * GET /api/client/partners
- * Query: ?page=1&limit=25&search=query&status=all|pending|approved
+ * Query: ?page=1&limit=25&search=query&status=all|pending|approved|rejected
  * Access: client (own partners), admin, super_admin
  */
 router.get('/partners', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
@@ -587,14 +654,18 @@ router.get('/partners', authenticate, authorize('client', 'admin', 'super_admin'
     const skip = (pageNum - 1) * pageSize;
 
     const query = {
-      registrationStep: { $gte: 3 },
       isDeleted: { $ne: true }
     };
 
     if (status === 'pending') {
       query.isActive = false;
+      query.verificationStatus = { $ne: 'rejected' };
     } else if (status === 'approved') {
       query.isActive = true;
+      query.verificationStatus = { $ne: 'rejected' };
+    } else if (status === 'rejected') {
+      query.isActive = false;
+      query.verificationStatus = 'rejected';
     }
 
     if (req.user.role === 'client') {
