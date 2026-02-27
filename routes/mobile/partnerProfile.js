@@ -4,6 +4,7 @@ import { PutObjectCommand
       } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import Partner from '../../models/Partner.js';
+import ServiceCreditLedger from '../../models/ServiceCreditLedger.js';
 import Client from '../../models/Client.js';
 import { generateToken, authenticate } from '../../middleware/auth.js';
 import {
@@ -1018,15 +1019,74 @@ router.get('/profile', authenticate, async (req, res) => {
 
     const partnerData = partner.toObject();
 
-    // Ensure stats object is always present with default numeric values
-    partnerData.stats = {
-      totalEarnings: 0,
-      thisMonthEarnings: 0,
-      lastMonthEarnings: 0,
-      averageSessionDuration: 0,
-      responseTime: 0,
-      ...(partnerData.stats || {})
-    };
+    // Compute earnings stats from unified ServiceCreditLedger
+    try {
+      const now = new Date();
+      const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const startOfLastMonth = new Date(
+        now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear(),
+        now.getMonth() === 0 ? 11 : now.getMonth() - 1,
+        1
+      );
+      const endOfLastMonth = new Date(startOfThisMonth.getTime() - 1);
+
+      const [aggAll, aggThis, aggLast] = await Promise.all([
+        ServiceCreditLedger.aggregate([
+          { $match: { partnerId: partner._id } },
+          { $group: { _id: null, total: { $sum: '$partnerCredited' } } }
+        ]),
+        ServiceCreditLedger.aggregate([
+          { $match: { partnerId: partner._id, createdAt: { $gte: startOfThisMonth } } },
+          { $group: { _id: null, total: { $sum: '$partnerCredited' } } }
+        ]),
+        ServiceCreditLedger.aggregate([
+          {
+            $match: {
+              partnerId: partner._id,
+              createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth }
+            }
+          },
+          { $group: { _id: null, total: { $sum: '$partnerCredited' } } }
+        ])
+      ]);
+
+      const totalEarnings = aggAll[0]?.total || 0;
+      const thisMonthEarnings = aggThis[0]?.total || 0;
+      const lastMonthEarnings = aggLast[0]?.total || 0;
+
+      // Average session duration (in minutes) based on billableMinutes
+      const aggDuration = await ServiceCreditLedger.aggregate([
+        { $match: { partnerId: partner._id } },
+        {
+          $group: {
+            _id: null,
+            totalMinutes: { $sum: '$billableMinutes' },
+            count: { $sum: 1 }
+          }
+        }
+      ]);
+      const avgMinutes =
+        aggDuration[0]?.count > 0 ? aggDuration[0].totalMinutes / aggDuration[0].count : 0;
+
+      partnerData.stats = {
+        totalEarnings,
+        thisMonthEarnings,
+        lastMonthEarnings,
+        averageSessionDuration: avgMinutes,
+        // Keep any existing responseTime from partner document if set
+        responseTime: partnerData.stats?.responseTime || 0
+      };
+    } catch (statsErr) {
+      console.error('Error computing partner stats from ServiceCreditLedger:', statsErr);
+      // Fallback to zeros if aggregation fails
+      partnerData.stats = {
+        totalEarnings: 0,
+        thisMonthEarnings: 0,
+        lastMonthEarnings: 0,
+        averageSessionDuration: 0,
+        responseTime: partnerData.stats?.responseTime || 0
+      };
+    }
 
     if (profilePictureUrl) {
       partnerData.profilePictureUrl = profilePictureUrl;
