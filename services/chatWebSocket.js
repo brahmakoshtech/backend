@@ -5,6 +5,7 @@ import Conversation from '../models/Conversation.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
 import ServiceCreditLedger from '../models/ServiceCreditLedger.js';
+import VoiceCallLog from '../models/VoiceCallLog.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -362,9 +363,37 @@ export const setupChatWebSocket = (server) => {
         const existingCallerCall = activeVoiceCalls.get(callerKey);
         const existingPeerCall = activeVoiceCalls.get(peerKey);
         if (existingCallerCall && existingCallerCall !== conversationId) {
+          await VoiceCallLog.findOneAndUpdate(
+            { conversationId },
+            {
+              conversationId,
+              userId: conversation.userId?._id || conversation.userId,
+              partnerId: conversation.partnerId?._id || conversation.partnerId,
+              status: 'busy',
+              initiatedBy: { id: userId, type: userType },
+              from: { id: userId, type: userType, name: user.email || user.name, email: user.email || null },
+              to: { id: peerId, type: userType === 'partner' ? 'user' : 'partner', name: peerInfo?.name || null, email: peerInfo?.email || null },
+              initiatedAt: new Date()
+            },
+            { upsert: true, new: true }
+          );
           return callback?.({ success: false, message: 'You are already in another voice call' });
         }
         if (existingPeerCall && existingPeerCall !== conversationId) {
+          await VoiceCallLog.findOneAndUpdate(
+            { conversationId },
+            {
+              conversationId,
+              userId: conversation.userId?._id || conversation.userId,
+              partnerId: conversation.partnerId?._id || conversation.partnerId,
+              status: 'busy',
+              initiatedBy: { id: userId, type: userType },
+              from: { id: userId, type: userType, name: user.email || user.name, email: user.email || null },
+              to: { id: peerId, type: userType === 'partner' ? 'user' : 'partner', name: peerInfo?.name || null, email: peerInfo?.email || null },
+              initiatedAt: new Date()
+            },
+            { upsert: true, new: true }
+          );
           return callback?.({ success: false, message: 'Peer is currently busy in another call' });
         }
 
@@ -394,6 +423,22 @@ export const setupChatWebSocket = (server) => {
 
         // Track start time for billing
         voiceCallStartedAt.set(conversationId, startedAt);
+
+        // Persist call log (ringing)
+        await VoiceCallLog.findOneAndUpdate(
+          { conversationId },
+          {
+            conversationId,
+            userId: conversation.userId?._id || conversation.userId,
+            partnerId: conversation.partnerId?._id || conversation.partnerId,
+            status: 'ringing',
+            initiatedBy: { id: userId, type: userType },
+            from: { id: userId, type: userType, name: user.email || user.name, email: user.email || null },
+            to: { id: peerId, type: userType === 'partner' ? 'user' : 'partner', name: peerInfo?.name || null, email: peerInfo?.email || null },
+            initiatedAt: startedAt
+          },
+          { upsert: true, new: true }
+        );
 
         // Mark both participants as being in a voice call for this conversation
         activeVoiceCalls.set(callerKey, conversationId);
@@ -469,6 +514,15 @@ export const setupChatWebSocket = (server) => {
           }
         }
 
+        // Persist call log (accepted)
+        await VoiceCallLog.findOneAndUpdate(
+          { conversationId },
+          {
+            status: 'in_call',
+            acceptedAt: new Date()
+          }
+        );
+
         const callerSocketId = activeConnections.get(peerId);
         if (!callerSocketId) {
           return callback?.({ success: false, message: 'Caller is offline' });
@@ -529,6 +583,16 @@ export const setupChatWebSocket = (server) => {
           io.to(callerSocketId).emit('voice:call:rejected', payload);
         }
 
+        // Persist call log (rejected)
+        await VoiceCallLog.findOneAndUpdate(
+          { conversationId },
+          {
+            status: 'rejected',
+            rejectedAt: payload.rejectedAt,
+            rejectedBy: { id: userId, type: userType }
+          }
+        );
+
         // Clear active call state for both participants
         if (conversation) {
           const callerKey = peerId;
@@ -585,6 +649,8 @@ export const setupChatWebSocket = (server) => {
         }
 
         // Voice billing + unified ledger (does not depend on chat acceptance)
+        let billableMinutesForLog = 0;
+        let durationSecondsForLog = 0;
         try {
           const startTime =
             voiceCallStartedAt.get(conversationId) ||
@@ -596,6 +662,8 @@ export const setupChatWebSocket = (server) => {
           const durationMs = Math.max(0, endedAt.getTime() - startTime.getTime());
           const rawMinutes = durationMs / (1000 * 60);
           const billableMinutes = Math.max(1, Math.ceil(isFinite(rawMinutes) ? rawMinutes : 1));
+          billableMinutesForLog = billableMinutes;
+          durationSecondsForLog = Math.round(durationMs / 1000);
 
           const USER_RATE_PER_MIN = parseInt(process.env.CHAT_USER_RATE_PER_MIN, 10) || 4;
           const PARTNER_RATE_PER_MIN = parseInt(process.env.CHAT_PARTNER_RATE_PER_MIN, 10) || 3;
@@ -643,6 +711,22 @@ export const setupChatWebSocket = (server) => {
           }
         } catch (billingErr) {
           console.error('❌ Voice billing / ledger failed:', billingErr.message);
+        }
+
+        // Persist call log (ended)
+        try {
+          await VoiceCallLog.findOneAndUpdate(
+            { conversationId },
+            {
+              status: 'ended',
+              endedAt,
+              endedBy: { id: userId, type: userType },
+              durationSeconds: durationSecondsForLog,
+              billableMinutes: billableMinutesForLog
+            }
+          );
+        } catch (logErr) {
+          console.error('❌ Voice call log update failed:', logErr.message);
         }
 
         callback?.({ success: true, message: 'Call ended', call: payload });

@@ -6,6 +6,7 @@ import Conversation from '../models/Conversation.js';
 import ConversationSession from '../models/ConversationSession.js';
 import ChatCreditLedger from '../models/ChatCreditLedger.js';
 import ServiceCreditLedger from '../models/ServiceCreditLedger.js';
+import VoiceCallLog from '../models/VoiceCallLog.js';
 import Partner from '../models/Partner.js';
 import User from '../models/User.js';
 import astrologyService from '../services/astrologyService.js';
@@ -817,6 +818,7 @@ router.get('/conversations', authenticate, async (req, res) => {
       userAstrology: conv.userAstrology,
       startedAt: conv.startedAt,
       endedAt: conv.endedAt,
+      messagesCount: conv.sessionDetails?.messagesCount ?? 0,
       createdAt: conv.createdAt
     }));
 
@@ -1584,6 +1586,97 @@ router.post('/voice/recording/upload-url', authenticate, async (req, res) => {
       message: 'Failed to generate upload URL for voice recording',
       error: error.message
     });
+  }
+});
+
+// ==================== VOICE CALL LOG HISTORY ====================
+
+// @route   GET /api/chat/voice/calls/history/user
+// @desc    Get paginated voice call logs for current user
+// @access  Private (User)
+router.get('/voice/calls/history/user', authenticate, async (req, res) => {
+  try {
+    if (req.userType !== 'user') {
+      return res.status(403).json({ success: false, message: 'Only users can access this endpoint' });
+    }
+
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      VoiceCallLog.find({ userId: req.userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      VoiceCallLog.countDocuments({ userId: req.userId })
+    ]);
+
+    // Join recording keys (if any) from Conversation
+    const convIds = items.map((i) => i.conversationId).filter(Boolean);
+    const convDocs = await Conversation.find({ conversationId: { $in: convIds } })
+      .select('conversationId metadata.voiceRecordings')
+      .lean();
+    const convMap = new Map(convDocs.map((c) => [c.conversationId, c]));
+
+    const data = items.map((i) => ({
+      ...i,
+      voiceRecordings: convMap.get(i.conversationId)?.metadata?.voiceRecordings || null
+    }));
+
+    res.json({
+      success: true,
+      data,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching user voice call logs:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch voice call logs', error: error.message });
+  }
+});
+
+// @route   GET /api/chat/voice/calls/history/partner
+// @desc    Get paginated voice call logs for current partner
+// @access  Private (Partner)
+router.get('/voice/calls/history/partner', authenticate, async (req, res) => {
+  try {
+    if (req.userType !== 'partner') {
+      return res.status(403).json({ success: false, message: 'Only partners can access this endpoint' });
+    }
+
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [items, total] = await Promise.all([
+      VoiceCallLog.find({ partnerId: req.userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      VoiceCallLog.countDocuments({ partnerId: req.userId })
+    ]);
+
+    const convIds = items.map((i) => i.conversationId).filter(Boolean);
+    const convDocs = await Conversation.find({ conversationId: { $in: convIds } })
+      .select('conversationId metadata.voiceRecordings')
+      .lean();
+    const convMap = new Map(convDocs.map((c) => [c.conversationId, c]));
+
+    const data = items.map((i) => ({
+      ...i,
+      voiceRecordings: convMap.get(i.conversationId)?.metadata?.voiceRecordings || null
+    }));
+
+    res.json({
+      success: true,
+      data,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) }
+    });
+  } catch (error) {
+    console.error('❌ Error fetching partner voice call logs:', error.message);
+    res.status(500).json({ success: false, message: 'Failed to fetch voice call logs', error: error.message });
   }
 });
 
