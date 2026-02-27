@@ -597,9 +597,9 @@ router.post('/register/step3', async (req, res) => {
  * POST /api/mobile/partner/register/step4
  * Headers: Authorization: Bearer <token>
  * Content-Type: multipart/form-data
- * Fields: image (file)
+ * Fields: image (file) - field name can be "image" or any image file; we will auto-detect
  */
-router.post('/register/step4', authenticate, upload.single('image'), async (req, res) => {
+router.post('/register/step4', authenticate, upload.any(), async (req, res) => {
   try {
     if (req.user.role !== 'partner') {
       return res.status(403).json({
@@ -608,11 +608,13 @@ router.post('/register/step4', authenticate, upload.single('image'), async (req,
       });
     }
 
-    const imageFile = req.file;
+    // Accept any image file field (image, file, profilePicture, etc.)
+    const filesArray = Array.isArray(req.files) ? req.files : (req.file ? [req.file] : []);
+    const imageFile = filesArray.find((f) => f.mimetype && f.mimetype.startsWith('image/'));
     if (!imageFile) {
       return res.status(400).json({
         success: false,
-        message: 'Image file is required (field name: image)',
+        message: 'Image file is required. Please send as multipart/form-data with an image file field.',
       });
     }
 
@@ -1015,6 +1017,17 @@ router.get('/profile', authenticate, async (req, res) => {
     }
 
     const partnerData = partner.toObject();
+
+    // Ensure stats object is always present with default numeric values
+    partnerData.stats = {
+      totalEarnings: 0,
+      thisMonthEarnings: 0,
+      lastMonthEarnings: 0,
+      averageSessionDuration: 0,
+      responseTime: 0,
+      ...(partnerData.stats || {})
+    };
+
     if (profilePictureUrl) {
       partnerData.profilePictureUrl = profilePictureUrl;
     }
