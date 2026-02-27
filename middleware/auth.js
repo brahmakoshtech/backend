@@ -68,9 +68,6 @@ export const authenticate = async (req, res, next) => {
         user = await Partner.findById(partnerId).select('-password');
         if (user) {
           user.role = 'partner';
-          if (!user.isActive) {
-            user = null;
-          }
         }
       }
     }
@@ -90,10 +87,12 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    if (!user.isActive) {
-      return res.status(401).json({ 
-        success: false, 
-        message: 'User account is inactive.' 
+    // For non-partner roles, block inactive accounts.
+    // Partners may be inactive during registration (awaiting client approval) but still need access to some flows.
+    if (user.role !== 'partner' && !user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: 'User account is inactive.'
       });
     }
 
