@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import Partner from '../../models/Partner.js';
 import Client from '../../models/Client.js';
+import Review from '../../models/Review.js';
 import multer from 'multer';
 import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
 import { authenticate } from '../../middleware/auth.js';
@@ -129,6 +130,22 @@ router.get('/', authenticate, async (req, res) => {
     const expertsWithUrls = await Promise.all(
       experts.map(async (expert) => {
         const expertObj = withClientIdString(expert);
+        
+        // Calculate actual review count and rating from Review collection
+        const reviews = await Review.find({ 
+          expertId: expert._id, 
+          isActive: true 
+        });
+        
+        const reviewCount = reviews.length;
+        const avgRating = reviewCount > 0 
+          ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount).toFixed(1)
+          : expert.rating || 0;
+        
+        expertObj.reviews = reviewCount;
+        expertObj.totalRatings = reviewCount;
+        expertObj.rating = parseFloat(avgRating);
+        
         // partner profile picture
         if (expertObj.profilePictureKey || expertObj.profilePicture) {
           try {
@@ -186,6 +203,22 @@ router.get('/:id', authenticate, async (req, res) => {
     }
     
     const expertObj = withClientIdString(expert);
+    
+    // Calculate actual review count and rating from Review collection
+    const reviews = await Review.find({ 
+      expertId: expert._id, 
+      isActive: true 
+    });
+    
+    const reviewCount = reviews.length;
+    const avgRating = reviewCount > 0 
+      ? (reviews.reduce((sum, r) => sum + r.rating, 0) / reviewCount).toFixed(1)
+      : expert.rating || 0;
+    
+    expertObj.reviews = reviewCount;
+    expertObj.totalRatings = reviewCount;
+    expertObj.rating = parseFloat(avgRating);
+    
     if (expertObj.profilePictureKey || expertObj.profilePicture) {
       try {
         const imageKey = expertObj.profilePictureKey || extractS3KeyFromUrl(expertObj.profilePicture);

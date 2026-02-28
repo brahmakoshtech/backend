@@ -769,12 +769,14 @@ router.post('/save-session', async (req, res) => {
       type,
       title,
       karmaPoints: karmaPoints || 0,
-      emotion,
-      videoUrl: videoUrl || '',
-      audioUrl: audioUrl || '',
-      videoKey: videoKey || '',
-      audioKey: audioKey || ''
+      emotion
     };
+    
+    // Add video/audio URLs and keys if provided
+    if (videoUrl) sessionData.videoUrl = videoUrl;
+    if (audioUrl) sessionData.audioUrl = audioUrl;
+    if (videoKey) sessionData.videoKey = videoKey;
+    if (audioKey) sessionData.audioKey = audioKey;
     
     if (type === 'chanting') {
       // For chanting: use chantCount, chantingName, status, completionPercentage
