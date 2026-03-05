@@ -1,5 +1,5 @@
 import express from 'express';
-import VoiceConfig from '../models/VoiceConfig.js';
+import VoiceConfig from '../models/voiceConfig.js';
 
 const router = express.Router();
 
