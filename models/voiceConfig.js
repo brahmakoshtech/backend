@@ -78,5 +78,5 @@ const voiceConfigSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-const VoiceConfig = mongoose.model('VoiceConfig', voiceConfigSchema);
+const VoiceConfig = mongoose.models.VoiceConfig || mongoose.model('VoiceConfig', voiceConfigSchema);
 export default VoiceConfig;
