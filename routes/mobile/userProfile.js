@@ -1930,4 +1930,67 @@ router.post('/get-location', authenticate, async (req, res) => {
 
 
 
+/**
+ * Get Astrology Data
+ * GET /api/mobile/user/astrology
+ * Headers: Authorization: Bearer <token>
+ * Query: ?refresh=true (optional - force refresh from API)
+ */
+router.get('/astrology', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'user') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. User access required.'
+      });
+    }
+
+    const user = await User.findById(req.user._id).select('profile liveLocation');
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if birth details are complete
+    const profileWithLocation = {
+      ...user.profile,
+      latitude: user.liveLocation?.latitude ?? user.profile?.latitude,
+      longitude: user.liveLocation?.longitude ?? user.profile?.longitude
+    };
+
+    if (!profileWithLocation.dob || !profileWithLocation.timeOfBirth ||
+        profileWithLocation.latitude == null || profileWithLocation.longitude == null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Incomplete birth details. Please provide date of birth, time of birth, and location (latitude/longitude).'
+      });
+    }
+
+    // Check if force refresh is requested
+    const forceRefresh = req.query.refresh === 'true';
+
+    // Get astrology data (from cache or API)
+    const astrologyData = await astrologyService.getCompleteAstrologyData(
+      user._id,
+      profileWithLocation,
+      forceRefresh
+    );
+
+    res.json({
+      success: true,
+      message: 'Astrology data retrieved successfully',
+      data: astrologyData
+    });
+  } catch (error) {
+    console.error('Get astrology data error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch astrology data'
+    });
+  }
+});
+
 export default router;
