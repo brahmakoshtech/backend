@@ -3,7 +3,7 @@ import { createClient, LiveTranscriptionEvents } from '@deepgram/sdk';
 import OpenAI from 'openai';
 import fetch from 'node-fetch';
 import Chat from '../../models/Chat.js';
-import VoiceConfig from '../../models/VoiceConfig.js';
+import VoiceConfig from '../../models/voiceConfig.js';
 
 // ─── Validate environment variables ──────────────────────────────────────────
 const deepgramApiKey   = process.env.DEEPGRAM_API_KEY;
