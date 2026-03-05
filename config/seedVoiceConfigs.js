@@ -1,4 +1,4 @@
-import VoiceConfig from '../models/VoiceConfig.js';
+import VoiceConfig from '../models/voiceConfig.js';
 
 /**
  * Default ElevenLabs Voice IDs
