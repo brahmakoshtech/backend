@@ -7,6 +7,8 @@ import { authenticate, authorize } from '../middleware/auth.js';
 import User from '../models/User.js';
 import Client from '../models/Client.js';
 import Partner from '../models/Partner.js';
+import Agent from '../models/Agent.js';
+import VoiceConfig from '../models/voiceConfig.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
 import Credit from '../models/Credit.js';
@@ -654,7 +656,6 @@ router.delete('/partners/:partnerId', authenticate, authorize('client', 'admin',
       });
     }
 
-    partner.isDeleted = true;
     partner.isActive = false;
     await partner.save();
 
@@ -2510,4 +2511,145 @@ router.get('/dashboard/overview', authenticate, authorize('client', 'admin', 'su
     });
   }
 });
+
+// ============================================================================
+// AGENTS (Client-configurable Ask AI presets)
+// ============================================================================
+
+router.get('/agents', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    let clientId = null;
+
+    if (req.user.role === 'client') {
+      clientId = req.user._id;
+    } else if (req.query.clientId) {
+      clientId = req.query.clientId;
+    }
+
+    const query = clientId ? { clientId } : {};
+    const agents = await Agent.find(query).sort({ createdAt: -1 }).lean();
+
+    res.json({ success: true, data: agents });
+  } catch (error) {
+    console.error('[Client API] Get agents error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch agents',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+router.post('/agents', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { name, description, voiceName, systemPrompt, isActive } = req.body || {};
+
+    if (!name || typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ success: false, message: 'name is required' });
+    }
+    if (!voiceName || typeof voiceName !== 'string' || !voiceName.trim()) {
+      return res.status(400).json({ success: false, message: 'voiceName is required' });
+    }
+    if (!systemPrompt || typeof systemPrompt !== 'string' || !systemPrompt.trim()) {
+      return res.status(400).json({ success: false, message: 'systemPrompt is required' });
+    }
+
+    const clientId = req.user.role === 'client' ? req.user._id : (req.body.clientId || null);
+    if (!clientId) {
+      return res.status(400).json({ success: false, message: 'clientId is required for admin/super_admin' });
+    }
+
+    const voice = await VoiceConfig.findOne({ name: voiceName.trim() }).lean();
+    if (!voice) {
+      return res.status(400).json({ success: false, message: `Invalid voiceName '${voiceName}'` });
+    }
+
+    const agent = await Agent.create({
+      clientId,
+      name: name.trim(),
+      description: (description || '').toString().trim(),
+      voiceName: voiceName.trim(),
+      systemPrompt: systemPrompt.trim(),
+      isActive: typeof isActive === 'boolean' ? isActive : true,
+      createdByRole: req.user.role,
+      createdBy: req.user._id,
+    });
+
+    res.status(201).json({ success: true, message: 'Agent created', data: agent });
+  } catch (error) {
+    const isDup = error?.code === 11000;
+    if (isDup) {
+      return res.status(409).json({ success: false, message: 'Agent name already exists for this client' });
+    }
+    console.error('[Client API] Create agent error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create agent',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+router.put('/agents/:agentId', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const { name, description, voiceName, systemPrompt, isActive } = req.body || {};
+
+    const agent = await Agent.findById(agentId);
+    if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+    if (req.user.role === 'client' && agent.clientId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (name !== undefined) agent.name = String(name).trim();
+    if (description !== undefined) agent.description = String(description).trim();
+    if (voiceName !== undefined) {
+      const voice = await VoiceConfig.findOne({ name: String(voiceName).trim() }).lean();
+      if (!voice) return res.status(400).json({ success: false, message: `Invalid voiceName '${voiceName}'` });
+      agent.voiceName = String(voiceName).trim();
+    }
+    if (systemPrompt !== undefined) agent.systemPrompt = String(systemPrompt).trim();
+    if (typeof isActive === 'boolean') agent.isActive = isActive;
+
+    await agent.save();
+    res.json({ success: true, message: 'Agent updated', data: agent });
+  } catch (error) {
+    const isDup = error?.code === 11000;
+    if (isDup) {
+      return res.status(409).json({ success: false, message: 'Agent name already exists for this client' });
+    }
+    console.error('[Client API] Update agent error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update agent',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+router.patch('/agents/:agentId/toggle', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const agent = await Agent.findById(agentId);
+    if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
+
+    if (req.user.role === 'client' && agent.clientId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    agent.isActive = !agent.isActive;
+    await agent.save();
+
+    res.json({ success: true, message: `Agent is now ${agent.isActive ? 'active' : 'inactive'}`, data: agent });
+  } catch (error) {
+    console.error('[Client API] Toggle agent error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to toggle agent',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
 export default router;

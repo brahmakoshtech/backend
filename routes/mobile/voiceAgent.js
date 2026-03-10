@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import fetch from 'node-fetch';
 import Chat from '../../models/Chat.js';
 import VoiceConfig from '../../models/voiceConfig.js';
+import Agent from '../../models/Agent.js';
 
 // ─── Validate environment variables ──────────────────────────────────────────
 const deepgramApiKey   = process.env.DEEPGRAM_API_KEY;
@@ -64,6 +65,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let isActive             = false;
     let audioChunkCount      = 0;
     let voiceConfig          = null;   // ← resolved VoiceConfig document
+    let agentPromptOverride  = null;   // ← resolved Agent.systemPrompt
 
     const SILENCE_THRESHOLD = 2000;
 
@@ -179,8 +181,9 @@ export const handleVoiceAgentWebSocket = (wss) => {
         ws.send(JSON.stringify({ type: 'user_message', text: userMessage }));
 
         // ── Build OpenAI messages array ──────────────────────────────────────
-        // Prepend the voice's prompt as a system message
-        const systemPrompt = voiceConfig?.prompt || DEFAULT_PROMPT;
+        // Prepend the agent/system prompt as a system message
+        // Priority: selected agent.systemPrompt -> voiceConfig.prompt -> default
+        const systemPrompt = agentPromptOverride || voiceConfig?.prompt || DEFAULT_PROMPT;
 
         const messages = [
           { role: 'system', content: systemPrompt },
@@ -231,13 +234,33 @@ export const handleVoiceAgentWebSocket = (wss) => {
             chatId:    data.chatId,
             userId:    data.userId,
             voiceName: data.voiceName,
+            agentId:   data.agentId,
           });
 
           userId   = data.userId;
           isActive = true;
+          agentPromptOverride = null;
+
+          // ── Resolve Agent (optional) ────────────────────────────────────────
+          // If client sends agentId, it controls both voice slot + system prompt
+          let requestedVoice = data.voiceName || 'krishna1';
+          if (data.agentId) {
+            try {
+              const agent = await Agent.findById(String(data.agentId)).lean();
+              if (agent?.voiceName) requestedVoice = agent.voiceName;
+              if (agent?.systemPrompt) agentPromptOverride = agent.systemPrompt;
+              console.log('[VoiceAgent] 🤖 Agent resolved:', {
+                agentId: agent?._id,
+                name: agent?.name,
+                voiceName: agent?.voiceName,
+                hasPrompt: !!agent?.systemPrompt,
+              });
+            } catch (e) {
+              console.warn('[VoiceAgent] ⚠️ Could not resolve agentId:', e.message);
+            }
+          }
 
           // ── Resolve VoiceConfig from DB ─────────────────────────────────────
-          const requestedVoice = data.voiceName || 'krishna1';
           voiceConfig = await VoiceConfig.findOne({ name: requestedVoice, isActive: true });
 
           if (!voiceConfig) {

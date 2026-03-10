@@ -21,6 +21,7 @@ const DEFAULT_VOICES = [
     name: 'krishna1',
     gender: 'male',
     voiceId: 'pNInz6obpgDQGcFmaJgB', // Adam - deep, confident male voice
+    elevenlabsVoiceName: 'Adam',
     displayName: 'Krishna 1 (Adam)',
     description: 'Deep, confident male voice ideal for spiritual guidance.',
     prompt: 'Give the answer within two lines.',
@@ -29,6 +30,7 @@ const DEFAULT_VOICES = [
     name: 'krishna2',
     gender: 'male',
     voiceId: 'ErXwobaYiN019PkySvjV', // Antoni - well-rounded male voice
+    elevenlabsVoiceName: 'Antoni',
     displayName: 'Krishna 2 (Antoni)',
     description: 'Well-rounded male voice with a calm and soothing tone.',
     prompt: 'Give the answer within two lines.',
@@ -37,6 +39,7 @@ const DEFAULT_VOICES = [
     name: 'krishna3',
     gender: 'male',
     voiceId: 'VR6AewLTigWG4xSOukaG', // Arnold - authoritative male voice
+    elevenlabsVoiceName: 'Arnold',
     displayName: 'Krishna 3 (Arnold)',
     description: 'Authoritative and clear male voice.',
     prompt: 'Give the answer within two lines.',
@@ -47,6 +50,7 @@ const DEFAULT_VOICES = [
     name: 'rashmi1',
     gender: 'female',
     voiceId: '21m00Tcm4TlvDq8ikWAM', // Rachel - calm female voice
+    elevenlabsVoiceName: 'Rachel',
     displayName: 'Rashmi 1 (Rachel)',
     description: 'Calm, composed female voice perfect for meditation guidance.',
     prompt: 'Give the answer within two lines.',
@@ -55,6 +59,7 @@ const DEFAULT_VOICES = [
     name: 'rashmi2',
     gender: 'female',
     voiceId: 'AZnzlk1XvdvUeBnXmlld', // Domi - strong female voice
+    elevenlabsVoiceName: 'Domi',
     displayName: 'Rashmi 2 (Domi)',
     description: 'Strong, expressive female voice with clear articulation.',
     prompt: 'Give the answer within two lines.',
@@ -63,6 +68,7 @@ const DEFAULT_VOICES = [
     name: 'rashmi3',
     gender: 'female',
     voiceId: 'EXAVITQu4vr4xnSDxMaL', // Bella - soft female voice
+    elevenlabsVoiceName: 'Bella',
     displayName: 'Rashmi 3 (Bella)',
     description: 'Soft, warm female voice with a gentle delivery.',
     prompt: 'Give the answer within two lines.',
@@ -74,7 +80,17 @@ export const seedVoiceConfigs = async () => {
     for (const voice of DEFAULT_VOICES) {
       await VoiceConfig.findOneAndUpdate(
         { name: voice.name },
-        { $setOnInsert: voice },
+        {
+          // Ensure new required fields (like elevenlabsVoiceName) are populated
+          // while still keeping user customizations like prompt/voiceId if they already changed them.
+          $setOnInsert: voice,
+          $set: {
+            gender: voice.gender,
+            displayName: voice.displayName,
+            description: voice.description,
+            elevenlabsVoiceName: voice.elevenlabsVoiceName,
+          },
+        },
         { upsert: true, new: true }
       );
     }

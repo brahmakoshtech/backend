@@ -28,6 +28,7 @@ import mobileContentRoutes         from './routes/mobile/content.js';
 import chatRoutes                  from './routes/mobile/chat.js';
 import avatarChatRoutes            from './routes/mobile/avatarChat.js';
 import voiceRoutes                 from './routes/mobile/voice.js';
+import mobileAgentsRoutes          from './routes/mobile/agents.js';
 import uploadRoutes                from './routes/upload.js';
 import mediaRoutes                 from './routes/media.js';
 import testimonialRoutes           from './routes/testimonials/index.js';
@@ -151,6 +152,7 @@ app.use('/api/mobile/avatar-chat', avatarChatRoutes);
 app.use('/api/mobile/voice',   voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
 app.use('/api/mobile/content', mobileContentRoutes);
+app.use('/api/mobile/agents',  mobileAgentsRoutes);
 
 // Partner–User Chat
 app.use('/api/chat', partnerUserChatRoutes);
