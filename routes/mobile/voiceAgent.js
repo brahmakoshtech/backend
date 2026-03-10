@@ -66,6 +66,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let audioChunkCount      = 0;
     let voiceConfig          = null;   // ← resolved VoiceConfig document
     let agentPromptOverride  = null;   // ← resolved Agent.systemPrompt
+    let agentFirstMessage    = null;   // ← resolved Agent.firstMessage (played on session start)
 
     const SILENCE_THRESHOLD = 2000;
 
@@ -240,20 +241,23 @@ export const handleVoiceAgentWebSocket = (wss) => {
           userId   = data.userId;
           isActive = true;
           agentPromptOverride = null;
+          agentFirstMessage   = null;
 
           // ── Resolve Agent (optional) ────────────────────────────────────────
-          // If client sends agentId, it controls both voice slot + system prompt
+          // If client sends agentId, it controls voice, system prompt, and optional first message
           let requestedVoice = data.voiceName || 'krishna1';
           if (data.agentId) {
             try {
               const agent = await Agent.findById(String(data.agentId)).lean();
               if (agent?.voiceName) requestedVoice = agent.voiceName;
               if (agent?.systemPrompt) agentPromptOverride = agent.systemPrompt;
+              if (agent?.firstMessage?.trim()) agentFirstMessage = agent.firstMessage.trim();
               console.log('[VoiceAgent] 🤖 Agent resolved:', {
                 agentId: agent?._id,
                 name: agent?.name,
                 voiceName: agent?.voiceName,
                 hasPrompt: !!agent?.systemPrompt,
+                hasFirstMessage: !!agentFirstMessage,
               });
             } catch (e) {
               console.warn('[VoiceAgent] ⚠️ Could not resolve agentId:', e.message);
@@ -303,7 +307,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
             });
 
             // Open
-            deepgramConnection.on(LiveTranscriptionEvents.Open, () => {
+            deepgramConnection.on(LiveTranscriptionEvents.Open, async () => {
               console.log('[VoiceAgent] ✅ Deepgram connection opened');
 
               ws.send(JSON.stringify({
@@ -317,6 +321,18 @@ export const handleVoiceAgentWebSocket = (wss) => {
                 voiceName: voiceConfig?.name || requestedVoice,
                 message:   'Voice agent started',
               }));
+
+              // If agent has firstMessage, add to chat and stream TTS greeting
+              if (agentFirstMessage && isActive) {
+                try {
+                  chat.messages.push({ role: 'assistant', content: agentFirstMessage });
+                  await chat.save();
+                  ws.send(JSON.stringify({ type: 'ai_response', text: agentFirstMessage }));
+                  await streamElevenLabsTTS(agentFirstMessage, ws);
+                } catch (err) {
+                  console.error('[VoiceAgent] First message TTS error:', err.message);
+                }
+              }
             });
 
             // Transcript

@@ -37,6 +37,12 @@ const agentSchema = new mongoose.Schema(
       trim: true,
       maxlength: 4000,
     },
+    firstMessage: {
+      type: String,
+      default: '',
+      trim: true,
+      maxlength: 500,
+    },
     isActive: {
       type: Boolean,
       default: true,

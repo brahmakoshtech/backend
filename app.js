@@ -62,8 +62,9 @@ import swapnaDecoderRoutes         from './routes/swapnaDecoder.js';
 import dreamRequestRoutes          from './routes/dreamRequest.js';
 import partnerUserChatRoutes       from './routes/chatRoutes.js';
 
-// ─── NEW: Voice Config Routes ─────────────────────────────────────────────────
+// ─── Voice Config & TTS Routes ────────────────────────────────────────────────
 import voiceConfigRoutes           from './routes/voiceConfig.js';
+import ttsRoutes                   from './routes/tts.js';
 
 // ─── Service imports ──────────────────────────────────────────────────────────
 import { initializeSuperAdmin }    from './config/initSuperAdmin.js';
@@ -157,7 +158,11 @@ app.use('/api/mobile/agents',  mobileAgentsRoutes);
 // Partner–User Chat
 app.use('/api/chat', partnerUserChatRoutes);
 
-// ─── NEW: Voice Configuration ─────────────────────────────────────────────────
+// ─── TTS (text-to-speech preview) ─────────────────────────────────────────────
+// POST /api/tts/synthesize — body: { text, voiceName } → { success, audioContent (base64) }
+app.use('/api/tts', ttsRoutes);
+
+// ─── Voice Configuration ─────────────────────────────────────────────────────
 // Endpoints:
 //   GET    /api/voice-config              → list all voices
 //   GET    /api/voice-config?gender=male  → filter by gender

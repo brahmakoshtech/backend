@@ -2542,7 +2542,7 @@ router.get('/agents', authenticate, authorize('client', 'admin', 'super_admin'),
 
 router.post('/agents', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
   try {
-    const { name, description, voiceName, systemPrompt, isActive } = req.body || {};
+    const { name, description, voiceName, systemPrompt, firstMessage, isActive } = req.body || {};
 
     if (!name || typeof name !== 'string' || !name.trim()) {
       return res.status(400).json({ success: false, message: 'name is required' });
@@ -2570,6 +2570,7 @@ router.post('/agents', authenticate, authorize('client', 'admin', 'super_admin')
       description: (description || '').toString().trim(),
       voiceName: voiceName.trim(),
       systemPrompt: systemPrompt.trim(),
+      firstMessage: (firstMessage || '').toString().trim(),
       isActive: typeof isActive === 'boolean' ? isActive : true,
       createdByRole: req.user.role,
       createdBy: req.user._id,
@@ -2593,7 +2594,7 @@ router.post('/agents', authenticate, authorize('client', 'admin', 'super_admin')
 router.put('/agents/:agentId', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
   try {
     const { agentId } = req.params;
-    const { name, description, voiceName, systemPrompt, isActive } = req.body || {};
+    const { name, description, voiceName, systemPrompt, firstMessage, isActive } = req.body || {};
 
     const agent = await Agent.findById(agentId);
     if (!agent) return res.status(404).json({ success: false, message: 'Agent not found' });
@@ -2610,6 +2611,7 @@ router.put('/agents/:agentId', authenticate, authorize('client', 'admin', 'super
       agent.voiceName = String(voiceName).trim();
     }
     if (systemPrompt !== undefined) agent.systemPrompt = String(systemPrompt).trim();
+    if (firstMessage !== undefined) agent.firstMessage = String(firstMessage || '').trim();
     if (typeof isActive === 'boolean') agent.isActive = isActive;
 
     await agent.save();
