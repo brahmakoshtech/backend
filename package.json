@@ -17,6 +17,7 @@
     "@deepgram/sdk": "^4.11.3",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/generative-ai": "^0.24.1",
+    "apple-signin-auth": "^2.0.0",
     "axios": "^1.13.2",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

@@ -2,9 +2,115 @@ import express from 'express';
 import User from '../../models/User.js';
 import { generateToken, authenticate } from '../../middleware/auth.js';
 import { OAuth2Client } from 'google-auth-library';
+import appleSignin from 'apple-signin-auth';
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const router = express.Router();
+
+// Apple Sign-In / Check User
+router.post('/apple', async (req, res) => {
+  try {
+    const { identityToken, clientId } = req.body;
+
+    if (!identityToken || !clientId) {
+      return res.status(400).json({
+        success: false,
+        message: 'identityToken and clientId are required',
+      });
+    }
+
+    let appleUserId = null;
+    let email = null;
+    let emailVerified = false;
+
+    try {
+      const payload = await appleSignin.verifyIdToken(identityToken, {
+        audience: 'com.brahmakosh.service',
+        ignoreExpiration: false,
+      });
+
+      appleUserId = payload.sub;
+      email = payload.email || null;
+      emailVerified =
+        payload.email_verified === 'true' || payload.email_verified === true;
+    } catch (err) {
+      console.error('Apple token verification failed:', err.message);
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid Apple token',
+      });
+    }
+
+    if (!appleUserId && !email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Apple identity token missing required claims',
+      });
+    }
+
+    // Try to find existing user by email (schema enforces unique email)
+    let user = null;
+    if (email) {
+      user = await User.findOne({ email });
+    }
+
+    if (user) {
+      if (!user.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account is inactive.',
+        });
+      }
+
+      if (user.authMethod !== 'firebase') {
+        user.authMethod = 'firebase';
+        await user.save();
+      }
+
+      if (user.clientId) {
+        await user.populate('clientId', 'clientId businessName email');
+      }
+
+      const token = generateToken(
+        user._id,
+        'user',
+        user.clientId?._id || user.clientId
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: 'Apple sign-in successful',
+        data: {
+          registered: true,
+          user: { ...user.toJSON(), role: 'user' },
+          token,
+          clientId: user.clientId?.clientId || null,
+          clientName: user.clientId?.businessName || null,
+        },
+      });
+    }
+
+    // New user → client should start Mobile OTP flow
+    return res.status(200).json({
+      success: true,
+      message: 'User not registered',
+      data: {
+        registered: false,
+        appleUserId,
+        email: email || null,
+        emailVerified,
+        clientId,
+      },
+    });
+  } catch (error) {
+    console.error('Apple auth error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Apple authentication failed: ' + error.message,
+    });
+  }
+});
 
 router.post('/google', async (req, res) => {
   try {
