@@ -1213,6 +1213,37 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       });
     }
 
+    // NEW: If there are only 1–2 messages (initial greeting + first reply),
+    // treat this as a free handshake – no billing.
+    if (totalMessages > 0 && totalMessages <= 2) {
+      const startTime = conversation.sessionDetails?.startTime || conversation.acceptedAt || conversation.startedAt || conversation.createdAt;
+      conversation.status = 'ended';
+      conversation.endedAt = endTime;
+      conversation.sessionDetails = {
+        ...(conversation.sessionDetails || {}),
+        startTime,
+        endTime,
+        duration: 0,
+        messagesCount: totalMessages,
+        creditsUsed: 0,
+        partnerCreditsEarned: 0,
+        userRatePerMinute: USER_RATE_PER_MIN,
+        partnerRatePerMinute: PARTNER_RATE_PER_MIN
+      };
+
+      await conversation.save();
+
+      const dataHandshake = conversation.toObject ? conversation.toObject() : conversation;
+      return res.json({
+        success: true,
+        data: {
+          ...dataHandshake,
+          sessionDetails: conversation.sessionDetails,
+          rating: conversation.rating
+        }
+      });
+    }
+
     const startTime = conversation.acceptedAt || conversation.sessionDetails?.startTime || conversation.startedAt || conversation.createdAt;
     const rawMinutes = startTime ? (endTime - new Date(startTime)) / (1000 * 60) : 0;
     // Billing: per started minute. Only accepted conversations are billable, minimum 1 minute when accepted.

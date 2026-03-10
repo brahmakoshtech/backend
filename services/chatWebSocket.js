@@ -661,53 +661,64 @@ export const setupChatWebSocket = (server) => {
 
           const durationMs = Math.max(0, endedAt.getTime() - startTime.getTime());
           const rawMinutes = durationMs / (1000 * 60);
-          const billableMinutes = Math.max(1, Math.ceil(isFinite(rawMinutes) ? rawMinutes : 1));
-          billableMinutesForLog = billableMinutes;
           durationSecondsForLog = Math.round(durationMs / 1000);
+
+          // NEW: Treat very short calls as a free handshake.
+          // If duration <= 30 seconds, do not bill any minutes.
+          const FREE_HANDSHAKE_SECONDS = 30;
+          const billableMinutes =
+            durationSecondsForLog <= FREE_HANDSHAKE_SECONDS
+              ? 0
+              : Math.max(1, Math.ceil(isFinite(rawMinutes) ? rawMinutes : 1));
+
+          billableMinutesForLog = billableMinutes;
 
           const USER_RATE_PER_MIN = parseInt(process.env.CHAT_USER_RATE_PER_MIN, 10) || 4;
           const PARTNER_RATE_PER_MIN = parseInt(process.env.CHAT_PARTNER_RATE_PER_MIN, 10) || 3;
 
-          const userDoc = await User.findById(conversation.userId);
-          const partnerDoc = await Partner.findById(conversation.partnerId);
+          // Only perform billing when there is at least 1 billable minute
+          if (billableMinutes > 0) {
+            const userDoc = await User.findById(conversation.userId);
+            const partnerDoc = await Partner.findById(conversation.partnerId);
 
-          if (userDoc && partnerDoc) {
-            const userPreviousBalance = typeof userDoc.credits === 'number' ? userDoc.credits : 0;
-            const partnerPreviousBalance = typeof partnerDoc.credits === 'number' ? partnerDoc.credits : 0;
+            if (userDoc && partnerDoc) {
+              const userPreviousBalance = typeof userDoc.credits === 'number' ? userDoc.credits : 0;
+              const partnerPreviousBalance = typeof partnerDoc.credits === 'number' ? partnerDoc.credits : 0;
 
-            const maxDebit = billableMinutes * USER_RATE_PER_MIN;
-            const userDebited = Math.min(userPreviousBalance, maxDebit);
-            const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
+              const maxDebit = billableMinutes * USER_RATE_PER_MIN;
+              const userDebited = Math.min(userPreviousBalance, maxDebit);
+              const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
 
-            const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
-            const partnerNewBalance = partnerPreviousBalance + partnerCredited;
+              const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
+              const partnerNewBalance = partnerPreviousBalance + partnerCredited;
 
-            userDoc.credits = userNewBalance;
-            partnerDoc.credits = partnerNewBalance;
-            await userDoc.save();
-            await partnerDoc.save();
+              userDoc.credits = userNewBalance;
+              partnerDoc.credits = partnerNewBalance;
+              await userDoc.save();
+              await partnerDoc.save();
 
-            await ServiceCreditLedger.findOneAndUpdate(
-              { conversationId, serviceType: 'voice' },
-              {
-                conversationId,
-                serviceType: 'voice',
-                userId: conversation.userId,
-                partnerId: conversation.partnerId,
-                billableMinutes,
-                userDebited,
-                partnerCredited,
-                userPreviousBalance,
-                userNewBalance,
-                partnerPreviousBalance,
-                partnerNewBalance,
-                userRatePerMinute: USER_RATE_PER_MIN,
-                partnerRatePerMinute: PARTNER_RATE_PER_MIN,
-                startTime,
-                endTime: endedAt
-              },
-              { upsert: true, new: true }
-            );
+              await ServiceCreditLedger.findOneAndUpdate(
+                { conversationId, serviceType: 'voice' },
+                {
+                  conversationId,
+                  serviceType: 'voice',
+                  userId: conversation.userId,
+                  partnerId: conversation.partnerId,
+                  billableMinutes,
+                  userDebited,
+                  partnerCredited,
+                  userPreviousBalance,
+                  userNewBalance,
+                  partnerPreviousBalance,
+                  partnerNewBalance,
+                  userRatePerMinute: USER_RATE_PER_MIN,
+                  partnerRatePerMinute: PARTNER_RATE_PER_MIN,
+                  startTime,
+                  endTime: endedAt
+                },
+                { upsert: true, new: true }
+              );
+            }
           }
         } catch (billingErr) {
           console.error('❌ Voice billing / ledger failed:', billingErr.message);
