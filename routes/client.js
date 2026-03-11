@@ -8,6 +8,7 @@ import User from '../models/User.js';
 import Client from '../models/Client.js';
 import Partner from '../models/Partner.js';
 import Agent from '../models/Agent.js';
+import Chat from '../models/Chat.js';
 import VoiceConfig from '../models/voiceConfig.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
@@ -2649,6 +2650,82 @@ router.patch('/agents/:agentId/toggle', authenticate, authorize('client', 'admin
     res.status(500).json({
       success: false,
       message: 'Failed to toggle agent',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /agents/conversation-logs
+// Returns all voice agent conversations for users belonging to this client.
+// Query: agentId (optional), page (default 1), limit (default 20)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/agents/conversation-logs', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    let clientId = null;
+    if (req.user.role === 'client') {
+      clientId = req.user._id;
+    } else if (req.query.clientId) {
+      clientId = req.query.clientId;
+    }
+    if (!clientId) {
+      return res.status(400).json({ success: false, message: 'clientId required' });
+    }
+
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const agentId = req.query.agentId?.trim() || null;
+
+    const userIds = await User.find({ clientId }).select('_id').lean();
+    const ids = userIds.map((u) => u._id);
+    if (ids.length === 0) {
+      return res.json({ success: true, data: [], meta: { page, limit, total: 0, pages: 0 } });
+    }
+
+    const query = {
+      userId: { $in: ids },
+      title: 'Voice Agent Chat',
+    };
+    if (agentId) query.agentId = agentId;
+
+    const total = await Chat.countDocuments(query);
+    const chats = await Chat.find(query)
+      .sort({ updatedAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('userId', 'profile.name email mobile')
+      .populate('agentId', 'name voiceName')
+      .lean();
+
+    const data = chats.map((c) => ({
+      _id: c._id,
+      user: c.userId ? {
+        _id: c.userId._id,
+        name: c.userId.profile?.name || 'Unknown',
+        email: c.userId.email || null,
+        mobile: c.userId.mobile || null,
+      } : null,
+      agent: c.agentId ? { _id: c.agentId._id, name: c.agentId.name, voiceName: c.agentId.voiceName } : null,
+      messages: c.messages || [],
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+    }));
+
+    res.json({
+      success: true,
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit) || 0,
+      },
+    });
+  } catch (error) {
+    console.error('[Client API] Conversation logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch conversation logs',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }

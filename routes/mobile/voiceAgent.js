@@ -283,6 +283,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
             chat = new Chat({
               userId,
               title:    'Voice Agent Chat',
+              agentId:  data.agentId ? String(data.agentId) : null,
               messages: [],
             });
             await chat.save();

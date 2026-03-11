@@ -27,6 +27,12 @@ const chatSchema = new mongoose.Schema({
     type: String,
     default: 'New Chat'
   },
+  agentId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Agent',
+    default: null,
+    index: true
+  },
   messages: [messageSchema],
   createdAt: {
     type: Date,
