@@ -269,6 +269,29 @@ export const uploadToS3 = async (file, folder = '') => {
   }
 };
 
+/**
+ * Upload a Buffer directly to S3 (for audio, etc.)
+ * @param {Buffer} buffer - Raw buffer to upload
+ * @param {string} folder - S3 folder prefix (e.g. 'voice-agent-audio')
+ * @param {string} filename - Filename with extension (e.g. 'user_123.wav')
+ * @param {string} contentType - MIME type (e.g. 'audio/wav', 'audio/mpeg')
+ */
+export const uploadBufferToS3 = async (buffer, folder, filename, contentType) => {
+  if (!process.env.AWS_BUCKET_NAME || !process.env.AWS_ACCESS_KEY_ID || !process.env.AWS_SECRET_ACCESS_KEY) {
+    throw new Error('AWS not configured');
+  }
+  const key = folder ? `${folder}/${Date.now()}_${filename}` : `${Date.now()}_${filename}`;
+  const command = new PutObjectCommand({
+    Bucket: process.env.AWS_BUCKET_NAME,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  });
+  await s3Client.send(command);
+  const url = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+  return { key, url };
+};
+
 // Delete file from S3 using URL or key
 export const deleteFromS3 = async (keyOrUrl) => {
   try {

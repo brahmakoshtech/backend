@@ -10,6 +10,12 @@ const messageSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  /** S3 key for stored audio (user speech or AI TTS). Use getobject(key) for presigned playback URL. */
+  audioKey: {
+    type: String,
+    default: null,
+    trim: true
+  },
   timestamp: {
     type: Date,
     default: Date.now

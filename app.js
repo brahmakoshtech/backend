@@ -61,6 +61,7 @@ import pujaPadhatiRoutes           from './routes/pujaPadhati.js';
 import swapnaDecoderRoutes         from './routes/swapnaDecoder.js';
 import dreamRequestRoutes          from './routes/dreamRequest.js';
 import partnerUserChatRoutes       from './routes/chatRoutes.js';
+import userPaymentRoutes           from './routes/userPayment.js';
 
 // ─── Voice Config & TTS Routes ────────────────────────────────────────────────
 import voiceConfigRoutes           from './routes/voiceConfig.js';
@@ -157,6 +158,9 @@ app.use('/api/mobile/agents',  mobileAgentsRoutes);
 
 // Partner–User Chat
 app.use('/api/chat', partnerUserChatRoutes);
+
+// ─── User Payment (Stripe / Apple Pay for credits) ────────────────────────────
+app.use('/api/user/payment', userPaymentRoutes);
 
 // ─── TTS (text-to-speech preview) ─────────────────────────────────────────────
 // POST /api/tts/synthesize — body: { text, voiceName } → { success, audioContent (base64) }

@@ -10,6 +10,7 @@ import Partner from '../models/Partner.js';
 import Agent from '../models/Agent.js';
 import Chat from '../models/Chat.js';
 import VoiceConfig from '../models/voiceConfig.js';
+import { getobject } from '../utils/s3.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
 import Credit from '../models/Credit.js';
@@ -2697,18 +2698,31 @@ router.get('/agents/conversation-logs', authenticate, authorize('client', 'admin
       .populate('agentId', 'name voiceName')
       .lean();
 
-    const data = chats.map((c) => ({
-      _id: c._id,
-      user: c.userId ? {
-        _id: c.userId._id,
-        name: c.userId.profile?.name || 'Unknown',
-        email: c.userId.email || null,
-        mobile: c.userId.mobile || null,
-      } : null,
-      agent: c.agentId ? { _id: c.agentId._id, name: c.agentId.name, voiceName: c.agentId.voiceName } : null,
-      messages: c.messages || [],
-      createdAt: c.createdAt,
-      updatedAt: c.updatedAt,
+    const data = await Promise.all(chats.map(async (c) => {
+      const messages = await Promise.all((c.messages || []).map(async (msg) => {
+        const m = { ...msg };
+        if (msg.audioKey) {
+          try {
+            m.audioUrl = await getobject(msg.audioKey, 3600);
+          } catch (e) {
+            m.audioUrl = null;
+          }
+        }
+        return m;
+      }));
+      return {
+        _id: c._id,
+        user: c.userId ? {
+          _id: c.userId._id,
+          name: c.userId.profile?.name || 'Unknown',
+          email: c.userId.email || null,
+          mobile: c.userId.mobile || null,
+        } : null,
+        agent: c.agentId ? { _id: c.agentId._id, name: c.agentId.name, voiceName: c.agentId.voiceName } : null,
+        messages,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+      };
     }));
 
     res.json({

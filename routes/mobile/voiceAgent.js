@@ -5,6 +5,7 @@ import fetch from 'node-fetch';
 import Chat from '../../models/Chat.js';
 import VoiceConfig from '../../models/voiceConfig.js';
 import Agent from '../../models/Agent.js';
+import { uploadBufferToS3 } from '../../utils/s3.js';
 
 // ─── Validate environment variables ──────────────────────────────────────────
 const deepgramApiKey   = process.env.DEEPGRAM_API_KEY;
@@ -35,6 +36,27 @@ if (openaiApiKey) {
 const FALLBACK_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL';
 const FALLBACK_MODEL_ID = 'eleven_turbo_v2_5';
 const DEFAULT_PROMPT    = 'Give the answer within two lines.';
+const VOICE_AGENT_AUDIO_FOLDER = 'voice-agent-audio';
+
+/** Build WAV file from PCM 16-bit 16kHz mono buffer */
+function pcmToWav(pcmBuffer) {
+  const dataLen = pcmBuffer.length;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + dataLen, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);  // subchunk1size
+  header.writeUInt16LE(1, 20);   // PCM
+  header.writeUInt16LE(1, 22);   // mono
+  header.writeUInt32LE(16000, 24);
+  header.writeUInt32LE(32000, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(dataLen, 40);
+  return Buffer.concat([header, pcmBuffer]);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket Voice Agent Handler
@@ -67,6 +89,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let voiceConfig          = null;   // ← resolved VoiceConfig document
     let agentPromptOverride  = null;   // ← resolved Agent.systemPrompt
     let agentFirstMessage    = null;   // ← resolved Agent.firstMessage (played on session start)
+    let userAudioChunks      = [];    // buffer user PCM for current turn
 
     const SILENCE_THRESHOLD = 2000;
 
@@ -93,12 +116,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
       console.log('[VoiceAgent] Cleanup complete');
     };
 
-    // ─── Stream TTS from ElevenLabs ───────────────────────────────────────────
+    // ─── Stream TTS from ElevenLabs + collect for storage ─────────────────────
+    // Returns { audioKey } on success (S3 key for playback)
     const streamElevenLabsTTS = async (text, ws) => {
+      let audioKey = null;
       try {
         console.log('[VoiceAgent] 🔊 Starting ElevenLabs TTS...');
 
-        // Use values from voiceConfig if available, otherwise fall back to defaults
         const voiceId  = voiceConfig?.voiceId || FALLBACK_VOICE_ID;
         const modelId  = voiceConfig?.modelId || FALLBACK_MODEL_ID;
         const settings = voiceConfig?.voiceSettings || {
@@ -107,8 +131,6 @@ export const handleVoiceAgentWebSocket = (wss) => {
           style:             0.0,
           use_speaker_boost: true,
         };
-
-        console.log(`[VoiceAgent] TTS voice: ${voiceId}, model: ${modelId}`);
 
         const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`;
 
@@ -131,15 +153,12 @@ export const handleVoiceAgentWebSocket = (wss) => {
           throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
         }
 
-        console.log('[VoiceAgent] 📡 Streaming TTS audio...');
-
+        const aiChunks = [];
         let chunkCount = 0;
         for await (const chunk of response.body) {
-          if (!isActive) {
-            console.log('[VoiceAgent] Session stopped, ending TTS');
-            break;
-          }
+          if (!isActive) break;
           chunkCount++;
+          aiChunks.push(chunk);
           ws.send(JSON.stringify({
             type:       'audio_chunk',
             audio:      chunk.toString('base64'),
@@ -147,21 +166,25 @@ export const handleVoiceAgentWebSocket = (wss) => {
           }));
         }
 
-        ws.send(JSON.stringify({
-          type:        'audio_complete',
-          totalChunks: chunkCount,
-        }));
+        ws.send(JSON.stringify({ type: 'audio_complete', totalChunks: chunkCount }));
+
+        // Upload AI audio to S3 for conversation log playback
+        if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME) {
+          try {
+            const buffer = Buffer.concat(aiChunks);
+            const { key } = await uploadBufferToS3(buffer, VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg');
+            audioKey = key;
+          } catch (e) {
+            console.warn('[VoiceAgent] Could not save AI audio to S3:', e.message);
+          }
+        }
 
         console.log('[VoiceAgent] ✅ TTS complete:', chunkCount, 'chunks');
-
       } catch (error) {
         console.error('[VoiceAgent] ElevenLabs TTS error:', error.message);
-        ws.send(JSON.stringify({
-          type:    'error',
-          message: 'Error generating speech',
-          error:   error.message,
-        }));
+        ws.send(JSON.stringify({ type: 'error', message: 'Error generating speech', error: error.message }));
       }
+      return { audioKey };
     };
 
     // ─── Process complete conversation turn ───────────────────────────────────
@@ -172,26 +195,32 @@ export const handleVoiceAgentWebSocket = (wss) => {
       accumulatedTranscript = '';
       isProcessingLLM       = true;
 
+      let userAudioKey = null;
+      if (userAudioChunks.length > 0 && process.env.AWS_BUCKET_NAME) {
+        try {
+          const pcmBuffer = Buffer.concat(userAudioChunks);
+          const wavBuffer = pcmToWav(pcmBuffer);
+          const { key } = await uploadBufferToS3(wavBuffer, VOICE_AGENT_AUDIO_FOLDER, `user_${chat._id}_${Date.now()}.wav`, 'audio/wav');
+          userAudioKey = key;
+        } catch (e) {
+          console.warn('[VoiceAgent] Could not save user audio to S3:', e.message);
+        }
+        userAudioChunks = [];
+      }
+
       console.log('[VoiceAgent] 💬 Processing turn:', userMessage);
 
       try {
-        // Save user message to chat history
-        chat.messages.push({ role: 'user', content: userMessage });
+        chat.messages.push({ role: 'user', content: userMessage, ...(userAudioKey && { audioKey: userAudioKey }) });
         await chat.save();
 
         ws.send(JSON.stringify({ type: 'user_message', text: userMessage }));
 
-        // ── Build OpenAI messages array ──────────────────────────────────────
-        // Prepend the agent/system prompt as a system message
-        // Priority: selected agent.systemPrompt -> voiceConfig.prompt -> default
         const systemPrompt = agentPromptOverride || voiceConfig?.prompt || DEFAULT_PROMPT;
-
         const messages = [
           { role: 'system', content: systemPrompt },
           ...chat.messages.map(msg => ({ role: msg.role, content: msg.content })),
         ];
-
-        console.log('[VoiceAgent] 🤖 Requesting OpenAI response with system prompt:', systemPrompt);
 
         const completion = await openai.chat.completions.create({
           model:       process.env.OPENAI_MODEL || 'gpt-4o-mini',
@@ -201,26 +230,18 @@ export const handleVoiceAgentWebSocket = (wss) => {
         });
 
         const aiResponse = completion.choices[0].message.content;
-        console.log('[VoiceAgent] ✅ OpenAI response received:', aiResponse.substring(0, 100) + '...');
-
-        // Save assistant message
-        chat.messages.push({ role: 'assistant', content: aiResponse });
-        await chat.save();
-
         ws.send(JSON.stringify({ type: 'ai_response', text: aiResponse }));
 
-        // Generate and stream speech using the resolved voiceConfig
-        await streamElevenLabsTTS(aiResponse, ws);
+        const { audioKey: aiAudioKey } = await streamElevenLabsTTS(aiResponse, ws);
+        chat.messages.push({ role: 'assistant', content: aiResponse, ...(aiAudioKey && { audioKey: aiAudioKey }) });
+        await chat.save();
 
       } catch (error) {
         console.error('[VoiceAgent] Error processing turn:', error);
-        ws.send(JSON.stringify({
-          type:    'error',
-          message: 'Error processing response',
-          error:   error.message,
-        }));
+        ws.send(JSON.stringify({ type: 'error', message: 'Error processing response', error: error.message }));
       } finally {
         isProcessingLLM = false;
+        userAudioChunks = [];
       }
     };
 
@@ -323,13 +344,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
                 message:   'Voice agent started',
               }));
 
-              // If agent has firstMessage, add to chat and stream TTS greeting
+              // If agent has firstMessage, stream TTS and save with audio
               if (agentFirstMessage && isActive) {
                 try {
-                  chat.messages.push({ role: 'assistant', content: agentFirstMessage });
-                  await chat.save();
                   ws.send(JSON.stringify({ type: 'ai_response', text: agentFirstMessage }));
-                  await streamElevenLabsTTS(agentFirstMessage, ws);
+                  const { audioKey: firstAudioKey } = await streamElevenLabsTTS(agentFirstMessage, ws);
+                  chat.messages.push({ role: 'assistant', content: agentFirstMessage, ...(firstAudioKey && { audioKey: firstAudioKey }) });
+                  await chat.save();
                 } catch (err) {
                   console.error('[VoiceAgent] First message TTS error:', err.message);
                 }
@@ -429,6 +450,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
             try {
               const audioBuffer = Buffer.from(data.audio, 'base64');
               deepgramConnection.send(audioBuffer);
+              userAudioChunks.push(audioBuffer);
 
               audioChunkCount++;
               if (audioChunkCount % 50 === 0) {
