@@ -4,54 +4,107 @@ import { authenticate, authorize } from '../middleware/auth.js';
 import User from '../models/User.js';
 import Credit from '../models/Credit.js';
 import PaymentLog from '../models/PaymentLog.js';
+import AppSettings from '../models/AppSettings.js';
 
 const router = express.Router();
 
-// Credits granted per 100 cents ($1). e.g. 10 = 10 credits per $1
-const CREDITS_PER_DOLLAR = Number(process.env.STRIPE_CREDITS_PER_DOLLAR) || 10;
-const MIN_AMOUNT_CENTS = 100;  // $1 minimum
-const MAX_AMOUNT_CENTS = 9999999;
+// Amounts are treated as INR rupees
+const MIN_AMOUNT_UNITS = 500; // ₹500 minimum
+const MAX_AMOUNT_UNITS = 1000000;
+const DEFAULT_PLANS = [500, 1000, 2000, 4000]; // rupee plans
+
+// Resolve Stripe env (test/prod) from STRIPE_MODE
+const STRIPE_MODE = (process.env.STRIPE_MODE || 'test').toLowerCase() === 'prod' ? 'prod' : 'test';
+
+const getStripeSecretKey = () => {
+  if (STRIPE_MODE === 'prod') {
+    return process.env.STRIPE_SECRET_KEY_PROD;
+  }
+  return process.env.STRIPE_SECRET_KEY_TEST || process.env.STRIPE_SECRET_KEY;
+};
+
+const getStripeWebhookSecret = () => {
+  if (STRIPE_MODE === 'prod') {
+    return process.env.STRIPE_WEBHOOK_SECRET_PROD;
+  }
+  return process.env.STRIPE_WEBHOOK_SECRET_TEST || process.env.STRIPE_WEBHOOK_SECRET;
+};
+
+/** Publishable key for current mode (frontend must use this; test PI requires pk_test) */
+const getPublishableKey = () => {
+  if (STRIPE_MODE === 'prod') {
+    return process.env.STRIPE_PUBLISHABLE_KEY_PROD || process.env.STRIPE_PUBLISHABLE_KEY || '';
+  }
+  return process.env.STRIPE_PUBLISHABLE_KEY_TEST || process.env.STRIPE_PUBLISHABLE_KEY || '';
+};
+
+const getCreditsPerUnit = async () => {
+  try {
+    const settings = await AppSettings.getSettings();
+    if (typeof settings.stripeCreditsPerUnit === 'number' && settings.stripeCreditsPerUnit > 0) {
+      return settings.stripeCreditsPerUnit;
+    }
+  } catch (e) {
+    console.warn('[User Payment] Failed to load AppSettings, falling back to env/default:', e.message);
+  }
+  const envValue = Number(process.env.STRIPE_CREDITS_PER_DOLLAR);
+  if (envValue && !isNaN(envValue) && envValue > 0) return envValue;
+  return 2; // default: 1 rupee = 2 credits
+};
 
 /**
  * POST /api/user/payment/create-intent
  * Create Stripe PaymentIntent for credits recharge.
- * Body: { amount: number } — amount in dollars (e.g. 10 = $10)
- * Returns: { clientSecret, publishableKey, credits }
+ * Body:
+ *  - planAmount?: number (500, 1000, 2000, 4000)
+ *  - amount?: number (custom INR amount, must be >= 500)
+ * Returns: { clientSecret, publishableKey, credits, amountUnits }
  */
 router.post('/create-intent', authenticate, authorize('user'), async (req, res) => {
   try {
-    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+    const stripeSecretKey = getStripeSecretKey();
     if (!stripeSecretKey) {
       return res.status(503).json({ success: false, message: 'Payment service unavailable' });
     }
 
-    const amountDollars = Number(req.body?.amount);
+    const body = req.body || {};
+    const planAmount = body.planAmount != null ? Number(body.planAmount) : null;
+    const rawAmount = body.amount != null ? Number(body.amount) : null;
+
+    // Prefer plan if provided
+    const amountUnits = planAmount || rawAmount;
+
     console.log('[User Payment] create-intent request', {
       userId: req.user._id?.toString(),
-      amountDollars,
+      planAmount,
+      amount: rawAmount,
+      amountUnits,
     });
-    if (!amountDollars || isNaN(amountDollars) || amountDollars <= 0) {
-      return res.status(400).json({ success: false, message: 'Valid amount (in dollars) is required' });
+    if (!amountUnits || isNaN(amountUnits) || amountUnits <= 0) {
+      return res.status(400).json({ success: false, message: 'Valid amount is required' });
     }
 
-    const amountCents = Math.round(amountDollars * 100);
-    if (amountCents < MIN_AMOUNT_CENTS) {
-      return res.status(400).json({ success: false, message: `Minimum amount is $${MIN_AMOUNT_CENTS / 100}` });
+    if (amountUnits < MIN_AMOUNT_UNITS) {
+      return res.status(400).json({ success: false, message: `Minimum amount is ₹${MIN_AMOUNT_UNITS}` });
     }
-    if (amountCents > MAX_AMOUNT_CENTS) {
+    if (amountUnits > MAX_AMOUNT_UNITS) {
       return res.status(400).json({ success: false, message: 'Amount too large' });
     }
 
-    const credits = Math.floor((amountCents / 100) * CREDITS_PER_DOLLAR);
+    const creditsPerUnit = await getCreditsPerUnit();
+    const credits = Math.floor(amountUnits * creditsPerUnit);
     const stripe = new Stripe(stripeSecretKey);
 
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: amountCents,
-      currency: 'usd',
+      amount: Math.round(amountUnits * 100), // INR minor units
+      currency: 'inr',
       automatic_payment_methods: { enabled: true },
       metadata: {
         userId: String(req.user._id),
         credits: String(credits),
+        amountUnits: String(amountUnits),
+        creditsPerUnit: String(creditsPerUnit),
+        stripeMode: STRIPE_MODE,
       },
     });
 
@@ -59,10 +112,12 @@ router.post('/create-intent', authenticate, authorize('user'), async (req, res) 
       userId: req.user._id,
       paymentIntentId: paymentIntent.id,
       event: 'create_intent',
-      amountCents,
+      amountCents: paymentIntent.amount,
       credits,
       status: paymentIntent.status,
       metadata: {
+        amountUnits,
+        creditsPerUnit,
         clientIp: req.ip,
         userAgent: req.headers['user-agent'] || null,
       },
@@ -71,9 +126,9 @@ router.post('/create-intent', authenticate, authorize('user'), async (req, res) 
     res.json({
       success: true,
       clientSecret: paymentIntent.client_secret,
-      publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+      publishableKey: getPublishableKey(),
       credits,
-      amountCents,
+      amountUnits,
     });
   } catch (error) {
     console.error('[User Payment] Create intent error:', error);
@@ -103,7 +158,7 @@ router.post('/create-intent', authenticate, authorize('user'), async (req, res) 
  */
 router.post('/confirm', authenticate, authorize('user'), async (req, res) => {
   try {
-    const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+    const stripeSecretKey = getStripeSecretKey();
     if (!stripeSecretKey) {
       return res.status(503).json({ success: false, message: 'Payment service unavailable' });
     }
@@ -213,15 +268,46 @@ router.post('/confirm', authenticate, authorize('user'), async (req, res) => {
 
 /**
  * GET /api/user/payment/config
- * Returns publishable key and credits rate for frontend
+ * Returns publishable key and min amount for frontend
  */
 router.get('/config', authenticate, authorize('user'), (req, res) => {
   res.json({
     success: true,
-    publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
-    creditsPerDollar: CREDITS_PER_DOLLAR,
-    minAmountDollars: MIN_AMOUNT_CENTS / 100,
+    mode: STRIPE_MODE,
+    publishableKey: getPublishableKey(),
+    minAmountUnits: MIN_AMOUNT_UNITS,
   });
+});
+
+/**
+ * GET /api/user/payment/plans
+ * Returns static plans with computed credits based on current creditsPerUnit.
+ */
+router.get('/plans', authenticate, authorize('user'), async (req, res) => {
+  try {
+    const creditsPerUnit = await getCreditsPerUnit();
+    const plans = DEFAULT_PLANS.map((amount) => ({
+      amount,              // in rupees
+      credits: amount * creditsPerUnit,
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        mode: STRIPE_MODE,
+        currency: 'INR',
+        creditsPerUnit,
+        plans,
+      },
+    });
+  } catch (error) {
+    console.error('[User Payment] plans error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to load plans',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
 });
 
 export default router;

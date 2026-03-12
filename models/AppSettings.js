@@ -14,6 +14,13 @@ const appSettingsSchema = new mongoose.Schema({
     type: String,
     default: null,
     trim: true
+  },
+  // Stripe / credits settings (managed from admin dashboard)
+  stripeCreditsPerUnit: {
+    // How many credits for 1 currency unit (e.g. 1 INR = 2 credits)
+    type: Number,
+    default: 2,
+    min: 0
   }
 }, {
   timestamps: true,

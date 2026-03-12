@@ -623,4 +623,53 @@ router.put('/settings/openai-api-key', async (req, res) => {
   }
 });
 
+// ============ App Settings (Stripe Credits per Unit) ============
+
+// @route   GET /api/admin/settings/stripe-credits
+// @desc    Get current credits per currency unit (e.g. 1 INR = X credits)
+router.get('/settings/stripe-credits', async (req, res) => {
+  try {
+    const settings = await AppSettings.getSettings();
+    res.json({
+      success: true,
+      data: {
+        creditsPerUnit: typeof settings.stripeCreditsPerUnit === 'number'
+          ? settings.stripeCreditsPerUnit
+          : 2
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// @route   PUT /api/admin/settings/stripe-credits
+// @desc    Update how many credits 1 currency unit gives. Body: { creditsPerUnit }
+router.put('/settings/stripe-credits', async (req, res) => {
+  try {
+    const { creditsPerUnit } = req.body || {};
+    const value = Number(creditsPerUnit);
+    if (!value || isNaN(value) || value <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'creditsPerUnit must be a positive number'
+      });
+    }
+
+    const settings = await AppSettings.getSettings();
+    settings.stripeCreditsPerUnit = value;
+    await settings.save();
+
+    res.json({
+      success: true,
+      message: 'Stripe credits-per-unit updated',
+      data: {
+        creditsPerUnit: settings.stripeCreditsPerUnit
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 export default router;
