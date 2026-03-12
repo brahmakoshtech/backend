@@ -11,8 +11,8 @@ const router = express.Router();
 // Amounts are treated as INR rupees
 const MIN_AMOUNT_UNITS = 500; // ₹500 minimum for normal plans/custom
 const MAX_AMOUNT_UNITS = 1000000;
-// Include a special ₹50 trial plan
-const TRIAL_PLAN_AMOUNT = 50;
+// Include a special ₹100 trial plan
+const TRIAL_PLAN_AMOUNT = 100;
 const DEFAULT_PLANS = [TRIAL_PLAN_AMOUNT, 500, 1000, 2000, 4000]; // rupee plans
 
 // Resolve Stripe env (test/prod) from STRIPE_MODE
