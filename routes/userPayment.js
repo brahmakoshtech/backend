@@ -9,9 +9,11 @@ import AppSettings from '../models/AppSettings.js';
 const router = express.Router();
 
 // Amounts are treated as INR rupees
-const MIN_AMOUNT_UNITS = 500; // ₹500 minimum
+const MIN_AMOUNT_UNITS = 500; // ₹500 minimum for normal plans/custom
 const MAX_AMOUNT_UNITS = 1000000;
-const DEFAULT_PLANS = [500, 1000, 2000, 4000]; // rupee plans
+// Include a special ₹50 trial plan
+const TRIAL_PLAN_AMOUNT = 50;
+const DEFAULT_PLANS = [TRIAL_PLAN_AMOUNT, 500, 1000, 2000, 4000]; // rupee plans
 
 // Resolve Stripe env (test/prod) from STRIPE_MODE
 const STRIPE_MODE = (process.env.STRIPE_MODE || 'test').toLowerCase() === 'prod' ? 'prod' : 'test';
@@ -56,7 +58,7 @@ const getCreditsPerUnit = async () => {
  * POST /api/user/payment/create-intent
  * Create Stripe PaymentIntent for credits recharge.
  * Body:
- *  - planAmount?: number (500, 1000, 2000, 4000)
+ *  - planAmount?: number (50, 500, 1000, 2000, 4000)
  *  - amount?: number (custom INR amount, must be >= 500)
  * Returns: { clientSecret, publishableKey, credits, amountUnits }
  */
@@ -73,18 +75,21 @@ router.post('/create-intent', authenticate, authorize('user'), async (req, res) 
 
     // Prefer plan if provided
     const amountUnits = planAmount || rawAmount;
+    const usingTrialPlan = planAmount === TRIAL_PLAN_AMOUNT;
 
     console.log('[User Payment] create-intent request', {
       userId: req.user._id?.toString(),
       planAmount,
       amount: rawAmount,
       amountUnits,
+      usingTrialPlan,
     });
     if (!amountUnits || isNaN(amountUnits) || amountUnits <= 0) {
       return res.status(400).json({ success: false, message: 'Valid amount is required' });
     }
 
-    if (amountUnits < MIN_AMOUNT_UNITS) {
+    // Enforce ₹500 minimum for everything except the explicit ₹50 trial plan
+    if (!usingTrialPlan && amountUnits < MIN_AMOUNT_UNITS) {
       return res.status(400).json({ success: false, message: `Minimum amount is ₹${MIN_AMOUNT_UNITS}` });
     }
     if (amountUnits > MAX_AMOUNT_UNITS) {
@@ -105,6 +110,7 @@ router.post('/create-intent', authenticate, authorize('user'), async (req, res) 
         amountUnits: String(amountUnits),
         creditsPerUnit: String(creditsPerUnit),
         stripeMode: STRIPE_MODE,
+        isTrialPlan: usingTrialPlan ? 'true' : 'false',
       },
     });
 
@@ -120,6 +126,7 @@ router.post('/create-intent', authenticate, authorize('user'), async (req, res) 
         creditsPerUnit,
         clientIp: req.ip,
         userAgent: req.headers['user-agent'] || null,
+        isTrialPlan: usingTrialPlan,
       },
     });
 
@@ -220,7 +227,9 @@ router.post('/confirm', authenticate, authorize('user'), async (req, res) => {
       newBalance,
       addedBy: user._id,
       addedByRole: 'payment',
-      description: `Credits purchased via Stripe`,
+      description: paymentIntent.metadata?.isTrialPlan === 'true'
+        ? 'Trial credits purchased via Stripe'
+        : 'Credits purchased via Stripe',
       paymentIntentId,
     });
 
