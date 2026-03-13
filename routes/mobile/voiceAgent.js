@@ -87,6 +87,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let userAudioChunks       = [];
     let isReconnectingDG      = false;
     let pendingAudioChunks    = [];
+    let firstMessageSent      = false;  // ensures first message plays only once
 
     // ── Keepalive ──────────────────────────────────────────────────────────────
     const stopKeepalive = () => {
@@ -127,6 +128,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
       pendingAudioChunks = [];
       userAudioChunks    = [];
       isReconnectingDG   = false;
+      firstMessageSent   = false;
       console.log('[VoiceAgent] Cleanup complete');
     };
 
@@ -413,8 +415,9 @@ export const handleVoiceAgentWebSocket = (wss) => {
           safeSend({ type: 'deepgram_connected', message: 'Speech recognition active' });
           safeSend({ type: 'started', chatId: chat._id, voiceName: voiceConfig?.name || requestedVoice, message: 'Voice agent started' });
 
-          // First message
-          if (agentFirstMessage && isActive) {
+          // First message — only once per session, never on Deepgram reconnects
+          if (agentFirstMessage && isActive && !firstMessageSent) {
+            firstMessageSent = true;
             try {
               safeSend({ type: 'ai_response', text: agentFirstMessage });
               const { audioKey } = await streamElevenLabsTTS(agentFirstMessage);
