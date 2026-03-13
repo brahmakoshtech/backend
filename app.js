@@ -63,6 +63,7 @@ import swapnaDecoderRoutes         from './routes/swapnaDecoder.js';
 import dreamRequestRoutes          from './routes/dreamRequest.js';
 import partnerUserChatRoutes       from './routes/chatRoutes.js';
 import userPaymentRoutes           from './routes/userPayment.js';
+import storeProxyRoutes            from './routes/storeProxy.js';
 
 // ─── Voice Config & TTS Routes ────────────────────────────────────────────────
 import voiceConfigRoutes           from './routes/voiceConfig.js';
@@ -162,6 +163,11 @@ app.use('/api/chat', partnerUserChatRoutes);
 
 // ─── User Payment (Stripe / Apple Pay for credits) ────────────────────────────
 app.use('/api/user/payment', userPaymentRoutes);
+
+// ─── Store Proxy (forward to https://store.brahmakosh.com) ───────────────────
+// All routes here expect the same body/query as the store API and will forward
+// Authorization header (Bearer token) when present.
+app.use('/api/store', storeProxyRoutes);
 
 // ─── TTS (text-to-speech preview) ─────────────────────────────────────────────
 // POST /api/tts/synthesize — body: { text, voiceName } → { success, audioContent (base64) }

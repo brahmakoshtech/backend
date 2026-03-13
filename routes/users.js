@@ -179,6 +179,43 @@ router.post('/by-email', async (req, res) => {
   }
 });
 
+// Proxy: get full access token from store.brahmakosh.com by email
+// POST /api/users/token-by-email  { email }
+router.post('/token-by-email', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+      });
+    }
+
+    let remoteResponse;
+    try {
+      remoteResponse = await axios.post(
+        'https://store.brahmakosh.com/api/users/token-by-email',
+        { email }
+      );
+    } catch (err) {
+      if (err.response) {
+        return res.status(err.response.status).json(err.response.data);
+      }
+      throw err;
+    }
+
+    // Just forward whatever store.brahmakosh.com returns (token or error)
+    return res.status(remoteResponse.status || 200).json(remoteResponse.data);
+  } catch (error) {
+    console.error('Error getting token by email from store:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to get token by email',
+    });
+  }
+});
+
 export default router;
 
 
