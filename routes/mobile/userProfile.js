@@ -3,6 +3,7 @@ import multer from 'multer';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import User from '../../models/User.js';
+import Credit from '../../models/Credit.js';
 import { OAuth2Client } from 'google-auth-library';
 import Client from '../../models/Client.js';
 import { generateToken, authenticate } from '../../middleware/auth.js';
@@ -873,6 +874,28 @@ router.post('/register/step3', async (req, res) => {
     user.loginApproved = true;
     user.isActive = true;
     await user.save();
+
+    // Signup bonus: add 500 credits once per user and log in Credit model
+    const SIGNUP_CREDITS = 500;
+    const alreadyGranted = await Credit.findOne({
+      userId: user._id,
+      description: 'Signup bonus'
+    });
+    if (!alreadyGranted) {
+      const previousBalance = user.credits ?? 0;
+      const newBalance = previousBalance + SIGNUP_CREDITS;
+      user.credits = newBalance;
+      await user.save();
+      await Credit.create({
+        userId: user._id,
+        amount: SIGNUP_CREDITS,
+        previousBalance,
+        newBalance,
+        addedBy: user._id,
+        addedByRole: 'payment',
+        description: 'Signup bonus'
+      });
+    }
 
     // Pre-fetch astrology data when profile has full birth details
     if (user.profile?.dob && user.profile?.timeOfBirth &&
