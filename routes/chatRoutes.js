@@ -1597,12 +1597,12 @@ router.post('/voice/recording/upload-url', authenticate, async (req, res) => {
     }
 
     const effectiveRole = role || (isPartner ? 'partner' : 'user');
-    // We still record using MediaRecorder default (typically webm),
-    // but store the object in S3 with an .mp3 key so it is treated as MP3 when downloading/playing.
+    // Generate an upload URL for real MP3 audio so it plays on both iOS and Android.
+    // Clients should upload MP3 data (content-type: audio/mpeg) to this URL.
     const fileName = `voice-call-${conversationId}-${effectiveRole}-${Date.now()}.mp3`;
     const folder = `voice-calls/${conversationId}`;
 
-    const { uploadUrl, key, fileUrl } = await generateUploadUrl(fileName, 'audio/webm', folder);
+    const { uploadUrl, key, fileUrl } = await generateUploadUrl(fileName, 'audio/mpeg', folder);
 
     res.json({
       success: true,
