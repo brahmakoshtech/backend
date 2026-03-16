@@ -1569,7 +1569,7 @@ router.patch('/conversations/:conversationId/voice-recording', authenticate, asy
 // @access  Private
 router.post('/voice/recording/upload-url', authenticate, async (req, res) => {
   try {
-    const { conversationId, role } = req.body || {};
+    const { conversationId, role, fileExt, contentType } = req.body || {};
     if (!conversationId) {
       return res.status(400).json({
         success: false,
@@ -1597,19 +1597,40 @@ router.post('/voice/recording/upload-url', authenticate, async (req, res) => {
     }
 
     const effectiveRole = role || (isPartner ? 'partner' : 'user');
-    // Generate an upload URL for real MP3 audio so it plays on both iOS and Android.
-    // Clients should upload MP3 data (content-type: audio/mpeg) to this URL.
-    const fileName = `voice-call-${conversationId}-${effectiveRole}-${Date.now()}.mp3`;
+
+    // IMPORTANT: iOS AVPlayer is strict about container/codec.
+    // For maximum cross-platform compatibility, prefer AAC in M4A (audio/mp4).
+    // Client can request file type using { fileExt, contentType }.
+    const normalizedExt = String(fileExt || '').toLowerCase().replace('.', '');
+    const desiredExt = normalizedExt || 'm4a';
+
+    const allowed = new Map([
+      ['m4a', 'audio/mp4'],  // AAC in M4A (best iOS compatibility)
+      ['mp3', 'audio/mpeg'], // MP3
+      ['webm', 'audio/webm'] // Only if your player supports it on iOS (often not)
+    ]);
+
+    const effectiveContentType = (typeof contentType === 'string' && contentType.trim())
+      ? contentType.trim()
+      : (allowed.get(desiredExt) || 'audio/mp4');
+
+    // Force ext/content-type pairing if client sends mismatched values
+    const finalExt = allowed.has(desiredExt) ? desiredExt : 'm4a';
+    const finalContentType = allowed.get(finalExt) || 'audio/mp4';
+
+    const fileName = `voice-call-${conversationId}-${effectiveRole}-${Date.now()}.${finalExt}`;
     const folder = `voice-calls/${conversationId}`;
 
-    const { uploadUrl, key, fileUrl } = await generateUploadUrl(fileName, 'audio/mpeg', folder);
+    const { uploadUrl, key, fileUrl } = await generateUploadUrl(fileName, finalContentType, folder);
 
     res.json({
       success: true,
       data: {
         uploadUrl,
         key,
-        fileUrl
+        fileUrl,
+        fileExt: finalExt,
+        contentType: finalContentType
       }
     });
   } catch (error) {
