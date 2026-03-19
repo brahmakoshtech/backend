@@ -1,9 +1,12 @@
 import express from 'express';
 import axios from 'axios';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
 const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://store.brahmakosh.com';
+const SHOP_BASE_URL  = process.env.SHOP_BASE_URL  || 'https://shop.brahmakosh.com';
+const JWT_SECRET     = process.env.JWT_SECRET     || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
 
 const forward = async (req, res, method, storePath, options = {}) => {
   try {
@@ -40,6 +43,56 @@ const forward = async (req, res, method, storePath, options = {}) => {
     });
   }
 };
+
+// ---------------------------------------------------------------------------
+// SSO: App → Web (shop.brahmakosh.com)
+// GET /api/store/sso-login?token=JWT[&redirect=/]
+//
+// Flow:
+// 1) Flutter gets JWT (already logged-in user in app)
+// 2) Flutter opens WebView: https://prod.brahmakosh.com/api/store/sso-login?token=JWT
+// 3) This route verifies JWT, sets secure HTTP-only cookie for *.brahmakosh.com
+// 4) Redirects to SHOP_BASE_URL (without token in URL)
+// ---------------------------------------------------------------------------
+router.get('/sso-login', async (req, res) => {
+  try {
+    const token =
+      req.query.token ||
+      (req.headers.authorization && req.headers.authorization.split(' ')[1]);
+
+    if (!token) {
+      return res.status(400).send('Missing token');
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      return res.status(401).send('Invalid token');
+    }
+
+    // Optional: you can add extra checks here (role, isActive, etc.) using decoded
+
+    const cookieDomain = process.env.SSO_COOKIE_DOMAIN || '.brahmakosh.com';
+
+    res.cookie('auth_token', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      domain: cookieDomain,
+      // optional maxAge; you can align with JWT exp if needed
+    });
+
+    // Clean redirect without token in URL
+    const redirectPath = (req.query.redirect && String(req.query.redirect)) || '/';
+    const targetUrl = new URL(redirectPath, SHOP_BASE_URL).toString();
+
+    return res.redirect(targetUrl);
+  } catch (err) {
+    console.error('[StoreProxy] SSO error:', err.message);
+    return res.status(500).send('SSO failed');
+  }
+});
 
 // 1. Auth & User Management ----------------------------------------------------
 
