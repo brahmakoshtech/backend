@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 const router = express.Router();
 
 const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://store.brahmakosh.com';
-const SHOP_BASE_URL  = process.env.SHOP_BASE_URL  || 'https://shop.brahmakosh.com';
+const SHOP_BASE_URL  = process.env.SHOP_BASE_URL  || 'https://store.brahmakosh.com';
 const JWT_SECRET     = process.env.JWT_SECRET     || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
 
 const forward = async (req, res, method, storePath, options = {}) => {
@@ -89,13 +89,24 @@ router.get('/sso-login', async (req, res) => {
     // Optional: you can add extra checks here (role, isActive, etc.) using decoded
 
     const cookieDomain = process.env.SSO_COOKIE_DOMAIN || '.brahmakosh.com';
-    const sameSite = process.env.SSO_COOKIE_SAMESITE || 'none';
+    // For redirects WebView/Safari setups, `lax` is the safest default.
+    const sameSite = process.env.SSO_COOKIE_SAMESITE || 'lax';
+
+    // Align cookie lifetime with JWT exp (if present)
+    let maxAge = undefined;
+    if (decoded?.exp) {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const deltaSeconds = decoded.exp - nowSeconds;
+      if (deltaSeconds > 0) maxAge = deltaSeconds * 1000; // ms
+    }
 
     res.cookie('auth_token', token, {
       httpOnly: true,
       secure: true,
       sameSite,
       domain: cookieDomain,
+      path: '/',
+      ...(maxAge ? { maxAge } : {}),
       // optional maxAge; you can align with JWT exp if needed
     });
 
@@ -105,6 +116,8 @@ router.get('/sso-login', async (req, res) => {
       secure: true,
       sameSite,
       domain: cookieDomain,
+      path: '/',
+      ...(maxAge ? { maxAge } : {}),
     });
 
     // Clean redirect without token in URL
