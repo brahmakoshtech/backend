@@ -16,6 +16,7 @@ import adminAuthRoutes             from './routes/auth/adminAuth.js';
 import clientAuthRoutes            from './routes/auth/clientAuth.js';
 import userAuthRoutes              from './routes/auth/userAuth.js';
 import passwordResetRoutes         from './routes/auth/passwordReset.js';
+import partnerPasswordResetRoutes from './routes/auth/partnerPasswordReset.js';
 import appleOtpRoutes              from './routes/auth/appleOtp.js';
 import userRoutes                  from './routes/users.js';
 import adminRoutes                 from './routes/admin.js';
@@ -141,6 +142,7 @@ app.use('/api/auth/client',      clientAuthRoutes);
 app.use('/api/auth/user',        userAuthRoutes);
 app.use('/api/auth/user',        passwordResetRoutes);
 app.use('/api/auth/user',        appleOtpRoutes);
+app.use('/api/auth/partner',     partnerPasswordResetRoutes);
 
 // Core application
 app.use('/api/users',       userRoutes);

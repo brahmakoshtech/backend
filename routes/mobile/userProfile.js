@@ -1467,13 +1467,7 @@ router.post('/register/resend-email-otp', async (req, res) => {
       });
     }
 
-    if (user.emailVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Email already verified' 
-      });
-    }
-
+   
     const otp = generateOTP();
     const otpExpiry = getOTPExpiry();
 
