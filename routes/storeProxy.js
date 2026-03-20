@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 const router = express.Router();
 
 const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://store.brahmakosh.com';
-const SHOP_BASE_URL  = process.env.SHOP_BASE_URL  || 'https://store.brahmakosh.com';
+const SHOP_BASE_URL  = process.env.SHOP_BASE_URL  || 'https://shop.brahmakosh.com';
 const JWT_SECRET     = process.env.JWT_SECRET     || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
 
 const forward = async (req, res, method, storePath, options = {}) => {
