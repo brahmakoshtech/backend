@@ -228,6 +228,21 @@ router.post('/cart', async (req, res) => {
   await forward(req, res, 'post', '/api/cart');
 });
 
+// Get cart -> GET /api/store/cart
+router.get('/cart', async (req, res) => {
+  await forward(req, res, 'get', '/api/cart');
+});
+
+// Update cart item qty -> PUT /api/store/cart/:itemId
+router.put('/cart/:itemId', async (req, res) => {
+  await forward(req, res, 'put', `/api/cart/${req.params.itemId}`);
+});
+
+// Remove cart item -> DELETE /api/store/cart/:itemId
+router.delete('/cart/:itemId', async (req, res) => {
+  await forward(req, res, 'delete', `/api/cart/${req.params.itemId}`);
+});
+
 // Process checkout -> POST /api/store/checkout
 router.post('/checkout', async (req, res) => {
   await forward(req, res, 'post', '/api/checkout');
@@ -243,6 +258,12 @@ router.post('/payment/create-checkout-session', async (req, res) => {
 // Verify payment -> POST /api/store/payment/verify
 router.post('/payment/verify', async (req, res) => {
   await forward(req, res, 'post', '/api/payment/verify');
+});
+
+// 4.2 Coupons ------------------------------------------------------------------
+// Apply coupon -> POST /api/store/coupons/apply
+router.post('/coupons/apply', async (req, res) => {
+  await forward(req, res, 'post', '/api/coupons/apply');
 });
 
 // 5. Addresses -----------------------------------------------------------------
@@ -273,6 +294,15 @@ router.get('/banners', async (req, res) => {
 // Active coupons -> GET /api/store/coupons/active
 router.get('/coupons/active', async (req, res) => {
   await forward(req, res, 'get', '/api/coupons/active');
+});
+
+// Wishlist ----------------------------------------------------------------------
+router.get('/users/wishlist', async (req, res) => {
+  await forward(req, res, 'get', '/api/users/wishlist');
+});
+
+router.post('/users/wishlist', async (req, res) => {
+  await forward(req, res, 'post', '/api/users/wishlist');
 });
 
 export default router;
