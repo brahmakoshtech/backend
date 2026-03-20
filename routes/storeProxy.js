@@ -167,6 +167,16 @@ router.get('/users/profile', async (req, res) => {
 
 // 2. Products ------------------------------------------------------------------
 
+// Categories -> GET /api/store/categories
+router.get('/categories', async (req, res) => {
+  await forward(req, res, 'get', '/api/categories');
+});
+
+// Categories admin -> GET /api/store/categories/admin
+router.get('/categories/admin', async (req, res) => {
+  await forward(req, res, 'get', '/api/categories/admin');
+});
+
 // Get products -> GET /api/store/products?keyword=&category=&subcategory=
 router.get('/products', async (req, res) => {
   const params = {
@@ -224,6 +234,16 @@ router.get('/user/address/list', async (req, res) => {
 router.get('/content', async (req, res) => {
   const params = { section: req.query.section };
   await forward(req, res, 'get', '/api/content', { params });
+});
+
+// Banners -> GET /api/store/banners
+router.get('/banners', async (req, res) => {
+  await forward(req, res, 'get', '/api/banners');
+});
+
+// Active coupons -> GET /api/store/coupons/active
+router.get('/coupons/active', async (req, res) => {
+  await forward(req, res, 'get', '/api/coupons/active');
 });
 
 export default router;
