@@ -42,13 +42,22 @@ const forward = async (req, res, method, storePath, options = {}) => {
       headers,
       params: options.params || undefined,
       data: options.body !== undefined ? options.body : req.body,
+      timeout: Number(process.env.STORE_PROXY_TIMEOUT_MS || 10000),
     };
 
     const response = await axios(config);
     return res.status(response.status || 200).json(response.data);
   } catch (err) {
+    // Ensure we return a response even on network timeouts.
     if (err.response) {
       return res.status(err.response.status).json(err.response.data);
+    }
+    if (err.code === 'ECONNABORTED') {
+      return res.status(504).json({
+        success: false,
+        message: 'Store request timed out',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+      });
     }
     console.error('[StoreProxy] Error forwarding request:', err.message);
     return res.status(500).json({
@@ -185,6 +194,26 @@ router.get('/products', async (req, res) => {
     subcategory: req.query.subcategory,
   };
   await forward(req, res, 'get', '/api/products', { params });
+});
+
+// Get highlighted products -> GET /api/store/products/highlighted
+router.get('/products/highlighted', async (req, res) => {
+  await forward(req, res, 'get', '/api/products/highlighted');
+});
+
+// Get trending products -> GET /api/store/products/trending
+router.get('/products/trending', async (req, res) => {
+  await forward(req, res, 'get', '/api/products/trending');
+});
+
+// Get new arrivals products -> GET /api/store/products/new-arrival
+router.get('/products/new-arrival', async (req, res) => {
+  await forward(req, res, 'get', '/api/products/new-arrival');
+});
+
+// Get single product -> GET /api/store/products/:id
+router.get('/products/:id', async (req, res) => {
+  await forward(req, res, 'get', `/api/products/${req.params.id}`);
 });
 
 // Create product (admin only) – JSON proxy (does not handle files)
