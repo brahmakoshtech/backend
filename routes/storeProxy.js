@@ -84,8 +84,25 @@ router.get('/sso-login', async (req, res) => {
     });
 
     // Clean redirect without token in URL
-    const redirectPath = (req.query.redirect && String(req.query.redirect)) || '/';
-    const targetUrl = new URL(redirectPath, SHOP_BASE_URL).toString();
+    const redirectInput = (req.query.redirect && String(req.query.redirect)) || '/';
+
+    // Normalize relative path and apply known route mappings for shop.
+    // Example: docs may use `/remedies`, but shop route is `/category/remedies`.
+    let mappedPath = redirectInput;
+    let search = '';
+    try {
+      const u = new URL(redirectInput, SHOP_BASE_URL);
+      mappedPath = u.pathname;
+      search = u.search || '';
+    } catch (_) {
+      // Keep mappedPath as-is
+    }
+
+    if (mappedPath === '/remedies' || mappedPath === '/remedies/') {
+      mappedPath = '/category/remedies';
+    }
+
+    const targetUrl = `${SHOP_BASE_URL.replace(/\/$/, '')}${mappedPath}${search}`;
 
     return res.redirect(targetUrl);
   } catch (err) {
