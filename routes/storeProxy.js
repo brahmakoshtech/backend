@@ -33,7 +33,19 @@ const forward = async (req, res, method, storePath, options = {}) => {
     if (req.headers.authorization) {
       headers.Authorization = req.headers.authorization;
     } else if (cookieToken) {
-      headers.Authorization = `Bearer ${cookieToken}`;
+      // Some downstream stores decode the JWT using `decoded.id`
+      // while your tokens use `decoded.userId`. To keep the store working,
+      // re-sign a token with an `id` claim when needed.
+      let tokenForStore = cookieToken;
+      try {
+        const decoded = jwt.verify(cookieToken, JWT_SECRET);
+        if (decoded && decoded.userId && !decoded.id) {
+          tokenForStore = jwt.sign({ ...decoded, id: decoded.userId }, JWT_SECRET);
+        }
+      } catch (_) {
+        // If verify fails, just forward the original token.
+      }
+      headers.Authorization = `Bearer ${tokenForStore}`;
     }
 
     const config = {
