@@ -1,12 +1,16 @@
 import express from 'express';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
 
 const router = express.Router();
 
 const STORE_BASE_URL = process.env.STORE_BASE_URL || 'https://store.brahmakosh.com';
 const SHOP_BASE_URL  = process.env.SHOP_BASE_URL  || 'https://shop.brahmakosh.com';
 const JWT_SECRET     = process.env.JWT_SECRET     || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
+
+// Cache store-native tokens by userId to avoid calling token-by-email on every request.
+const storeTokenCache = new Map(); // userId -> { token, expMs }
 
 const forward = async (req, res, method, storePath, options = {}) => {
   try {
@@ -29,23 +33,64 @@ const forward = async (req, res, method, storePath, options = {}) => {
     }
     const cookieToken = cookies.auth_token || cookies.token || null;
 
+    const mintStoreTokenFromCookie = async (cookieJwt) => {
+      // If the browser hits this proxy with the SSO cookie, cookieJwt belongs to our backend.
+      // BrahmBazar/Store might use its own JWT_SECRET, so we create a store-native token by email.
+      try {
+        const decoded = jwt.verify(cookieJwt, JWT_SECRET);
+        const userId = decoded?.userId || decoded?.id;
+        const role = decoded?.role;
+        if (!userId || role !== 'user') return null;
+
+        const nowMs = Date.now();
+        const cached = storeTokenCache.get(String(userId));
+        if (cached?.token && (!cached.expMs || cached.expMs > nowMs)) {
+          return cached.token;
+        }
+
+        const user = await User.findById(userId).select('email');
+        if (!user?.email) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[StoreProxy][SSO] User email not found in local DB for userId:', userId);
+          }
+          return null;
+        }
+
+        // Call store "token-by-email" to get a JWT that store will accept.
+        try {
+          const tokenRes = await axios.post(`${STORE_BASE_URL}/api/users/token-by-email`, { email: user.email });
+          const storeToken = tokenRes?.data?.token;
+          if (!storeToken) return null;
+
+          const expMs = decoded?.exp ? decoded.exp * 1000 : null;
+          storeTokenCache.set(String(userId), { token: storeToken, expMs });
+          return storeToken || null;
+        } catch (e) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[StoreProxy][SSO] token-by-email failed for email:', user.email, 'status:', e?.response?.status);
+          }
+          return null;
+        }
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[StoreProxy][SSO] mintStoreTokenFromCookie jwt verify failed:', e?.message);
+        }
+        return null;
+      }
+    };
+
     // Forward Authorization header if present (Bearer token from /token-by-email or login)
     if (req.headers.authorization) {
       headers.Authorization = req.headers.authorization;
     } else if (cookieToken) {
-      // Some downstream stores decode the JWT using `decoded.id`
-      // while your tokens use `decoded.userId`. To keep the store working,
-      // re-sign a token with an `id` claim when needed.
-      let tokenForStore = cookieToken;
-      try {
-        const decoded = jwt.verify(cookieToken, JWT_SECRET);
-        if (decoded && decoded.userId && !decoded.id) {
-          tokenForStore = jwt.sign({ ...decoded, id: decoded.userId }, JWT_SECRET);
-        }
-      } catch (_) {
-        // If verify fails, just forward the original token.
+      // Prefer store-native token to avoid JWT_SECRET/payload mismatch.
+      const storeToken = await mintStoreTokenFromCookie(cookieToken);
+      if (storeToken) {
+        headers.Authorization = `Bearer ${storeToken}`;
+      } else {
+        // Fallback: forward original token (best effort).
+        headers.Authorization = `Bearer ${cookieToken}`;
       }
-      headers.Authorization = `Bearer ${tokenForStore}`;
     }
 
     const config = {
