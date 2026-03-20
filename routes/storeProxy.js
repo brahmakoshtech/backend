@@ -16,9 +16,24 @@ const forward = async (req, res, method, storePath, options = {}) => {
       'Content-Type': 'application/json',
     };
 
+    // If shop is using cookie-based auth, convert cookie -> Authorization header
+    // so upstream store endpoints work without needing front-end JS access to tokens.
+    const cookieHeader = req.headers.cookie || '';
+    const cookies = {};
+    if (cookieHeader) {
+      for (const part of String(cookieHeader).split(';')) {
+        const [k, ...rest] = part.trim().split('=');
+        if (!k) continue;
+        cookies[k] = rest.join('=');
+      }
+    }
+    const cookieToken = cookies.auth_token || cookies.token || null;
+
     // Forward Authorization header if present (Bearer token from /token-by-email or login)
     if (req.headers.authorization) {
       headers.Authorization = req.headers.authorization;
+    } else if (cookieToken) {
+      headers.Authorization = `Bearer ${cookieToken}`;
     }
 
     const config = {
@@ -74,13 +89,22 @@ router.get('/sso-login', async (req, res) => {
     // Optional: you can add extra checks here (role, isActive, etc.) using decoded
 
     const cookieDomain = process.env.SSO_COOKIE_DOMAIN || '.brahmakosh.com';
+    const sameSite = process.env.SSO_COOKIE_SAMESITE || 'none';
 
     res.cookie('auth_token', token, {
       httpOnly: true,
       secure: true,
-      sameSite: 'lax',
+      sameSite,
       domain: cookieDomain,
       // optional maxAge; you can align with JWT exp if needed
+    });
+
+    // Some shop implementations may look for a different cookie name.
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: true,
+      sameSite,
+      domain: cookieDomain,
     });
 
     // Clean redirect without token in URL
