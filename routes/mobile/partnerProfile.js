@@ -1327,13 +1327,10 @@ router.post('/register/resend-phone-otp', async (req, res) => {
         message: 'Phone number not provided. Please complete step 2 first.' 
       });
     }
-
-    if (partner.phoneVerified) {
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Phone already verified' 
-      });
-    }
+    // If phone is already verified, we still allow OTP resend for cases like:
+    // - frontend retrying Step 2
+    // - user requesting a fresh OTP even after verification
+    // We do NOT set phoneVerified=false here.
 
     const otp = generateOTP();
     const otpExpiry = getOTPExpiry();
