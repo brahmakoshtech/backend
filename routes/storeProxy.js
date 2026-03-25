@@ -154,9 +154,13 @@ router.get('/sso-login', async (req, res) => {
 
     // Optional: you can add extra checks here (role, isActive, etc.) using decoded
 
+    // Cross-subdomain + WebView: Domain=.brahmakosh.com, SameSite=None, Secure, HttpOnly
+    // (Flutter SSO doc). SameSite=None is required so cookies attach to shop→prod API calls in embedded WebViews.
     const cookieDomain = process.env.SSO_COOKIE_DOMAIN || '.brahmakosh.com';
-    // For redirects WebView/Safari setups, `lax` is the safest default.
-    const sameSite = process.env.SSO_COOKIE_SAMESITE || 'lax';
+    const sameSiteRaw = (process.env.SSO_COOKIE_SAMESITE || 'none').toLowerCase();
+    const sameSite = ['lax', 'strict', 'none'].includes(sameSiteRaw) ? sameSiteRaw : 'none';
+    let secure = process.env.SSO_COOKIE_SECURE !== 'false';
+    if (sameSite === 'none') secure = true; // browsers reject SameSite=None without Secure
 
     // Align cookie lifetime with JWT exp (if present)
     let maxAge = undefined;
@@ -166,25 +170,19 @@ router.get('/sso-login', async (req, res) => {
       if (deltaSeconds > 0) maxAge = deltaSeconds * 1000; // ms
     }
 
-    res.cookie('auth_token', token, {
+    const cookieOpts = {
       httpOnly: true,
-      secure: true,
+      secure,
       sameSite,
       domain: cookieDomain,
       path: '/',
       ...(maxAge ? { maxAge } : {}),
-      // optional maxAge; you can align with JWT exp if needed
-    });
+    };
+
+    res.cookie('auth_token', token, cookieOpts);
 
     // Some shop implementations may look for a different cookie name.
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: true,
-      sameSite,
-      domain: cookieDomain,
-      path: '/',
-      ...(maxAge ? { maxAge } : {}),
-    });
+    res.cookie('token', token, cookieOpts);
 
     // Clean redirect without token in URL
     const redirectInput = (req.query.redirect && String(req.query.redirect)) || '/';
