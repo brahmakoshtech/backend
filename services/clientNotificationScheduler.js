@@ -20,6 +20,7 @@ const sendCampaign = async (campaign) => {
 
   const userIds = validUsers.map((u) => u._id.toString());
   const now = new Date();
+  let pushMetrics = { sentTokens: 0, failedTokens: 0, totalTokens: 0 };
 
   if (userIds.length === 0) {
     await ClientNotificationCampaign.findByIdAndUpdate(campaign._id, {
@@ -39,9 +40,9 @@ const sendCampaign = async (campaign) => {
     message: campaign.description,
     data: {
       url: campaign.url || '',
-      campaignId: campaign._id,
-      groupId: campaign.groupId || null,
-      clientId: campaign.clientId
+      campaignId: String(campaign._id),
+      groupId: campaign.groupId ? String(campaign.groupId) : '',
+      clientId: String(campaign.clientId)
     },
     sentAt: now
   }));
@@ -51,7 +52,7 @@ const sendCampaign = async (campaign) => {
   const fcmTokens = validUsers.flatMap((u) => (u.fcmTokens || []).map((t) => t.token).filter(Boolean));
   if (fcmTokens.length > 0) {
     try {
-      await sendFcmToTokens(fcmTokens, {
+      const pushResult = await sendFcmToTokens(fcmTokens, {
         title: campaign.name,
         body: campaign.description,
         data: {
@@ -62,18 +63,39 @@ const sendCampaign = async (campaign) => {
           clientId: String(campaign.clientId)
         }
       });
+
+      pushMetrics = {
+        sentTokens: pushResult?.sent || 0,
+        failedTokens: pushResult?.failed || 0,
+        totalTokens: (pushResult?.sent || 0) + (pushResult?.failed || 0)
+      };
+
+      if (pushResult?.invalidTokens?.length) {
+        // Remove invalid tokens so we stop sending to them.
+        await User.updateMany(
+          { 'fcmTokens.token': { $in: pushResult.invalidTokens } },
+          { $pull: { fcmTokens: { token: { $in: pushResult.invalidTokens } } } }
+        );
+      }
     } catch (e) {
       console.error('[ClientNotification] FCM push error:', e.message);
     }
   }
 
-  await ClientNotificationCampaign.findByIdAndUpdate(campaign._id, {
-    status: 'sent',
+  const allTokensFailed = pushMetrics.totalTokens > 0 && pushMetrics.sentTokens === 0;
+  const campaignUpdate = {
+    status: allTokensFailed ? 'failed' : 'sent',
     sentAt: now,
     totalRecipients: userIds.length,
-    sentCount: userIds.length,
-    failedCount: 0,
-    errorMessage: ''
+    totalTokens: pushMetrics.totalTokens,
+    // store token delivery metrics
+    sentCount: pushMetrics.sentTokens,
+    failedCount: pushMetrics.failedTokens,
+    errorMessage: allTokensFailed ? 'All device tokens failed to receive push' : ''
+  };
+
+  await ClientNotificationCampaign.findByIdAndUpdate(campaign._id, {
+    ...campaignUpdate
   });
 };
 

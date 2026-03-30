@@ -55,6 +55,11 @@ const clientNotificationCampaignSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    // Token counts (multi-device): how many device tokens were attempted.
+    totalTokens: {
+      type: Number,
+      default: 0
+    },
     sentCount: {
       type: Number,
       default: 0
