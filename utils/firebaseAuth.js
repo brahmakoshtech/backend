@@ -57,6 +57,17 @@ const initializeFirebase = () => {
 };
 
 /**
+ * Ensure Firebase Admin is initialized (for Auth, FCM, etc.)
+ * @returns {import('firebase-admin').app.App | null}
+ */
+export const ensureFirebaseApp = () => {
+  if (firebaseApp) {
+    return firebaseApp;
+  }
+  return initializeFirebase();
+};
+
+/**
  * Verify Firebase ID token and extract user information
  * @param {string} idToken - Firebase ID token from mobile app
  * @returns {Object} User information from Firebase

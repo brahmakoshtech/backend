@@ -139,6 +139,18 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: 'Asia/Kolkata' // Default to IST
   },
+  // Firebase Cloud Messaging device tokens (push notifications)
+  fcmTokens: [
+    {
+      token: { type: String, trim: true, required: true },
+      platform: {
+        type: String,
+        enum: ['android', 'ios', 'web', 'unknown'],
+        default: 'unknown'
+      },
+      updatedAt: { type: Date, default: Date.now }
+    }
+  ],
   createdAt: {
     type: Date,
     default: Date.now
@@ -192,7 +204,8 @@ userSchema.methods.toJSON = function() {
   delete obj.mobileOtp;
   delete obj.mobileOtpExpiry;
   delete obj.mobileOtpMethod;
-  
+  delete obj.fcmTokens;
+
   return obj;
 };
 

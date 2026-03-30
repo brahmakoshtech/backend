@@ -1432,6 +1432,99 @@ router.put('/profile', authenticate, async (req, res) => {
   }
 });
 
+/**
+ * Register FCM device token for push notifications (no polling — server pushes via FCM).
+ * PUT /api/mobile/user/push-token
+ * Headers: Authorization: Bearer <user_token>
+ * Body: { "fcmToken": "<FCM registration token>", "platform": "android" | "ios" | "web" }
+ */
+router.put('/push-token', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'user') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. User access required.'
+      });
+    }
+
+    const { fcmToken, platform } = req.body || {};
+    if (!fcmToken || typeof fcmToken !== 'string' || fcmToken.trim().length < 20) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid fcmToken is required'
+      });
+    }
+
+    const plat = ['android', 'ios', 'web'].includes(platform) ? platform : 'unknown';
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const tokenStr = fcmToken.trim();
+    const list = (user.fcmTokens || []).filter((t) => t.token !== tokenStr);
+    list.unshift({ token: tokenStr, platform: plat, updatedAt: new Date() });
+    user.fcmTokens = list.slice(0, 10);
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Push token registered',
+      data: { tokensStored: user.fcmTokens.length }
+    });
+  } catch (error) {
+    console.error('Register push token error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to register push token'
+    });
+  }
+});
+
+/**
+ * Remove FCM token (logout / uninstall).
+ * DELETE /api/mobile/user/push-token
+ * Body: { "fcmToken": "<token to remove>" }
+ */
+router.delete('/push-token', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'user') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. User access required.'
+      });
+    }
+
+    const { fcmToken } = req.body || {};
+    if (!fcmToken || typeof fcmToken !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'fcmToken is required'
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    user.fcmTokens = (user.fcmTokens || []).filter((t) => t.token !== fcmToken.trim());
+    await user.save();
+
+    res.json({
+      success: true,
+      message: 'Push token removed',
+      data: { tokensStored: user.fcmTokens.length }
+    });
+  } catch (error) {
+    console.error('Remove push token error:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to remove push token'
+    });
+  }
+});
+
 // ============================================
 // RESEND OTP ENDPOINTS
 // ============================================

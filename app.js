@@ -74,6 +74,7 @@ import ttsRoutes                   from './routes/tts.js';
 import { initializeSuperAdmin }    from './config/initSuperAdmin.js';
 import { setupVoiceAgentWebSocket } from './routes/mobile/voiceAgent.js';
 import { setupChatWebSocket }       from './services/chatWebSocket.js';
+import { startClientNotificationScheduler } from './services/clientNotificationScheduler.js';
 
 // ─── NEW: Voice Config Seeder ─────────────────────────────────────────────────
 import { seedVoiceConfigs }         from './config/seedVoiceConfigs.js';
@@ -81,6 +82,7 @@ import { seedVoiceConfigs }         from './config/seedVoiceConfigs.js';
 import './services/cronJobs.js';
 
 dotenv.config();
+startClientNotificationScheduler();
 
 const app    = express();
 const server = http.createServer(app);
