@@ -81,14 +81,15 @@ export const seedVoiceConfigs = async () => {
       await VoiceConfig.findOneAndUpdate(
         { name: voice.name },
         {
-          // Ensure new required fields (like elevenlabsVoiceName) are populated
-          // while still keeping user customizations like prompt/voiceId if they already changed them.
-          $setOnInsert: voice,
           $set: {
             gender: voice.gender,
             displayName: voice.displayName,
             description: voice.description,
             elevenlabsVoiceName: voice.elevenlabsVoiceName,
+          },
+          $setOnInsert: {
+            voiceId: voice.voiceId,
+            prompt: voice.prompt,
           },
         },
         { upsert: true, new: true }

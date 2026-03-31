@@ -163,8 +163,8 @@ export const authorize = (...roles) => {
 export const generateToken = (userId, role, clientId = null) => {
   const payload = { userId, role };
   
-  // Add clientId to token for users
-  if (role === 'user' && clientId) {
+  // Add clientId to token for both users and clients
+  if (clientId) {
     payload.clientId = clientId;
   }
   

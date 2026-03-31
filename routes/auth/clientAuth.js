@@ -41,7 +41,7 @@ router.post('/login', async (req, res) => {
 
     // Clients don't need approval, loginApproved check removed
 
-    const token = generateToken(client._id, 'client');
+    const token = generateToken(client._id, 'client', client.clientId);
 
     res.json({
       success: true,
