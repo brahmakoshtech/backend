@@ -17,9 +17,35 @@ import {
   sendWhatsAppOTP,
 } from '../../utils/otp.js';
 import { verifyFirebaseToken, isFirebaseAuthEnabled } from '../../utils/firebaseAuth.js';
-import { putobject, getobject, s3Client, deleteObject } from '../../utils/s3.js';
+import { putobject, getobject, s3Client, deleteObject, extractS3KeyFromUrl } from '../../utils/s3.js';
 
 const router = express.Router();
+
+const isHttpUrl = (value) => typeof value === 'string' && /^https?:\/\//i.test(value);
+const isS3Url = (value) => typeof value === 'string' && value.includes('amazonaws.com/');
+
+const normalizeStoredProfileImageToKey = async (user) => {
+  if (!user?.profileImage || typeof user.profileImage !== 'string') {
+    return null;
+  }
+
+  if (!isHttpUrl(user.profileImage)) {
+    return user.profileImage;
+  }
+
+  if (!isS3Url(user.profileImage)) {
+    return null;
+  }
+
+  const extractedKey = extractS3KeyFromUrl(user.profileImage);
+  if (!extractedKey || extractedKey === user.profileImage) {
+    return extractedKey || null;
+  }
+
+  user.profileImage = extractedKey;
+  await user.save();
+  return extractedKey;
+};
 
 // Multer config for direct image uploads (memory storage, 5MB limit, images only)
 const upload = multer({
@@ -1247,11 +1273,13 @@ router.get('/profile', authenticate, async (req, res) => {
       });
     }
 
-    // Generate presigned URL for profile image if exists
+    // Backward compatibility: convert old stored S3 URLs into keys.
+    await normalizeStoredProfileImageToKey(user);
+
+    // Generate a fresh profile image URL if possible.
     let profileImageUrl = null;
     if (user.profileImage) {
       try {
-        const { getobject } = await import('../../utils/s3.js');
         profileImageUrl = await getobject(user.profileImage);
       } catch (error) {
         console.error('Error generating profile image URL:', error);
@@ -1261,6 +1289,9 @@ router.get('/profile', authenticate, async (req, res) => {
     const userData = user.toObject();
     if (profileImageUrl) {
       userData.profileImageUrl = profileImageUrl;
+    } else if (isHttpUrl(user.profileImage) && !isS3Url(user.profileImage)) {
+      // For external URLs (e.g., Google picture URL), pass through directly.
+      userData.profileImageUrl = user.profileImage;
     }
 
     const token = generateToken(user._id, 'user', user.clientId);
@@ -1383,6 +1414,7 @@ router.put('/profile', authenticate, async (req, res) => {
     }
 
     await user.save();
+    await normalizeStoredProfileImageToKey(user);
 
     // Refresh astrology data when birth details are updated
     const birthFieldsUpdated = req.body.dob || req.body.timeOfBirth ||
@@ -1406,11 +1438,30 @@ router.put('/profile', authenticate, async (req, res) => {
 
     const token = generateToken(user._id, 'user', user.clientId);
 
+    let profileImageUrl = null;
+    if (user.profileImage) {
+      try {
+        profileImageUrl = await getobject(user.profileImage);
+      } catch (error) {
+        // If this is an external URL, return it directly.
+        if (isHttpUrl(user.profileImage) && !isS3Url(user.profileImage)) {
+          profileImageUrl = user.profileImage;
+        } else {
+          console.error('Error generating refreshed profile image URL:', error);
+        }
+      }
+    }
+
+    const userData = user.toObject();
+    if (profileImageUrl) {
+      userData.profileImageUrl = profileImageUrl;
+    }
+
     const response = {
       success: true,
       message: 'Profile updated successfully',
       data: {
-        user: { ...user.toObject(), role: 'user' },
+        user: { ...userData, role: 'user' },
         token
       }
     };
