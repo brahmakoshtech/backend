@@ -21,14 +21,13 @@ router.use(authenticateToken);
 // Create new spiritual configuration
 const createConfiguration = async (req, res) => {
   try {
-    const { title, duration, description, emotion, type, karmaPoints, chantingType, meditationType, prayerType, categoryId } = req.body;
+    const { title, duration, description, type, karmaPoints, chantingType, meditationType, prayerType, categoryId, category, subcategory } = req.body;
     
     // Get clientId based on user role
     let clientId;
     if (req.user.role === 'client') {
-      clientId = req.user.clientId; // Already in CLI-XXXXXX format
+      clientId = req.user.clientId;
     } else if (req.user.role === 'user') {
-      // For regular users, get clientId from their profile
       clientId = req.user.clientId?.clientId || req.user.tokenClientId;
     } else {
       return res.status(403).json({
@@ -48,14 +47,14 @@ const createConfiguration = async (req, res) => {
       title,
       duration: duration || '15 minutes',
       description,
-      emotion,
       type,
       karmaPoints: karmaPoints || 10,
+      category: category || '',
+      subcategory: subcategory || '',
       categoryId: categoryId || getDefaultCategoryId(type),
       clientId
     });
     
-    // Add category-specific type field only if provided
     if (chantingType) configuration.chantingType = chantingType;
     if (meditationType) configuration.meditationType = meditationType;
     if (prayerType) configuration.prayerType = prayerType;
@@ -119,7 +118,9 @@ const getConfigurations = async (req, res) => {
       query.type = req.query.type;
     }
     
-    const configurations = await SpiritualConfiguration.find(query).sort({ createdAt: -1 });
+    const configurations = await SpiritualConfiguration.find(query)
+      .select('-emotion -chantingType -meditationType -prayerType -isDeleted -__v')
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
@@ -139,7 +140,7 @@ const getConfigurations = async (req, res) => {
 const updateConfiguration = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, duration, description, emotion, karmaPoints, chantingType, meditationType, prayerType, categoryId } = req.body;
+    const { title, duration, description, karmaPoints, chantingType, meditationType, prayerType, categoryId, category, subcategory } = req.body;
     
     if (!['client', 'user'].includes(req.user.role)) {
       return res.status(403).json({
@@ -152,12 +153,13 @@ const updateConfiguration = async (req, res) => {
     if (title !== undefined) updateData.title = title;
     if (duration !== undefined) updateData.duration = duration;
     if (description !== undefined) updateData.description = description;
-    if (emotion !== undefined) updateData.emotion = emotion;
     if (karmaPoints !== undefined) updateData.karmaPoints = karmaPoints;
     if (chantingType !== undefined) updateData.chantingType = chantingType;
     if (meditationType !== undefined) updateData.meditationType = meditationType;
     if (prayerType !== undefined) updateData.prayerType = prayerType;
     if (categoryId !== undefined) updateData.categoryId = categoryId;
+    if (category !== undefined) updateData.category = category;
+    if (subcategory !== undefined) updateData.subcategory = subcategory;
 
     const configuration = await SpiritualConfiguration.findOneAndUpdate(
       { _id: id, isDeleted: false },

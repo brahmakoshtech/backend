@@ -25,9 +25,14 @@ const spiritualConfigurationSchema = new mongoose.Schema({
     enum: ['meditation', 'prayer', 'chanting', 'breathing', 'mindfulness', 'yoga', 'gratitude', 'silence', 'reflection'],
     default: 'meditation'
   },
-  emotion: {
+  // category: main group e.g. "Daily Chanting", "Guided Meditation", "Daily Ritual Prayers"
+  category: {
     type: String,
-    enum: ['happy', 'sad', 'angry', 'afraid', 'loved', 'surprised', 'calm', 'disgusted', 'neutral', 'stressed', ''],
+    default: ''
+  },
+  // subcategory: specific item e.g. "Morning Awakening Mantra", "Stress Relief Meditation"
+  subcategory: {
+    type: String,
     default: ''
   },
   karmaPoints: {
@@ -36,15 +41,10 @@ const spiritualConfigurationSchema = new mongoose.Schema({
     max: 100,
     default: 10
   },
-  chantingType: {
-    type: String
-  },
-  meditationType: {
-    type: String
-  },
-  prayerType: {
-    type: String
-  },
+  // Keep for backward compatibility with existing data
+  chantingType: { type: String, default: '' },
+  meditationType: { type: String, default: '' },
+  prayerType: { type: String, default: '' },
   isActive: {
     type: Boolean,
     default: true
@@ -70,5 +70,6 @@ spiritualConfigurationSchema.index({ type: 1, isActive: 1 });
 spiritualConfigurationSchema.index({ clientId: 1 });
 spiritualConfigurationSchema.index({ clientId: 1, isDeleted: 1 });
 spiritualConfigurationSchema.index({ categoryId: 1 });
+spiritualConfigurationSchema.index({ type: 1, category: 1 });
 
 export default mongoose.model('SpiritualConfiguration', spiritualConfigurationSchema);
