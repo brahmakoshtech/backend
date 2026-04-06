@@ -14,7 +14,12 @@ const MAX_MULTICAST = 500;
 export async function sendFcmToTokens(tokens, { title, body, data = {} }) {
   const app = ensureFirebaseApp();
   if (!app) {
-    console.warn('[FCM] Firebase not configured (FIREBASE_PROJECT_ID / service account); skipping push');
+    console.warn('[FCM] Firebase not configured (FIREBASE_PROJECT_ID / service account); skipping push', {
+      FIREBASE_PROJECT_ID: !!process.env.FIREBASE_PROJECT_ID,
+      FIREBASE_SERVICE_ACCOUNT_KEY: !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+      FIREBASE_CLIENT_EMAIL: !!process.env.FIREBASE_CLIENT_EMAIL,
+      FIREBASE_PRIVATE_KEY: !!process.env.FIREBASE_PRIVATE_KEY,
+    });
     return { sent: 0, failed: 0, skipped: true, invalidTokens: [] };
   }
 
@@ -22,6 +27,17 @@ export async function sendFcmToTokens(tokens, { title, body, data = {} }) {
   if (unique.length === 0) {
     return { sent: 0, failed: 0, skipped: false, invalidTokens: [] };
   }
+
+  const campaignId = data?.campaignId || '';
+  const groupId = data?.groupId || '';
+  const url = data?.url || '';
+  console.log('[FCM] Sending push', {
+    tokens: unique.length,
+    campaignId: campaignId ? String(campaignId) : undefined,
+    groupId: groupId ? String(groupId) : undefined,
+    url: url ? String(url).slice(0, 30) + (String(url).length > 30 ? '...' : '') : undefined,
+    title,
+  });
 
   const dataStrings = {};
   for (const [k, v] of Object.entries(data)) {

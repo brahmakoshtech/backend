@@ -16,14 +16,23 @@ const initializeFirebase = () => {
     return firebaseApp;
   }
 
-  if (!process.env.FIREBASE_PROJECT_ID) {
-    console.warn('Firebase is not configured. FIREBASE_PROJECT_ID is missing.');
+  const hasProjectId = !!process.env.FIREBASE_PROJECT_ID;
+  const hasServiceAccountKey = !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  const hasClientEmail = !!process.env.FIREBASE_CLIENT_EMAIL;
+  const hasPrivateKey = !!process.env.FIREBASE_PRIVATE_KEY;
+
+  if (!hasProjectId) {
+    console.warn('[FirebaseAdmin] Not configured: FIREBASE_PROJECT_ID is missing. ' + 
+      `FIREBASE_SERVICE_ACCOUNT_KEY=${hasServiceAccountKey}, FIREBASE_CLIENT_EMAIL=${hasClientEmail}, FIREBASE_PRIVATE_KEY=${hasPrivateKey}`);
     return null;
   }
 
   try {
+    let initMode = 'default_credentials';
+
     // Option 1: Use service account JSON (recommended for production)
     if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      initMode = 'service_account_json';
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
       firebaseApp = admin.initializeApp({
         credential: admin.credential.cert(serviceAccount),
@@ -32,6 +41,7 @@ const initializeFirebase = () => {
     }
     // Option 2: Use individual environment variables
     else if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+      initMode = 'client_email_private_key';
       firebaseApp = admin.initializeApp({
         credential: admin.credential.cert({
           projectId: process.env.FIREBASE_PROJECT_ID,
@@ -43,15 +53,19 @@ const initializeFirebase = () => {
     }
     // Option 3: Use default credentials (for Google Cloud environments)
     else {
+      initMode = 'default_credentials';
       firebaseApp = admin.initializeApp({
         projectId: process.env.FIREBASE_PROJECT_ID,
       });
     }
 
-    console.log('Firebase Admin SDK initialized successfully');
+    console.log('[FirebaseAdmin] Initialized successfully:', {
+      initMode,
+      projectId: process.env.FIREBASE_PROJECT_ID ? String(process.env.FIREBASE_PROJECT_ID).slice(0, 6) + '...' : null
+    });
     return firebaseApp;
   } catch (error) {
-    console.error('Firebase initialization error:', error);
+    console.error('[FirebaseAdmin] Initialization error:', error);
     throw new Error('Failed to initialize Firebase Admin SDK: ' + error.message);
   }
 };
@@ -62,6 +76,7 @@ const initializeFirebase = () => {
  */
 export const ensureFirebaseApp = () => {
   if (firebaseApp) {
+    // Avoid noisy logs every request; only log on first initialization path.
     return firebaseApp;
   }
   return initializeFirebase();

@@ -20,6 +20,7 @@ import panchangService from '../services/panchangService.js';
 import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
+import { astrologyExternalService } from '../services/astrologyExternalService.js';
 
 const router = express.Router();
 
@@ -1994,6 +1995,195 @@ router.post('/users/:userId/panchang/refresh', authenticate, authorize('client',
       success: false,
       message: error.message || 'Failed to refresh panchang data',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ==========================================
+// HOROSCOPE + REPORTS (AstrologyAPI JSON/PDF)
+// ==========================================
+
+const parseTimeOfBirthToHourMin = (timeOfBirthRaw) => {
+  const timeOfBirth = (timeOfBirthRaw || '').toString().trim();
+  if (!timeOfBirth) return null;
+
+  // "4:45 AM" / "11:30 PM"
+  const ampm = timeOfBirth.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (ampm) {
+    let hour = parseInt(ampm[1], 10);
+    const min = parseInt(ampm[2], 10);
+    const period = String(ampm[4]).toUpperCase();
+    if (period === 'PM' && hour !== 12) hour += 12;
+    if (period === 'AM' && hour === 12) hour = 0;
+    return { hour, minute: min };
+  }
+
+  // "16:30" / "16:30:00"
+  const h24 = timeOfBirth.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (h24) {
+    return { hour: parseInt(h24[1], 10), minute: parseInt(h24[2], 10) };
+  }
+
+  return null;
+};
+
+/**
+ * POST /api/client/users/:userId/horoscope/daily/:sign
+ * Body: { timezone?: number } (optional, defaults 5.5)
+ */
+router.post('/users/:userId/horoscope/daily/:sign', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId, sign } = req.params;
+    const timezone = req.body?.timezone ?? 5.5;
+
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to access horoscope for this user' });
+
+    const data = await astrologyExternalService.getDailyHoroscope(sign, { timezone });
+    return res.json({ success: true, data });
+  } catch (error) {
+    const status = error.status || error.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || 'Failed to fetch daily horoscope',
+      error: process.env.NODE_ENV === 'development' ? (error.response?.data || error.message) : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/client/users/:userId/horoscope/monthly/:sign
+ * Body: { timezone?: number } (optional, defaults 5.5)
+ */
+router.post('/users/:userId/horoscope/monthly/:sign', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId, sign } = req.params;
+    const timezone = req.body?.timezone ?? 5.5;
+
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to access horoscope for this user' });
+
+    const data = await astrologyExternalService.getMonthlyHoroscope(sign, { timezone });
+    return res.json({ success: true, data });
+  } catch (error) {
+    const status = error.status || error.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || 'Failed to fetch monthly horoscope',
+      error: process.env.NODE_ENV === 'development' ? (error.response?.data || error.message) : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/client/users/:userId/reports/kundali/:reportType
+ * reportType: mini | basic | pro
+ *
+ * Body (optional overrides):
+ * {
+ *   language?: "en" | "hi",
+ *   footer_link?: string,
+ *   logo_url?: string,
+ *   company_name?: string,
+ *   company_info?: string,
+ *   domain_url?: string,
+ *   company_email?: string,
+ *   company_landline?: string,
+ *   company_mobile?: string
+ * }
+ *
+ * Birth details are taken from DB user.profile (+ liveLocation when available).
+ */
+router.post('/users/:userId/reports/kundali/:reportType', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId, reportType } = req.params;
+    const rt = String(reportType || '').toLowerCase();
+    if (!['mini', 'basic', 'pro'].includes(rt)) {
+      return res.status(400).json({ success: false, message: 'Invalid reportType. Use mini | basic | pro' });
+    }
+
+    const user = await User.findById(userId).select('clientId profile liveLocation').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to generate reports for this user' });
+
+    const dob = user.profile?.dob ? new Date(user.profile.dob) : null;
+    const tob = parseTimeOfBirthToHourMin(user.profile?.timeOfBirth);
+    const lat = user.liveLocation?.latitude ?? user.profile?.latitude;
+    const lon = user.liveLocation?.longitude ?? user.profile?.longitude;
+    const place = user.profile?.placeOfBirth || user.profile?.city || user.profile?.address || '';
+
+    const missing = [];
+    if (!user.profile?.name && !user.profile?.firstName) missing.push('name');
+    if (!dob || isNaN(dob.getTime())) missing.push('dob');
+    if (!tob) missing.push('timeOfBirth');
+    if (lat == null || lon == null) missing.push('latitude/longitude');
+    if (!place) missing.push('placeOfBirth');
+
+    if (missing.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'User profile is missing required fields for PDF generation',
+        missingFields: missing
+      });
+    }
+
+    const payload = {
+      name: user.profile?.name || user.profile?.firstName,
+      day: dob.getDate(),
+      month: dob.getMonth() + 1,
+      year: dob.getFullYear(),
+      hour: tob.hour,
+      minute: tob.minute,
+      latitude: Number(lat),
+      longitude: Number(lon),
+      timezone: Number(req.body?.timezone ?? 5.5),
+      place,
+      language: req.body?.language || 'en',
+      report_type: rt,
+
+      footer_link: req.body?.footer_link || process.env.ASTROLOGY_PDF_FOOTER_LINK || '',
+      logo_url: req.body?.logo_url || process.env.ASTROLOGY_PDF_LOGO_URL || '',
+      company_name: req.body?.company_name || process.env.ASTROLOGY_PDF_COMPANY_NAME || 'Brahmakosh',
+      company_info: req.body?.company_info || process.env.ASTROLOGY_PDF_COMPANY_INFO || '',
+      domain_url: req.body?.domain_url || process.env.ASTROLOGY_PDF_DOMAIN_URL || '',
+      company_email: req.body?.company_email || process.env.ASTROLOGY_PDF_COMPANY_EMAIL || '',
+      company_landline: req.body?.company_landline || process.env.ASTROLOGY_PDF_COMPANY_LANDLINE || '',
+      company_mobile: req.body?.company_mobile || process.env.ASTROLOGY_PDF_COMPANY_MOBILE || ''
+    };
+
+    const data = await astrologyExternalService.generateKundaliPdf(payload);
+    return res.json({ success: true, reportType: rt, data });
+  } catch (error) {
+    const status = error.status || error.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || 'Failed to generate kundali PDF',
+      error: process.env.NODE_ENV === 'development' ? (error.response?.data || error.message) : undefined
+    });
+  }
+});
+
+/**
+ * POST /api/client/users/:userId/reports/match-making
+ * Body: { m_day, m_month, m_year, m_hour, m_min, m_lat, m_lon, m_tzone, f_day, f_month, f_year, f_hour, f_min, f_lat, f_lon, f_tzone }
+ */
+router.post('/users/:userId/reports/match-making', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to generate reports for this user' });
+
+    const data = await astrologyExternalService.getMatchMakingDetailedReport(req.body || {});
+    return res.json({ success: true, data });
+  } catch (error) {
+    const status = error.status || error.response?.status || 500;
+    return res.status(status).json({
+      success: false,
+      message: error.message || 'Failed to generate match making report',
+      error: process.env.NODE_ENV === 'development' ? (error.response?.data || error.message) : undefined
     });
   }
 });

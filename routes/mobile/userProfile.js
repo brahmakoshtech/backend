@@ -23,6 +23,21 @@ const router = express.Router();
 
 const isHttpUrl = (value) => typeof value === 'string' && /^https?:\/\//i.test(value);
 const isS3Url = (value) => typeof value === 'string' && value.includes('amazonaws.com/');
+const decodeKey = (value) => {
+  if (typeof value !== 'string') return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const buildGoogleAvatarUrlFromKey = (value) => {
+  if (typeof value !== 'string') return null;
+  const normalized = decodeKey(value);
+  if (!normalized.startsWith('a/')) return null;
+  return `https://lh3.googleusercontent.com/${normalized}`;
+};
 
 const normalizeStoredProfileImageToKey = async (user) => {
   if (!user?.profileImage || typeof user.profileImage !== 'string') {
@@ -30,6 +45,12 @@ const normalizeStoredProfileImageToKey = async (user) => {
   }
 
   if (!isHttpUrl(user.profileImage)) {
+    const decoded = decodeKey(user.profileImage);
+    if (decoded !== user.profileImage) {
+      user.profileImage = decoded;
+      await user.save();
+      return decoded;
+    }
     return user.profileImage;
   }
 
@@ -45,6 +66,24 @@ const normalizeStoredProfileImageToKey = async (user) => {
   user.profileImage = extractedKey;
   await user.save();
   return extractedKey;
+};
+
+const resolveProfileImageUrl = async (user) => {
+  if (!user?.profileImage) return null;
+
+  if (isHttpUrl(user.profileImage) && !isS3Url(user.profileImage)) {
+    return user.profileImage;
+  }
+
+  try {
+    return await getobject(user.profileImage);
+  } catch (error) {
+    if (user.authMethod === 'google') {
+      const googleAvatarUrl = buildGoogleAvatarUrlFromKey(user.profileImage);
+      if (googleAvatarUrl) return googleAvatarUrl;
+    }
+    throw error;
+  }
 };
 
 // Multer config for direct image uploads (memory storage, 5MB limit, images only)
@@ -1280,7 +1319,7 @@ router.get('/profile', authenticate, async (req, res) => {
     let profileImageUrl = null;
     if (user.profileImage) {
       try {
-        profileImageUrl = await getobject(user.profileImage);
+        profileImageUrl = await resolveProfileImageUrl(user);
       } catch (error) {
         console.error('Error generating profile image URL:', error);
       }
@@ -1441,14 +1480,9 @@ router.put('/profile', authenticate, async (req, res) => {
     let profileImageUrl = null;
     if (user.profileImage) {
       try {
-        profileImageUrl = await getobject(user.profileImage);
+        profileImageUrl = await resolveProfileImageUrl(user);
       } catch (error) {
-        // If this is an external URL, return it directly.
-        if (isHttpUrl(user.profileImage) && !isS3Url(user.profileImage)) {
-          profileImageUrl = user.profileImage;
-        } else {
-          console.error('Error generating refreshed profile image URL:', error);
-        }
+        console.error('Error generating refreshed profile image URL:', error);
       }
     }
 

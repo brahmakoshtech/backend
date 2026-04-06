@@ -22,6 +22,16 @@ const sendCampaign = async (campaign) => {
   const now = new Date();
   let pushMetrics = { sentTokens: 0, failedTokens: 0, totalTokens: 0 };
 
+  const fcmTokensCount = validUsers.reduce((sum, u) => sum + ((u.fcmTokens || []).length || 0), 0);
+  console.log('[ClientNotification] Campaign send started', {
+    campaignId: campaign?._id ? String(campaign._id) : undefined,
+    clientId: campaign?.clientId ? String(campaign.clientId) : undefined,
+    groupId: campaign?.groupId ? String(campaign.groupId) : null,
+    postType: campaign?.postType,
+    recipients: userIds.length,
+    fcmTokensCount
+  });
+
   if (userIds.length === 0) {
     await ClientNotificationCampaign.findByIdAndUpdate(campaign._id, {
       status: 'failed',
@@ -76,6 +86,11 @@ const sendCampaign = async (campaign) => {
           { 'fcmTokens.token': { $in: pushResult.invalidTokens } },
           { $pull: { fcmTokens: { token: { $in: pushResult.invalidTokens } } } }
         );
+
+        console.log('[ClientNotification] Invalid tokens removed', {
+          campaignId: String(campaign._id),
+          removed: pushResult.invalidTokens.length
+        });
       }
     } catch (e) {
       console.error('[ClientNotification] FCM push error:', e.message);
@@ -97,6 +112,14 @@ const sendCampaign = async (campaign) => {
   await ClientNotificationCampaign.findByIdAndUpdate(campaign._id, {
     ...campaignUpdate
   });
+
+  console.log('[ClientNotification] Campaign send finished', {
+    campaignId: String(campaign._id),
+    status: campaignUpdate.status,
+    totalTokens: campaignUpdate.totalTokens,
+    sentTokens: campaignUpdate.sentCount,
+    failedTokens: campaignUpdate.failedCount
+  });
 };
 
 export const processDueClientNotificationCampaigns = async () => {
@@ -109,6 +132,13 @@ export const processDueClientNotificationCampaigns = async () => {
       status: 'scheduled',
       $or: [{ postType: 'immediate' }, { scheduledFor: { $lte: now } }]
     }).sort({ createdAt: 1 });
+
+    if (campaigns.length > 0) {
+      console.log('[ClientNotificationScheduler] Due campaigns found', {
+        count: campaigns.length,
+        now: now.toISOString()
+      });
+    }
 
     for (const campaign of campaigns) {
       try {

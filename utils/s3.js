@@ -21,6 +21,15 @@ const s3Client = new S3Client({
   },
 });
 
+const decodeS3Key = (value) => {
+  if (!value || typeof value !== 'string') return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
 // Generate presigned URL for uploading
 export const putobject = async (key, contentType) => {
   try {
@@ -69,7 +78,8 @@ export const generateUploadUrl = async (fileName, contentType, folder) => {
 export const getobject = async (key, expiresIn = 604800) => {
   try {
     // If key is a URL, extract the key first
-    const actualKey = key.startsWith('http') ? extractS3KeyFromUrl(key) : key;
+    const rawKey = key.startsWith('http') ? extractS3KeyFromUrl(key) : key;
+    const actualKey = decodeS3Key(rawKey);
     
     if (!actualKey) {
       throw new Error('Invalid S3 key provided');
@@ -139,7 +149,7 @@ export const deleteObject = async (key) => {
   try {
     const command = new DeleteObjectCommand({
       Bucket: process.env.AWS_BUCKET_NAME,
-      Key: key,
+      Key: decodeS3Key(key),
     });
 
     await s3Client.send(command);
@@ -165,7 +175,7 @@ export const extractS3KeyFromUrl = (url) => {
   if (url.startsWith('s3://')) {
     const parts = url.replace('s3://', '').split('/');
     if (parts.length > 1) {
-      return parts.slice(1).join('/');
+      return decodeS3Key(parts.slice(1).join('/'));
     }
     return null;
   }
@@ -175,7 +185,7 @@ export const extractS3KeyFromUrl = (url) => {
     try {
       const urlObj = new URL(url);
       // Remove leading slash from pathname
-      const key = urlObj.pathname.substring(1);
+      const key = decodeS3Key(urlObj.pathname.substring(1));
       return key || null;
     } catch (error) {
       console.error('Error parsing S3 URL:', error);
@@ -183,7 +193,7 @@ export const extractS3KeyFromUrl = (url) => {
       // Pattern: https://bucket.s3.region.amazonaws.com/key or https://bucket.s3.amazonaws.com/key
       const match = url.match(/s3[.-]([^.]+)\.amazonaws\.com\/(.+)$/);
       if (match && match[2]) {
-        return decodeURIComponent(match[2]);
+        return decodeS3Key(match[2]);
       }
       return null;
     }
@@ -301,10 +311,10 @@ export const deleteFromS3 = async (keyOrUrl) => {
     if (keyOrUrl.startsWith('http')) {
       // Extract key from S3 URL
       const url = new URL(keyOrUrl);
-      key = url.pathname.substring(1); // Remove leading slash
+      key = decodeS3Key(url.pathname.substring(1)); // Remove leading slash
     } else {
       // It's already a key
-      key = keyOrUrl;
+      key = decodeS3Key(keyOrUrl);
     }
     
     const command = new DeleteObjectCommand({
