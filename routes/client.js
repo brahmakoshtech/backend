@@ -15,12 +15,15 @@ import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
 import Credit from '../models/Credit.js';
 import KarmaPointsTransaction from '../models/KarmaPointsTransaction.js';
+import AstrologyReport from '../models/AstrologyReport.js';
 import astrologyService from '../services/astrologyService.js';
 import panchangService from '../services/panchangService.js';
 import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import { astrologyExternalService } from '../services/astrologyExternalService.js';
+import axios from 'axios';
+import { uploadBufferToS3 } from '../utils/s3.js';
 
 const router = express.Router();
 
@@ -2153,14 +2156,142 @@ router.post('/users/:userId/reports/kundali/:reportType', authenticate, authoriz
       company_mobile: req.body?.company_mobile || process.env.ASTROLOGY_PDF_COMPANY_MOBILE || ''
     };
 
+    // 1) Call AstrologyAPI PDF endpoint
     const data = await astrologyExternalService.generateKundaliPdf(payload);
-    return res.json({ success: true, reportType: rt, data });
+    const providerPdfUrl = data?.pdf_url || data?.url || null;
+
+    if (!providerPdfUrl) {
+      return res.status(502).json({
+        success: false,
+        message: 'Astrology PDF API did not return pdf_url',
+        providerResponse: process.env.NODE_ENV === 'development' ? data : undefined
+      });
+    }
+
+    // 2) Download PDF as buffer
+    const pdfResponse = await axios.get(providerPdfUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(pdfResponse.data);
+
+    // 3) Upload to S3
+    const s3Folder = 'astrology-reports';
+    const filename = `${userId}_${rt}_${Date.now()}.pdf`;
+    const uploadResult = await uploadBufferToS3(buffer, s3Folder, filename, 'application/pdf');
+
+    // 4) Save history record
+    const reportDoc = await AstrologyReport.create({
+      userId,
+      reportType: rt,
+      category: 'kundali',
+      provider: 'astrologyapi',
+      providerPdfUrl,
+      s3Key: uploadResult.key,
+      s3Url: uploadResult.url,
+      language: payload.language,
+      place,
+      meta: {
+        timezone: payload.timezone,
+        birth: {
+          day: payload.day,
+          month: payload.month,
+          year: payload.year,
+          hour: payload.hour,
+          minute: payload.minute,
+          latitude: payload.latitude,
+          longitude: payload.longitude
+        }
+      }
+    });
+
+    return res.json({
+      success: true,
+      reportType: rt,
+      providerResponse: data,
+      s3: {
+        key: uploadResult.key,
+        url: uploadResult.url
+      },
+      history: reportDoc
+    });
   } catch (error) {
     const status = error.status || error.response?.status || 500;
     return res.status(status).json({
       success: false,
       message: error.message || 'Failed to generate kundali PDF',
       error: process.env.NODE_ENV === 'development' ? (error.response?.data || error.message) : undefined
+    });
+  }
+});
+
+/**
+ * GET /api/client/users/:userId/reports/kundali/history
+ * Query: page, limit
+ */
+router.get('/users/:userId/reports/kundali/history', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to view report history for this user' });
+    }
+
+    const query = { userId, category: 'kundali' };
+    const [items, total] = await Promise.all([
+      AstrologyReport.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      AstrologyReport.countDocuments(query)
+    ]);
+
+    return res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      items
+    });
+  } catch (error) {
+    console.error('[Client API] Get kundali report history error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch kundali report history',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * GET /api/client/users/:userId/reports/kundali/:reportId/download
+ * Returns a signed S3 URL for downloading the PDF.
+ */
+router.get('/users/:userId/reports/kundali/:reportId/download', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId, reportId } = req.params;
+
+    const report = await AstrologyReport.findById(reportId).lean();
+    if (!report || String(report.userId) !== String(userId)) {
+      return res.status(404).json({ success: false, message: 'Report not found' });
+    }
+
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to download this report' });
+    }
+
+    const signedUrl = await getobject(report.s3Key, 600); // 10 minutes
+    return res.json({ success: true, url: signedUrl });
+  } catch (error) {
+    console.error('[Client API] Download kundali report error:', error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to generate download URL',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
