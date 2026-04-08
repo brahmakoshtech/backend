@@ -27,6 +27,21 @@ import { uploadBufferToS3 } from '../utils/s3.js';
 
 const router = express.Router();
 
+const getAstrologyToolsConfig = (clientDoc) => {
+  const cfg = clientDoc?.settings?.astrologyTools || {};
+  const pricing = cfg.pricing || {};
+  return {
+    enabled: Boolean(cfg.enabled),
+    currency: cfg.currency || 'INR',
+    pricing: {
+      kundaliMini: Number(pricing.kundaliMini ?? 199),
+      kundaliBasic: Number(pricing.kundaliBasic ?? 499),
+      kundaliPro: Number(pricing.kundaliPro ?? 699),
+      matchMaking: Number(pricing.matchMaking ?? 499)
+    }
+  };
+};
+
 /**
  * Helper function to get client ID based on user role
  */
@@ -64,6 +79,114 @@ const checkUserAccess = (requestingUser, targetUser) => {
 
   return false;
 };
+
+/**
+ * Client astrology tools settings
+ * GET  /api/client/settings/astrology-tools
+ * PUT  /api/client/settings/astrology-tools
+ */
+router.get('/settings/astrology-tools', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { clientId } = req.query;
+    let targetClientId = null;
+
+    if (req.user.role === 'client') {
+      targetClientId = req.user._id;
+    } else {
+      targetClientId = clientId;
+    }
+
+    if (!targetClientId) {
+      return res.status(400).json({ success: false, message: 'clientId is required' });
+    }
+
+    const client = await Client.findById(targetClientId).select('settings.astrologyTools').lean();
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    return res.json({ success: true, data: getAstrologyToolsConfig(client) });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch astrology tools settings',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+router.put('/settings/astrology-tools', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { clientId, enabled, currency, pricing } = req.body || {};
+    let targetClientId = null;
+
+    if (req.user.role === 'client') {
+      targetClientId = req.user._id;
+    } else {
+      targetClientId = clientId;
+    }
+
+    if (!targetClientId) {
+      return res.status(400).json({ success: false, message: 'clientId is required' });
+    }
+
+    const update = {
+      'settings.astrologyTools.enabled': Boolean(enabled),
+      'settings.astrologyTools.currency': (currency || 'INR').toString().trim().toUpperCase(),
+      'settings.astrologyTools.pricing.kundaliMini': Number(pricing?.kundaliMini ?? 199),
+      'settings.astrologyTools.pricing.kundaliBasic': Number(pricing?.kundaliBasic ?? 499),
+      'settings.astrologyTools.pricing.kundaliPro': Number(pricing?.kundaliPro ?? 699),
+      'settings.astrologyTools.pricing.matchMaking': Number(pricing?.matchMaking ?? 499)
+    };
+
+    Object.keys(update).forEach((k) => {
+      if (typeof update[k] === 'number' && (Number.isNaN(update[k]) || update[k] < 0)) {
+        update[k] = 0;
+      }
+    });
+
+    const client = await Client.findByIdAndUpdate(
+      targetClientId,
+      { $set: update },
+      { new: true }
+    ).select('settings.astrologyTools').lean();
+
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    return res.json({ success: true, data: getAstrologyToolsConfig(client) });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to update astrology tools settings',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+/**
+ * Public config for user-facing screens (with auth/access control)
+ * GET /api/client/users/:userId/astrology-tools/config
+ */
+router.get('/users/:userId/astrology-tools/config', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findById(userId).select('clientId').lean();
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    if (!checkUserAccess(req.user, user)) {
+      return res.status(403).json({ success: false, message: 'You do not have permission to view settings for this user' });
+    }
+
+    const targetClientId = user.clientId?._id || user.clientId;
+    const client = await Client.findById(targetClientId).select('settings.astrologyTools').lean();
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    return res.json({ success: true, data: getAstrologyToolsConfig(client) });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch astrology config',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
 // TEMPORARY DEBUG ROUTE - remove after diagnosis
 // GET /api/client/partners/debug
@@ -2042,6 +2165,11 @@ router.post('/users/:userId/horoscope/daily/:sign', authenticate, authorize('cli
     const user = await User.findById(userId).select('clientId').lean();
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to access horoscope for this user' });
+    const client = await Client.findById(user.clientId?._id || user.clientId).select('settings.astrologyTools').lean();
+    const cfg = getAstrologyToolsConfig(client);
+    if (!cfg.enabled) {
+      return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
+    }
 
     const data = await astrologyExternalService.getDailyHoroscope(sign, { timezone });
     return res.json({ success: true, data });
@@ -2067,6 +2195,11 @@ router.post('/users/:userId/horoscope/monthly/:sign', authenticate, authorize('c
     const user = await User.findById(userId).select('clientId').lean();
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to access horoscope for this user' });
+    const client = await Client.findById(user.clientId?._id || user.clientId).select('settings.astrologyTools').lean();
+    const cfg = getAstrologyToolsConfig(client);
+    if (!cfg.enabled) {
+      return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
+    }
 
     const data = await astrologyExternalService.getMonthlyHoroscope(sign, { timezone });
     return res.json({ success: true, data });
@@ -2110,6 +2243,11 @@ router.post('/users/:userId/reports/kundali/:reportType', authenticate, authoriz
     const user = await User.findById(userId).select('clientId profile liveLocation').lean();
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to generate reports for this user' });
+    const client = await Client.findById(user.clientId?._id || user.clientId).select('settings.astrologyTools').lean();
+    const cfg = getAstrologyToolsConfig(client);
+    if (!cfg.enabled) {
+      return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
+    }
 
     const dob = user.profile?.dob ? new Date(user.profile.dob) : null;
     const tob = parseTimeOfBirthToHourMin(user.profile?.timeOfBirth);
@@ -2237,6 +2375,11 @@ router.get('/users/:userId/reports/kundali/history', authenticate, authorize('cl
     if (!checkUserAccess(req.user, user)) {
       return res.status(403).json({ success: false, message: 'You do not have permission to view report history for this user' });
     }
+    const client = await Client.findById(user.clientId?._id || user.clientId).select('settings.astrologyTools').lean();
+    const cfg = getAstrologyToolsConfig(client);
+    if (!cfg.enabled) {
+      return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
+    }
 
     const query = { userId, category: 'kundali' };
     const [items, total] = await Promise.all([
@@ -2283,6 +2426,11 @@ router.get('/users/:userId/reports/kundali/:reportId/download', authenticate, au
     if (!checkUserAccess(req.user, user)) {
       return res.status(403).json({ success: false, message: 'You do not have permission to download this report' });
     }
+    const client = await Client.findById(user.clientId?._id || user.clientId).select('settings.astrologyTools').lean();
+    const cfg = getAstrologyToolsConfig(client);
+    if (!cfg.enabled) {
+      return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
+    }
 
     const signedUrl = await getobject(report.s3Key, 600); // 10 minutes
     return res.json({ success: true, url: signedUrl });
@@ -2306,6 +2454,11 @@ router.post('/users/:userId/reports/match-making', authenticate, authorize('clie
     const user = await User.findById(userId).select('clientId').lean();
     if (!user) return res.status(404).json({ success: false, message: 'User not found' });
     if (!checkUserAccess(req.user, user)) return res.status(403).json({ success: false, message: 'You do not have permission to generate reports for this user' });
+    const client = await Client.findById(user.clientId?._id || user.clientId).select('settings.astrologyTools').lean();
+    const cfg = getAstrologyToolsConfig(client);
+    if (!cfg.enabled) {
+      return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
+    }
 
     const data = await astrologyExternalService.getMatchMakingDetailedReport(req.body || {});
     return res.json({ success: true, data });

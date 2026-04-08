@@ -97,7 +97,17 @@ const clientSchema = new mongoose.Schema({
   // Per-client settings (e.g. AI API keys for conversation summary)
   settings: {
     geminiApiKey: { type: String, default: null, trim: true },
-    openaiApiKey: { type: String, default: null, trim: true }
+    openaiApiKey: { type: String, default: null, trim: true },
+    astrologyTools: {
+      enabled: { type: Boolean, default: false },
+      currency: { type: String, default: 'INR', trim: true },
+      pricing: {
+        kundaliMini: { type: Number, default: 199, min: 0 },
+        kundaliBasic: { type: Number, default: 499, min: 0 },
+        kundaliPro: { type: Number, default: 699, min: 0 },
+        matchMaking: { type: Number, default: 499, min: 0 }
+      }
+    }
   }
 }, {
   timestamps: true
