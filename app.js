@@ -64,6 +64,9 @@ import swapnaDecoderRoutes         from './routes/swapnaDecoder.js';
 import dreamRequestRoutes          from './routes/dreamRequest.js';
 import partnerUserChatRoutes       from './routes/chatRoutes.js';
 import userPaymentRoutes           from './routes/userPayment.js';
+import userPlanPaymentRoutes       from './routes/userPlanPayment.js';
+import clientSubscriptionPlansRoutes from './routes/clientSubscriptionPlans.js';
+import stripeWebhookRoutes         from './routes/stripeWebhook.js';
 import storeProxyRoutes            from './routes/storeProxy.js';
 
 // ─── Voice Config & TTS Routes ────────────────────────────────────────────────
@@ -112,6 +115,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// Stripe webhooks require raw body (must be before express.json)
+app.use('/api/user/payment/webhook', express.raw({ type: 'application/json' }), stripeWebhookRoutes);
+
 // ─── Body parsers ─────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -150,6 +156,7 @@ app.use('/api/auth/partner',     partnerPasswordResetRoutes);
 app.use('/api/users',       userRoutes);
 app.use('/api/admin',       adminRoutes);
 app.use('/api/client',      clientRoutes);
+app.use('/api/client/subscription-plans', clientSubscriptionPlansRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 
 // Mobile
@@ -164,6 +171,9 @@ app.use('/api/mobile/agents',  mobileAgentsRoutes);
 
 // Partner–User Chat
 app.use('/api/chat', partnerUserChatRoutes);
+
+// ─── User plans, subscriptions, and payment ───────────────────────────────────
+app.use('/api/user', userPlanPaymentRoutes);
 
 // ─── User Payment (Stripe / Apple Pay for credits) ────────────────────────────
 app.use('/api/user/payment', userPaymentRoutes);

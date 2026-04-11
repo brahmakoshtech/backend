@@ -31,7 +31,7 @@ const creditSchema = new mongoose.Schema(
     },
     addedByRole: {
       type: String,
-      enum: ['admin', 'super_admin', 'client', 'payment'],
+      enum: ['admin', 'super_admin', 'client', 'payment', 'subscription'],
       required: true,
     },
     description: {
@@ -42,6 +42,23 @@ const creditSchema = new mongoose.Schema(
       default: null,
       sparse: true,
       index: true,
+    },
+    stripeInvoiceId: {
+      type: String,
+      default: null,
+      sparse: true,
+      index: true,
+    },
+    stripeSubscriptionId: {
+      type: String,
+      default: null,
+      sparse: true,
+      index: true,
+    },
+    planId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'SubscriptionPlan',
+      default: null,
     },
   },
   {

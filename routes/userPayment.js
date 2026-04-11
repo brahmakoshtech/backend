@@ -2,9 +2,9 @@ import express from 'express';
 import Stripe from 'stripe';
 import { authenticate, authorize } from '../middleware/auth.js';
 import User from '../models/User.js';
-import Credit from '../models/Credit.js';
 import PaymentLog from '../models/PaymentLog.js';
 import AppSettings from '../models/AppSettings.js';
+import { grantCredits } from '../services/creditLedger.js';
 
 const router = express.Router();
 
@@ -201,48 +201,36 @@ router.post('/confirm', authenticate, authorize('user'), async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid credits amount' });
     }
 
-    const existing = await Credit.findOne({ paymentIntentId });
-    if (existing) {
-      return res.json({
-        success: true,
-        message: 'Credits already added',
-        data: { creditsAdded: existing.amount, newBalance: (await User.findById(userId).select('credits')).credits },
-      });
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    const previousBalance = user.credits || 0;
-    const newBalance = previousBalance + creditsToAdd;
-    user.credits = newBalance;
-    await user.save();
-
-    await Credit.create({
-      userId: user._id,
+    const result = await grantCredits({
+      userId,
       amount: creditsToAdd,
-      previousBalance,
-      newBalance,
-      addedBy: user._id,
+      addedBy: userId,
       addedByRole: 'payment',
-      description: paymentIntent.metadata?.isTrialPlan === 'true'
-        ? 'Trial credits purchased via Stripe'
-        : 'Credits purchased via Stripe',
+      description:
+        paymentIntent.metadata?.isTrialPlan === 'true'
+          ? 'Trial credits purchased via Stripe'
+          : 'Credits purchased via Stripe',
       paymentIntentId,
     });
 
+    if (result.duplicate) {
+      const u = await User.findById(userId).select('credits');
+      return res.json({
+        success: true,
+        message: 'Credits already added',
+        data: { creditsAdded: creditsToAdd, newBalance: u?.credits ?? result.newBalance },
+      });
+    }
+
     await PaymentLog.create({
-      userId: user._id,
+      userId,
       paymentIntentId,
       event: 'confirm',
       amountCents: paymentIntent.amount,
       credits: creditsToAdd,
       status: paymentIntent.status,
       metadata: {
-        previousBalance,
-        newBalance,
+        newBalance: result.newBalance,
       },
     });
 
@@ -251,7 +239,7 @@ router.post('/confirm', authenticate, authorize('user'), async (req, res) => {
       message: 'Credits added successfully',
       data: {
         creditsAdded: creditsToAdd,
-        newBalance,
+        newBalance: result.newBalance,
       },
     });
   } catch (error) {

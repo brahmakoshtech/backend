@@ -18,6 +18,7 @@ server.listen(PORT, () => {
   console.log(`   - Health Check:    http://localhost:${PORT}/api/health`);
   console.log(`   - Voice WebSocket: ws://localhost:${PORT}/api/voice/agent`);
   console.log(`   - Chat WebSocket:  ws://localhost:${PORT}/socket.io/`);
+  console.log(`   - Stripe webhook:  http://localhost:${PORT}/api/user/payment/webhook`);
   console.log('\n💡 Chat WebSocket Connection Examples:');
   console.log(`   - Polling:   https://yourdomain.com/socket.io/?EIO=4&transport=polling&token=YOUR_JWT`);
   console.log(`   - WebSocket: https://yourdomain.com/socket.io/?EIO=4&transport=websocket&token=YOUR_JWT`);
