@@ -1405,7 +1405,11 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       data: {
         ...data,
         sessionDetails: sessionDetailsOut,
-        rating: conversation.rating
+        rating: conversation.rating,
+        creditSummary: {
+          creditsUsed: userDebited,
+          remainingBalance: userNewBalance
+        }
       }
     });
   } catch (error) {
