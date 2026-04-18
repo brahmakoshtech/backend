@@ -1012,6 +1012,27 @@ router.post('/conversations/:conversationId/messages', authenticate, async (req,
 
     const isPartner = req.userType === 'partner';
     const senderId = req.userId;
+
+    // Credit deduction: only user pays per message
+    if (!isPartner) {
+      const userDoc = await User.findById(senderId);
+      if (!userDoc || userDoc.credits <= 0) {
+        await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+        return res.status(402).json({
+          success: false,
+          message: 'Insufficient credits. Chat ended.',
+          creditSummary: { creditsDeducted: 0, remainingBalance: 0 }
+        });
+      }
+      const newBalance = Math.max(0, userDoc.credits - 0.5);
+      userDoc.credits = newBalance;
+      await userDoc.save();
+
+      if (newBalance <= 0) {
+        await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+      }
+    }
+
     const senderModel = isPartner ? 'Partner' : 'User';
     const receiverId = isPartner ? conversation.userId : conversation.partnerId;
     const receiverModel = isPartner ? 'User' : 'Partner';

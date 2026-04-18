@@ -13,6 +13,10 @@ const activeConnections = new Map();
 const socketMetadata = new Map();
 const activeVoiceCalls = new Map(); // userId -> conversationId for ongoing voice calls
 const voiceCallStartedAt = new Map(); // conversationId -> Date when voice call started
+const voiceBillingIntervals = new Map(); // conversationId -> interval for per-second billing
+
+const CHAT_CCR = 0.5;  // credits per chat message
+const VOICE_CCR = 0.5; // credits per second of voice
 
 export const setupChatWebSocket = (server) => {
   console.log('\n🔧🔧🔧 [ChatWebSocket] Setting up Chat WebSocket server...\n');
@@ -247,6 +251,41 @@ export const setupChatWebSocket = (server) => {
         }
 
         const isPartner = userType === 'partner';
+
+        // Credit deduction: only user pays per message
+        if (!isPartner) {
+          const userDoc = await User.findById(userId);
+          if (!userDoc || userDoc.credits <= 0) {
+            // Auto-end conversation
+            await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+            const partnerSocketId = activeConnections.get(conversation.partnerId.toString());
+            const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
+            socket.emit('chat:auto_ended', autoEndPayload);
+            if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
+            return callback?.({ success: false, message: 'Insufficient credits. Chat ended.' });
+          }
+          const newBalance = Math.max(0, userDoc.credits - CHAT_CCR);
+          userDoc.credits = newBalance;
+          await userDoc.save();
+
+          // Emit real-time balance update to user
+          socket.emit('credit:update', {
+            conversationId,
+            creditsDeducted: CHAT_CCR,
+            remainingBalance: newBalance,
+            type: 'chat_message'
+          });
+
+          // Auto-end if balance hits 0
+          if (newBalance <= 0) {
+            await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+            const partnerSocketId = activeConnections.get(conversation.partnerId.toString());
+            const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
+            socket.emit('chat:auto_ended', autoEndPayload);
+            if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
+          }
+        }
+
         const senderId = userId;
         const senderModel = isPartner ? 'Partner' : 'User';
         const receiverId = isPartner ? conversation.userId : conversation.partnerId;
@@ -457,6 +496,60 @@ export const setupChatWebSocket = (server) => {
       }
     });
 
+    // Voice per-second billing helper
+    const startVoiceBilling = (conversationId, userIdForBilling, partnerIdForBilling) => {
+      if (voiceBillingIntervals.has(conversationId)) return;
+      const interval = setInterval(async () => {
+        try {
+          const userDoc = await User.findById(userIdForBilling);
+          if (!userDoc) return;
+
+          if (userDoc.credits <= 0) {
+            clearInterval(interval);
+            voiceBillingIntervals.delete(conversationId);
+            await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+            const userSocketId = activeConnections.get(userIdForBilling.toString());
+            const partnerSocketId = activeConnections.get(partnerIdForBilling.toString());
+            const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
+            if (userSocketId) io.to(userSocketId).emit('voice:auto_ended', autoEndPayload);
+            if (partnerSocketId) io.to(partnerSocketId).emit('voice:auto_ended', autoEndPayload);
+            activeVoiceCalls.delete(userIdForBilling.toString());
+            activeVoiceCalls.delete(partnerIdForBilling.toString());
+            return;
+          }
+
+          const newBalance = Math.max(0, userDoc.credits - VOICE_CCR);
+          userDoc.credits = newBalance;
+          await userDoc.save();
+
+          const userSocketId = activeConnections.get(userIdForBilling.toString());
+          if (userSocketId) {
+            io.to(userSocketId).emit('credit:update', {
+              conversationId,
+              creditsDeducted: VOICE_CCR,
+              remainingBalance: newBalance,
+              type: 'voice_second'
+            });
+          }
+
+          if (newBalance <= 0) {
+            clearInterval(interval);
+            voiceBillingIntervals.delete(conversationId);
+            await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+            const partnerSocketId = activeConnections.get(partnerIdForBilling.toString());
+            const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
+            if (userSocketId) io.to(userSocketId).emit('voice:auto_ended', autoEndPayload);
+            if (partnerSocketId) io.to(partnerSocketId).emit('voice:auto_ended', autoEndPayload);
+            activeVoiceCalls.delete(userIdForBilling.toString());
+            activeVoiceCalls.delete(partnerIdForBilling.toString());
+          }
+        } catch (err) {
+          console.error('Voice billing interval error:', err.message);
+        }
+      }, 1000);
+      voiceBillingIntervals.set(conversationId, interval);
+    };
+
     // Callee accepts the call
     socket.on('voice:call:accept', async (data, callback) => {
       console.log(`📞 [${userType}] voice:call:accept`, data);
@@ -540,6 +633,11 @@ export const setupChatWebSocket = (server) => {
         };
 
         io.to(callerSocketId).emit('voice:call:accepted', payload);
+
+        // Start per-second billing when call is accepted
+        const convUserId = conversation.userId?._id?.toString() || conversation.userId?.toString();
+        const convPartnerId = conversation.partnerId?._id?.toString() || conversation.partnerId?.toString();
+        startVoiceBilling(conversationId, convUserId, convPartnerId);
 
         callback?.({
           success: true,
@@ -648,80 +746,45 @@ export const setupChatWebSocket = (server) => {
           activeVoiceCalls.delete(enderKey);
         }
 
-        // Voice billing + unified ledger (does not depend on chat acceptance)
-        let billableMinutesForLog = 0;
+        // Stop per-second billing interval
+        const existingInterval = voiceBillingIntervals.get(conversationId);
+        if (existingInterval) {
+          clearInterval(existingInterval);
+          voiceBillingIntervals.delete(conversationId);
+        }
+
+        // Log voice call duration in ledger (credits already deducted per-second)
         let durationSecondsForLog = 0;
+        let billableMinutesForLog = 0;
         try {
-          const startTime =
-            voiceCallStartedAt.get(conversationId) ||
-            conversation.startedAt ||
-            new Date(endedAt.getTime() - 60 * 1000); // fallback ~1 min before
-
+          const startTime = voiceCallStartedAt.get(conversationId) || conversation.startedAt || new Date(endedAt.getTime() - 1000);
           voiceCallStartedAt.delete(conversationId);
-
-          const durationMs = Math.max(0, endedAt.getTime() - startTime.getTime());
-          const rawMinutes = durationMs / (1000 * 60);
+          const durationMs = Math.max(0, endedAt.getTime() - new Date(startTime).getTime());
           durationSecondsForLog = Math.round(durationMs / 1000);
+          billableMinutesForLog = Math.ceil(durationSecondsForLog / 60);
 
-          // NEW: Treat very short calls as a free handshake.
-          // If duration <= 30 seconds, do not bill any minutes.
-          const FREE_HANDSHAKE_SECONDS = 30;
-          const billableMinutes =
-            durationSecondsForLog <= FREE_HANDSHAKE_SECONDS
-              ? 0
-              : Math.max(1, Math.ceil(isFinite(rawMinutes) ? rawMinutes : 1));
-
-          billableMinutesForLog = billableMinutes;
-
-          const USER_RATE_PER_MIN = parseInt(process.env.CHAT_USER_RATE_PER_MIN, 10) || 4;
-          const PARTNER_RATE_PER_MIN = parseInt(process.env.CHAT_PARTNER_RATE_PER_MIN, 10) || 3;
-
-          // Only perform billing when there is at least 1 billable minute
-          if (billableMinutes > 0) {
-            const userDoc = await User.findById(conversation.userId);
-            const partnerDoc = await Partner.findById(conversation.partnerId);
-
-            if (userDoc && partnerDoc) {
-              const userPreviousBalance = typeof userDoc.credits === 'number' ? userDoc.credits : 0;
-              const partnerPreviousBalance = typeof partnerDoc.credits === 'number' ? partnerDoc.credits : 0;
-
-              const maxDebit = billableMinutes * USER_RATE_PER_MIN;
-              const userDebited = Math.min(userPreviousBalance, maxDebit);
-              const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
-
-              const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
-              const partnerNewBalance = partnerPreviousBalance + partnerCredited;
-
-              userDoc.credits = userNewBalance;
-              partnerDoc.credits = partnerNewBalance;
-              await userDoc.save();
-              await partnerDoc.save();
-
-              await ServiceCreditLedger.findOneAndUpdate(
-                { conversationId, serviceType: 'voice' },
-                {
-                  conversationId,
-                  serviceType: 'voice',
-                  userId: conversation.userId,
-                  partnerId: conversation.partnerId,
-                  billableMinutes,
-                  userDebited,
-                  partnerCredited,
-                  userPreviousBalance,
-                  userNewBalance,
-                  partnerPreviousBalance,
-                  partnerNewBalance,
-                  userRatePerMinute: USER_RATE_PER_MIN,
-                  partnerRatePerMinute: PARTNER_RATE_PER_MIN,
-                  startTime,
-                  endTime: endedAt
-                },
-                { upsert: true, new: true }
-              );
-            }
+          // Get final balances for ledger record
+          const userDoc = await User.findById(conversation.userId);
+          if (userDoc) {
+            await ServiceCreditLedger.findOneAndUpdate(
+              { conversationId, serviceType: 'voice' },
+              {
+                conversationId,
+                serviceType: 'voice',
+                userId: conversation.userId,
+                partnerId: conversation.partnerId,
+                billableMinutes: billableMinutesForLog,
+                userDebited: durationSecondsForLog * VOICE_CCR,
+                userNewBalance: userDoc.credits,
+                userRatePerMinute: VOICE_CCR * 60,
+                startTime,
+                endTime: endedAt
+              },
+              { upsert: true, new: true }
+            );
           }
         } catch (billingErr) {
-          console.error('❌ Voice billing / ledger failed:', billingErr.message);
+          console.error('❌ Voice ledger failed:', billingErr.message);
         }
 
         // Persist call log (ended)
