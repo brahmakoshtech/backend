@@ -1024,7 +1024,11 @@ router.post('/conversations/:conversationId/messages', authenticate, async (req,
           creditSummary: { creditsDeducted: 0, remainingBalance: 0 }
         });
       }
-      const newBalance = Math.max(0, userDoc.credits - 0.5);
+      // Fetch dynamic CCR from client settings
+      const clientDoc = await (await import('../models/Client.js')).default
+        .findById(userDoc.clientId).select('settings.chatCCR').lean();
+      const chatCCR = clientDoc?.settings?.chatCCR ?? 0.5;
+      const newBalance = Math.max(0, userDoc.credits - chatCCR);
       userDoc.credits = newBalance;
       await userDoc.save();
 

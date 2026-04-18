@@ -98,6 +98,8 @@ const clientSchema = new mongoose.Schema({
   settings: {
     geminiApiKey: { type: String, default: null, trim: true },
     openaiApiKey: { type: String, default: null, trim: true },
+    chatCCR: { type: Number, default: 0.5, min: 0 },   // credits per chat message
+    voiceCCR: { type: Number, default: 0.5, min: 0 },  // credits per second of voice
     astrologyTools: {
       enabled: { type: Boolean, default: false },
       currency: { type: String, default: 'INR', trim: true },

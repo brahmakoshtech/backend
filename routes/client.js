@@ -81,6 +81,65 @@ const checkUserAccess = (requestingUser, targetUser) => {
 };
 
 /**
+ * GET  /api/client/settings/ccr-rates
+ * PUT  /api/client/settings/ccr-rates
+ */
+router.get('/settings/ccr-rates', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const targetClientId = req.user.role === 'client' ? req.user._id : req.query.clientId;
+    if (!targetClientId) return res.status(400).json({ success: false, message: 'clientId is required' });
+
+    const client = await Client.findById(targetClientId).select('settings.chatCCR settings.voiceCCR').lean();
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    return res.json({
+      success: true,
+      data: {
+        chatCCR: client.settings?.chatCCR ?? 0.5,
+        voiceCCR: client.settings?.voiceCCR ?? 0.5
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.put('/settings/ccr-rates', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const targetClientId = req.user.role === 'client' ? req.user._id : req.body.clientId;
+    if (!targetClientId) return res.status(400).json({ success: false, message: 'clientId is required' });
+
+    const { chatCCR, voiceCCR } = req.body;
+    const update = {};
+    if (chatCCR !== undefined) {
+      const v = Number(chatCCR);
+      if (isNaN(v) || v < 0) return res.status(400).json({ success: false, message: 'chatCCR must be a non-negative number' });
+      update['settings.chatCCR'] = v;
+    }
+    if (voiceCCR !== undefined) {
+      const v = Number(voiceCCR);
+      if (isNaN(v) || v < 0) return res.status(400).json({ success: false, message: 'voiceCCR must be a non-negative number' });
+      update['settings.voiceCCR'] = v;
+    }
+
+    const client = await Client.findByIdAndUpdate(targetClientId, { $set: update }, { new: true })
+      .select('settings.chatCCR settings.voiceCCR').lean();
+    if (!client) return res.status(404).json({ success: false, message: 'Client not found' });
+
+    return res.json({
+      success: true,
+      message: 'CCR rates updated successfully',
+      data: {
+        chatCCR: client.settings?.chatCCR ?? 0.5,
+        voiceCCR: client.settings?.voiceCCR ?? 0.5
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+/**
  * Client astrology tools settings
  * GET  /api/client/settings/astrology-tools
  * PUT  /api/client/settings/astrology-tools

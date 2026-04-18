@@ -15,8 +15,21 @@ const activeVoiceCalls = new Map(); // userId -> conversationId for ongoing voic
 const voiceCallStartedAt = new Map(); // conversationId -> Date when voice call started
 const voiceBillingIntervals = new Map(); // conversationId -> interval for per-second billing
 
-const CHAT_CCR = 0.5;  // credits per chat message
-const VOICE_CCR = 0.5; // credits per second of voice
+const DEFAULT_CHAT_CCR = 0.5;
+const DEFAULT_VOICE_CCR = 0.5;
+
+// Fetch CCR rates from client settings
+const getCCRRates = async (clientId) => {
+  if (!clientId) return { chatCCR: DEFAULT_CHAT_CCR, voiceCCR: DEFAULT_VOICE_CCR };
+  try {
+    const { default: Client } = await import('../models/Client.js');
+    const client = await Client.findById(clientId).select('settings.chatCCR settings.voiceCCR').lean();
+    return {
+      chatCCR: client?.settings?.chatCCR ?? DEFAULT_CHAT_CCR,
+      voiceCCR: client?.settings?.voiceCCR ?? DEFAULT_VOICE_CCR
+    };
+  } catch { return { chatCCR: DEFAULT_CHAT_CCR, voiceCCR: DEFAULT_VOICE_CCR }; }
+};
 
 export const setupChatWebSocket = (server) => {
   console.log('\n🔧🔧🔧 [ChatWebSocket] Setting up Chat WebSocket server...\n');
@@ -256,7 +269,6 @@ export const setupChatWebSocket = (server) => {
         if (!isPartner) {
           const userDoc = await User.findById(userId);
           if (!userDoc || userDoc.credits <= 0) {
-            // Auto-end conversation
             await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
             const partnerSocketId = activeConnections.get(conversation.partnerId.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
@@ -264,19 +276,18 @@ export const setupChatWebSocket = (server) => {
             if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
             return callback?.({ success: false, message: 'Insufficient credits. Chat ended.' });
           }
-          const newBalance = Math.max(0, userDoc.credits - CHAT_CCR);
+          const { chatCCR } = await getCCRRates(userDoc.clientId);
+          const newBalance = Math.max(0, userDoc.credits - chatCCR);
           userDoc.credits = newBalance;
           await userDoc.save();
 
-          // Emit real-time balance update to user
           socket.emit('credit:update', {
             conversationId,
-            creditsDeducted: CHAT_CCR,
+            creditsDeducted: chatCCR,
             remainingBalance: newBalance,
             type: 'chat_message'
           });
 
-          // Auto-end if balance hits 0
           if (newBalance <= 0) {
             await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
             const partnerSocketId = activeConnections.get(conversation.partnerId.toString());
@@ -497,12 +508,14 @@ export const setupChatWebSocket = (server) => {
     });
 
     // Voice per-second billing helper
-    const startVoiceBilling = (conversationId, userIdForBilling, partnerIdForBilling) => {
+    const startVoiceBilling = (conversationId, userIdForBilling, partnerIdForBilling, clientId) => {
       if (voiceBillingIntervals.has(conversationId)) return;
       const interval = setInterval(async () => {
         try {
           const userDoc = await User.findById(userIdForBilling);
           if (!userDoc) return;
+
+          const { voiceCCR } = await getCCRRates(clientId || userDoc.clientId);
 
           if (userDoc.credits <= 0) {
             clearInterval(interval);
@@ -518,7 +531,7 @@ export const setupChatWebSocket = (server) => {
             return;
           }
 
-          const newBalance = Math.max(0, userDoc.credits - VOICE_CCR);
+          const newBalance = Math.max(0, userDoc.credits - voiceCCR);
           userDoc.credits = newBalance;
           await userDoc.save();
 
@@ -526,7 +539,7 @@ export const setupChatWebSocket = (server) => {
           if (userSocketId) {
             io.to(userSocketId).emit('credit:update', {
               conversationId,
-              creditsDeducted: VOICE_CCR,
+              creditsDeducted: voiceCCR,
               remainingBalance: newBalance,
               type: 'voice_second'
             });
@@ -637,7 +650,8 @@ export const setupChatWebSocket = (server) => {
         // Start per-second billing when call is accepted
         const convUserId = conversation.userId?._id?.toString() || conversation.userId?.toString();
         const convPartnerId = conversation.partnerId?._id?.toString() || conversation.partnerId?.toString();
-        startVoiceBilling(conversationId, convUserId, convPartnerId);
+        const convUser = await User.findById(convUserId).select('clientId').lean();
+        startVoiceBilling(conversationId, convUserId, convPartnerId, convUser?.clientId);
 
         callback?.({
           success: true,
