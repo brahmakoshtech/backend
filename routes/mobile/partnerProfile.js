@@ -438,13 +438,19 @@ router.post('/register/step3', async (req, res) => {
       clientId: clientCode,
       name,
       experienceRange,
+      experience,
       expertiseCategory,
+      expertise,
+      specialization,
       skills,
       consultationModes,
       languages,
       bio,
       availabilityPreference,
-      location
+      location,
+      chatCharge,
+      voiceCharge,
+      videoCharge
     } = req.body;
 
     const { phone } = req.body;
@@ -501,12 +507,32 @@ router.post('/register/step3', async (req, res) => {
     // Update optional fields
     if (experienceRange) {
       partner.experienceRange = experienceRange;
-      // Also set numeric experience for backward compatibility
       const expMap = { '0-2': 1, '3-5': 4, '6-10': 8, '10+': 15 };
       partner.experience = expMap[experienceRange] || 0;
     }
-    
+
+    // Direct experience number (takes priority over experienceRange map)
+    if (experience !== undefined && experience !== null) {
+      const expNum = Number(experience);
+      if (!isNaN(expNum) && expNum >= 0) partner.experience = expNum;
+    }
+
     if (expertiseCategory) partner.expertiseCategory = expertiseCategory;
+
+    if (expertise && Array.isArray(expertise)) partner.expertise = expertise;
+    if (specialization && Array.isArray(specialization)) partner.specialization = specialization;
+    // If only one is provided, sync the other
+    if (expertise && Array.isArray(expertise) && (!specialization || !specialization.length)) {
+      partner.specialization = expertise;
+    }
+    if (specialization && Array.isArray(specialization) && (!expertise || !expertise.length)) {
+      partner.expertise = specialization;
+    }
+
+    // Pricing
+    if (chatCharge !== undefined) partner.chatCharge = Number(chatCharge) || 0;
+    if (voiceCharge !== undefined) partner.voiceCharge = Number(voiceCharge) || 0;
+    if (videoCharge !== undefined) partner.videoCharge = Number(videoCharge) || 0;
     
     if (skills && Array.isArray(skills)) {
       if (skills.length > 5) {
@@ -1151,8 +1177,18 @@ router.put('/profile', authenticate, async (req, res) => {
       const expMap = { '0-2': 1, '3-5': 4, '6-10': 8, '10+': 15 };
       partner.experience = expMap[req.body.experienceRange] || 0;
     }
-    
+
+    if (req.body.experience !== undefined && req.body.experience !== null) {
+      const expNum = Number(req.body.experience);
+      if (!isNaN(expNum) && expNum >= 0) partner.experience = expNum;
+    }
+
     if (req.body.expertiseCategory) partner.expertiseCategory = req.body.expertiseCategory;
+    if (req.body.expertise && Array.isArray(req.body.expertise)) partner.expertise = req.body.expertise;
+    if (req.body.specialization && Array.isArray(req.body.specialization)) partner.specialization = req.body.specialization;
+    if (req.body.chatCharge !== undefined) partner.chatCharge = Number(req.body.chatCharge) || 0;
+    if (req.body.voiceCharge !== undefined) partner.voiceCharge = Number(req.body.voiceCharge) || 0;
+    if (req.body.videoCharge !== undefined) partner.videoCharge = Number(req.body.videoCharge) || 0;
     
     if (req.body.skills && Array.isArray(req.body.skills)) {
       if (req.body.skills.length > 5) {
