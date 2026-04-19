@@ -29,7 +29,12 @@ const agentSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
-      enum: ['krishna1', 'krishna2', 'krishna3', 'rashmi1', 'rashmi2', 'rashmi3'],
+      enum: [
+        'krishna1', 'krishna2', 'krishna3',
+        'rashmi1', 'rashmi2', 'rashmi3',
+        'saavi1', 'kanika1', 'roohi1', 'kanika2',
+        'ranbir1', 'priyanka1', 'god1', 'raqib1'
+      ],
     },
     systemPrompt: {
       type: String,
