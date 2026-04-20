@@ -269,11 +269,25 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
         const aiChunks = [];
         let chunkCount = 0;
+        let sendBuffer = Buffer.alloc(0);
+        const MIN_CHUNK_SIZE = 4096; // Send chunks of at least 4KB
+
         for await (const chunk of response.body) {
           if (!isActive || abortCtrl.signal.aborted) break;
           chunkCount++;
           aiChunks.push(chunk);
-          safeSend({ type: 'audio_chunk', audio: chunk.toString('base64'), chunkIndex: chunkCount });
+          sendBuffer = Buffer.concat([sendBuffer, chunk]);
+
+          // Only send when buffer is large enough
+          if (sendBuffer.length >= MIN_CHUNK_SIZE) {
+            safeSend({ type: 'audio_chunk', audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
+            sendBuffer = Buffer.alloc(0);
+          }
+        }
+
+        // Send remaining buffer
+        if (sendBuffer.length > 0 && !abortCtrl.signal.aborted) {
+          safeSend({ type: 'audio_chunk', audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
         }
 
         if (!abortCtrl.signal.aborted) {
