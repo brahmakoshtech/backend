@@ -36,7 +36,7 @@ const DEFAULT_PROMPT              = 'You are a helpful spiritual guide. Keep ans
 const VOICE_AGENT_AUDIO_FOLDER    = 'voice-agent-audio';
 const DEEPGRAM_KEEPALIVE_MS       = 8_000;
 const DEEPGRAM_RECONNECT_DELAY_MS = 500;
-const SILENCE_THRESHOLD_MS        = 2_000;
+const SILENCE_THRESHOLD_MS        = 800;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const isValidObjectId = (id) => /^[a-f\d]{24}$/i.test(String(id ?? ''));
@@ -88,6 +88,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let isReconnectingDG      = false;
     let pendingAudioChunks    = [];
     let firstMessageSent      = false;  // ensures first message plays only once
+    let currentTTSAbortCtrl   = null;   // abort current TTS when user interrupts
 
     // ── Keepalive ──────────────────────────────────────────────────────────────
     const stopKeepalive = () => {
@@ -246,6 +247,8 @@ export const handleVoiceAgentWebSocket = (wss) => {
     // ── ElevenLabs TTS ────────────────────────────────────────────────────────
     const streamElevenLabsTTS = async (text) => {
       let audioKey = null;
+      const abortCtrl = new AbortController();
+      currentTTSAbortCtrl = abortCtrl;
       try {
         console.log('[VoiceAgent] 🔊 Starting ElevenLabs TTS...');
 
@@ -257,6 +260,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
           method:  'POST',
           headers: { Accept: 'audio/mpeg', 'Content-Type': 'application/json', 'xi-api-key': elevenLabsApiKey },
           body:    JSON.stringify({ text, model_id: modelId, voice_settings: settings }),
+          signal:  abortCtrl.signal,
         });
 
         if (!response.ok) {
@@ -266,15 +270,18 @@ export const handleVoiceAgentWebSocket = (wss) => {
         const aiChunks = [];
         let chunkCount = 0;
         for await (const chunk of response.body) {
-          if (!isActive) break;
+          if (!isActive || abortCtrl.signal.aborted) break;
           chunkCount++;
           aiChunks.push(chunk);
           safeSend({ type: 'audio_chunk', audio: chunk.toString('base64'), chunkIndex: chunkCount });
         }
-        safeSend({ type: 'audio_complete', totalChunks: chunkCount });
+
+        if (!abortCtrl.signal.aborted) {
+          safeSend({ type: 'audio_complete', totalChunks: chunkCount });
+        }
         console.log('[VoiceAgent] ✅ TTS complete:', chunkCount, 'chunks');
 
-        if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME) {
+        if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME && !abortCtrl.signal.aborted) {
           try {
             const { key } = await uploadBufferToS3(Buffer.concat(aiChunks), VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg');
             audioKey = key;
@@ -283,8 +290,14 @@ export const handleVoiceAgentWebSocket = (wss) => {
           }
         }
       } catch (error) {
-        console.error('[VoiceAgent] ElevenLabs TTS error:', error.message);
-        if (isActive) safeSend({ type: 'error', message: 'Error generating speech', error: error.message });
+        if (error.name === 'AbortError') {
+          console.log('[VoiceAgent] ⏹️ TTS aborted - user interrupted');
+        } else {
+          console.error('[VoiceAgent] ElevenLabs TTS error:', error.message);
+          if (isActive) safeSend({ type: 'error', message: 'Error generating speech', error: error.message });
+        }
+      } finally {
+        if (currentTTSAbortCtrl === abortCtrl) currentTTSAbortCtrl = null;
       }
       return { audioKey };
     };
@@ -293,6 +306,15 @@ export const handleVoiceAgentWebSocket = (wss) => {
     const processTurnComplete = async () => {
       if (!isActive)                     return;
       if (!accumulatedTranscript.trim()) return;
+
+      // If AI is currently speaking, abort it and let user's new question take over
+      if (currentTTSAbortCtrl) {
+        console.log('[VoiceAgent] ⏹️ User interrupted - aborting current TTS');
+        currentTTSAbortCtrl.abort();
+        currentTTSAbortCtrl = null;
+        safeSend({ type: 'audio_interrupted' });
+      }
+
       if (isProcessingLLM)               return;
 
       const userMessage     = accumulatedTranscript.trim();
