@@ -1,9 +1,21 @@
 import express from 'express';
 import Chat from '../../models/Chat.js';
+import User from '../../models/User.js';
+import Client from '../../models/Client.js';
 import { authenticate } from '../../middleware/auth.js';
 import { getChatCompletion } from '../../utils/openai.js';
 
 const router = express.Router();
+
+const DEFAULT_AGENT_CHAT_CCR = 0.5;
+
+const getAgentChatCCR = async (clientId) => {
+  if (!clientId) return DEFAULT_AGENT_CHAT_CCR;
+  try {
+    const client = await Client.findById(clientId).select('settings.chatCCR').lean();
+    return client?.settings?.chatCCR ?? DEFAULT_AGENT_CHAT_CCR;
+  } catch { return DEFAULT_AGENT_CHAT_CCR; }
+};
 
 router.post('/:chatId/message', authenticate, async (req, res) => {
   try {
@@ -16,6 +28,21 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
 
     if (!message?.trim()) {
       return res.status(400).json({ success: false, message: 'Message is required' });
+    }
+
+    // Credit check before processing
+    const userDoc = await User.findById(req.user._id);
+    if (!userDoc) return res.status(404).json({ success: false, message: 'User not found' });
+
+    const clientId = userDoc.clientId?._id || userDoc.clientId;
+    const chatCCR = await getAgentChatCCR(clientId);
+
+    if (userDoc.credits < chatCCR) {
+      return res.status(402).json({
+        success: false,
+        message: 'Insufficient credits',
+        remainingBalance: userDoc.credits
+      });
     }
 
     let chat = await Chat.findOne({ _id: chatId, userId: req.user._id });
@@ -31,7 +58,6 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
     chat.messages.push({ role: 'user', content: message.trim() });
 
     // Fetch user profile
-    const User = (await import('../../models/User.js')).default;
     const userProfile = await User.findById(req.user._id).select('profile astrology numerology doshas').lean();
 
     // Set chat title from first user message
@@ -81,6 +107,11 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
 
     const aiResponse = await getChatCompletion(openaiMessages);
 
+    // Deduct credit after successful AI response
+    const newBalance = Math.max(0, userDoc.credits - chatCCR);
+    userDoc.credits = newBalance;
+    await userDoc.save();
+
     chat.messages.push({ role: 'assistant', content: aiResponse.content });
     await chat.save();
 
@@ -89,7 +120,9 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
       data: {
         chatId: chat._id,
         response: aiResponse.content,
-        assistantMessage: { role: 'assistant', content: aiResponse.content }
+        assistantMessage: { role: 'assistant', content: aiResponse.content },
+        creditsDeducted: chatCCR,
+        remainingBalance: newBalance
       }
     });
   } catch (error) {

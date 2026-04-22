@@ -5,7 +5,19 @@ import fetch from 'node-fetch';
 import Chat from '../../models/Chat.js';
 import VoiceConfig from '../../models/voiceConfig.js';
 import Agent from '../../models/Agent.js';
+import User from '../../models/User.js';
+import Client from '../../models/Client.js';
 import { uploadBufferToS3 } from '../../utils/s3.js';
+
+const DEFAULT_AGENT_VOICE_CCR = 0.5;
+
+const getAgentVoiceCCR = async (clientId) => {
+  if (!clientId) return DEFAULT_AGENT_VOICE_CCR;
+  try {
+    const client = await Client.findById(clientId).select('settings.voiceCCR').lean();
+    return client?.settings?.voiceCCR ?? DEFAULT_AGENT_VOICE_CCR;
+  } catch { return DEFAULT_AGENT_VOICE_CCR; }
+};
 
 // ─── Validate environment variables ──────────────────────────────────────────
 const deepgramApiKey   = process.env.DEEPGRAM_API_KEY;
@@ -349,6 +361,17 @@ export const handleVoiceAgentWebSocket = (wss) => {
       console.log('[VoiceAgent] 💬 Processing turn:', userMessage);
 
       try {
+        // Credit check before processing
+        const userDoc = await User.findById(userId);
+        if (!userDoc || userDoc.credits <= 0) {
+          safeSend({ type: 'error', message: 'Insufficient credits', error: 'INSUFFICIENT_CREDITS', remainingBalance: userDoc?.credits ?? 0 });
+          cleanup();
+          return;
+        }
+
+        const clientId = userDoc.clientId?._id || userDoc.clientId;
+        const voiceCCR = await getAgentVoiceCCR(clientId);
+
         chat.messages.push({ role: 'user', content: userMessage, ...(userAudioKey && { audioKey: userAudioKey }) });
         await chat.save();
 
@@ -372,6 +395,17 @@ export const handleVoiceAgentWebSocket = (wss) => {
         safeSend({ type: 'ai_response', text: aiResponse });
 
         const { audioKey: aiAudioKey } = await streamElevenLabsTTS(aiResponse);
+
+        // Deduct credit after successful response
+        const newBalance = Math.max(0, userDoc.credits - voiceCCR);
+        userDoc.credits = newBalance;
+        await userDoc.save();
+        safeSend({ type: 'credit:update', creditsDeducted: voiceCCR, remainingBalance: newBalance });
+
+        if (newBalance <= 0) {
+          safeSend({ type: 'error', message: 'Insufficient credits', error: 'INSUFFICIENT_CREDITS', remainingBalance: 0 });
+          cleanup();
+        }
 
         if (isActive) {
           chat.messages.push({ role: 'assistant', content: aiResponse, ...(aiAudioKey && { audioKey: aiAudioKey }) });
