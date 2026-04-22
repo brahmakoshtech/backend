@@ -30,6 +30,7 @@ import chatRoutes                  from './routes/mobile/chat.js';
 import avatarChatRoutes            from './routes/mobile/avatarChat.js';
 import voiceRoutes                 from './routes/mobile/voice.js';
 import mobileAgentsRoutes          from './routes/mobile/agents.js';
+import mobilePanchangRoutes         from './routes/mobile/panchang.js';
 import uploadRoutes                from './routes/upload.js';
 import mediaRoutes                 from './routes/media.js';
 import testimonialRoutes           from './routes/testimonials/index.js';
@@ -168,6 +169,7 @@ app.use('/api/mobile/voice',   voiceRoutes);
 app.use('/api/mobile/partner', partnerProfileMobileRoutes);
 app.use('/api/mobile/content', mobileContentRoutes);
 app.use('/api/mobile/agents',  mobileAgentsRoutes);
+app.use('/api/mobile/panchang', mobilePanchangRoutes);
 
 // Partner–User Chat
 app.use('/api/chat', partnerUserChatRoutes);
