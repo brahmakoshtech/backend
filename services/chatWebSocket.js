@@ -780,6 +780,7 @@ export const setupChatWebSocket = (server) => {
           // Get final balances for ledger record
           const userDoc = await User.findById(conversation.userId);
           if (userDoc) {
+            const { voiceCCR: ledgerVoiceCCR } = await getCCRRates(userDoc.clientId);
             await ServiceCreditLedger.findOneAndUpdate(
               { conversationId, serviceType: 'voice' },
               {
@@ -788,9 +789,9 @@ export const setupChatWebSocket = (server) => {
                 userId: conversation.userId,
                 partnerId: conversation.partnerId,
                 billableMinutes: billableMinutesForLog,
-                userDebited: durationSecondsForLog * VOICE_CCR,
+                userDebited: durationSecondsForLog * ledgerVoiceCCR,
                 userNewBalance: userDoc.credits,
-                userRatePerMinute: VOICE_CCR * 60,
+                userRatePerMinute: ledgerVoiceCCR * 60,
                 startTime,
                 endTime: endedAt
               },

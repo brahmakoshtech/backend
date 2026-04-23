@@ -433,7 +433,27 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
           console.log('[VoiceAgent] Start command received:', { chatId: data.chatId, userId: data.userId, agentId: data.agentId });
 
-          userId              = data.userId;
+          // ── Token verification ──────────────────────────────────────────────
+          const token = data.token;
+          if (!token) {
+            safeSend({ type: 'error', message: 'Authentication required', error: 'NO_TOKEN' });
+            ws.close();
+            return;
+          }
+          try {
+            const jwt = await import('jsonwebtoken');
+            const decoded = jwt.default.verify(token, process.env.JWT_SECRET);
+            if (decoded.role !== 'user') {
+              safeSend({ type: 'error', message: 'Access denied', error: 'INVALID_ROLE' });
+              ws.close();
+              return;
+            }
+            userId = decoded.userId; // Use token userId, NOT client-provided userId
+          } catch (jwtErr) {
+            safeSend({ type: 'error', message: 'Invalid or expired token', error: 'INVALID_TOKEN' });
+            ws.close();
+            return;
+          }
           isActive            = true;
           agentPromptOverride = null;
           agentFirstMessage   = null;
