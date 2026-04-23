@@ -152,12 +152,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
         const dgConn = deepgramClient.listen.live({
           model:            'nova-2',
-          language:         'en',
+          language:         'hi',
+          detect_language:  true,
           encoding:         'linear16',
           sample_rate:      16000,
           channels:         1,
           interim_results:  true,
-          utterance_end_ms: 2000,
+          utterance_end_ms: 1000,
           vad_events:       true,
           punctuate:        true,
           smart_format:     true,
@@ -570,7 +571,23 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 export const setupVoiceAgentWebSocket = (server) => {
-  const wss = new WebSocketServer({ server, path: '/api/voice/agent' });
+  const wss = new WebSocketServer({
+    server,
+    path: '/api/voice/agent',
+    clientTracking: true,
+  });
+
+  // Keep connections alive with ping/pong every 30 seconds
+  const pingInterval = setInterval(() => {
+    wss.clients.forEach((client) => {
+      if (client.readyState === client.OPEN) {
+        client.ping();
+      }
+    });
+  }, 30_000);
+
+  wss.on('close', () => clearInterval(pingInterval));
+
   handleVoiceAgentWebSocket(wss);
   console.log('[VoiceAgent] ✅ WebSocket server initialized at /api/voice/agent');
   return wss;
