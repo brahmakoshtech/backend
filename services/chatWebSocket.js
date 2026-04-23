@@ -11,14 +11,14 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 const activeConnections = new Map();
 const socketMetadata = new Map();
-const activeVoiceCalls = new Map(); // userId -> conversationId for ongoing voice calls
-const voiceCallStartedAt = new Map(); // conversationId -> Date when voice call started
-const voiceBillingIntervals = new Map(); // conversationId -> interval for per-second billing
+const activeVoiceCalls = new Map();
+const voiceCallStartedAt = new Map();
+const voiceBillingIntervals = new Map();
 
 const DEFAULT_CHAT_CCR = 0.5;
 const DEFAULT_VOICE_CCR = 0.5;
+const PARTNER_RATE_PER_MIN = 3;
 
-// Fetch CCR rates from client settings
 const getCCRRates = async (clientId) => {
   if (!clientId) return { chatCCR: DEFAULT_CHAT_CCR, voiceCCR: DEFAULT_VOICE_CCR };
   try {
@@ -29,6 +29,62 @@ const getCCRRates = async (clientId) => {
       voiceCCR: client?.settings?.voiceCCR ?? DEFAULT_VOICE_CCR
     };
   } catch { return { chatCCR: DEFAULT_CHAT_CCR, voiceCCR: DEFAULT_VOICE_CCR }; }
+};
+
+// Helper: settle partner earnings when a conversation ends via WebSocket
+const settlePartnerEarnings = async (conversationId, serviceType = 'chat') => {
+  try {
+    const conversation = await Conversation.findOne({ conversationId });
+    if (!conversation || !conversation.isAcceptedByPartner) return;
+
+    const endTime = new Date();
+    const startTime = conversation.sessionDetails?.startTime || conversation.acceptedAt || conversation.startedAt || conversation.createdAt;
+    const rawMinutes = startTime ? (endTime - new Date(startTime)) / (1000 * 60) : 0;
+    const billableMinutes = rawMinutes > 0 ? Math.max(1, Math.ceil(rawMinutes)) : 0;
+    if (billableMinutes === 0) return;
+
+    const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
+
+    const partner = await Partner.findById(conversation.partnerId);
+    if (partner) {
+      partner.creditsEarnedBalance = (partner.creditsEarnedBalance || 0) + partnerCredited;
+      partner.creditsEarnedTotal = (partner.creditsEarnedTotal || 0) + partnerCredited;
+      if (partner.activeConversationsCount > 0) {
+        partner.activeConversationsCount -= 1;
+      }
+      await partner.updateBusyStatus();
+    }
+
+    const user = await User.findById(conversation.userId).select('credits');
+    const userNewBalance = user?.credits ?? 0;
+    const userPreviousBalance = userNewBalance; // already deducted per-message
+
+    await ServiceCreditLedger.findOneAndUpdate(
+      { conversationId, serviceType },
+      {
+        conversationId,
+        serviceType,
+        userId: conversation.userId,
+        partnerId: conversation.partnerId,
+        billableMinutes,
+        userDebited: 0, // already deducted per-message via chatCCR
+        partnerCredited,
+        userPreviousBalance,
+        userNewBalance,
+        partnerPreviousBalance: (partner?.creditsEarnedBalance || 0) - partnerCredited,
+        partnerNewBalance: partner?.creditsEarnedBalance || 0,
+        userRatePerMinute: 0,
+        partnerRatePerMinute: PARTNER_RATE_PER_MIN,
+        startTime,
+        endTime
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log(`[ChatWebSocket] Partner earnings settled: ${partnerCredited} credits for ${billableMinutes} min (${conversationId})`);
+  } catch (err) {
+    console.error('[ChatWebSocket] settlePartnerEarnings error:', err.message);
+  }
 };
 
 export const setupChatWebSocket = (server) => {
@@ -274,6 +330,7 @@ export const setupChatWebSocket = (server) => {
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
             socket.emit('chat:auto_ended', autoEndPayload);
             if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
+            await settlePartnerEarnings(conversationId, 'chat');
             return callback?.({ success: false, message: 'Insufficient credits. Chat ended.' });
           }
           const { chatCCR } = await getCCRRates(userDoc.clientId);
@@ -294,6 +351,7 @@ export const setupChatWebSocket = (server) => {
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
             socket.emit('chat:auto_ended', autoEndPayload);
             if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
+            await settlePartnerEarnings(conversationId, 'chat');
           }
         }
 
@@ -528,6 +586,7 @@ export const setupChatWebSocket = (server) => {
             if (partnerSocketId) io.to(partnerSocketId).emit('voice:auto_ended', autoEndPayload);
             activeVoiceCalls.delete(userIdForBilling.toString());
             activeVoiceCalls.delete(partnerIdForBilling.toString());
+            await settlePartnerEarnings(conversationId, 'voice');
             return;
           }
 
@@ -555,6 +614,7 @@ export const setupChatWebSocket = (server) => {
             if (partnerSocketId) io.to(partnerSocketId).emit('voice:auto_ended', autoEndPayload);
             activeVoiceCalls.delete(userIdForBilling.toString());
             activeVoiceCalls.delete(partnerIdForBilling.toString());
+            await settlePartnerEarnings(conversationId, 'voice');
           }
         } catch (err) {
           console.error('Voice billing interval error:', err.message);
