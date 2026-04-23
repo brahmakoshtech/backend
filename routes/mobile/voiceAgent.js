@@ -438,7 +438,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
           const token = data.token;
           if (!token) {
             safeSend({ type: 'error', message: 'Authentication required', error: 'NO_TOKEN' });
-            ws.close();
+            setTimeout(() => ws.close(1008, 'No token'), 500);
             return;
           }
           try {
@@ -446,13 +446,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
             const decoded = jwt.default.verify(token, process.env.JWT_SECRET);
             if (decoded.role !== 'user') {
               safeSend({ type: 'error', message: 'Access denied', error: 'INVALID_ROLE' });
-              ws.close();
+              setTimeout(() => ws.close(1008, 'Invalid role'), 500);
               return;
             }
-            userId = decoded.userId; // Use token userId, NOT client-provided userId
+            userId = decoded.userId;
           } catch (jwtErr) {
             safeSend({ type: 'error', message: 'Invalid or expired token', error: 'INVALID_TOKEN' });
-            ws.close();
+            setTimeout(() => ws.close(1008, 'Invalid token'), 500);
             return;
           }
           isActive            = true;
