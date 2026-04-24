@@ -333,7 +333,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
       if (!isActive)                     return;
       if (!accumulatedTranscript.trim()) return;
 
-      // If AI is currently speaking, abort it and let user's new question take over
+      // If AI is currently speaking or processing, abort and let user's new question take over
       if (currentTTSAbortCtrl) {
         console.log('[VoiceAgent] ⏹️ User interrupted - aborting current TTS');
         currentTTSAbortCtrl.abort();
@@ -341,7 +341,10 @@ export const handleVoiceAgentWebSocket = (wss) => {
         safeSend({ type: 'audio_interrupted' });
       }
 
-      if (isProcessingLLM)               return;
+      // Reset LLM processing flag so new question can be processed
+      isProcessingLLM = false;
+
+      if (!accumulatedTranscript.trim()) return;
 
       const userMessage     = accumulatedTranscript.trim();
       accumulatedTranscript = '';
