@@ -50,6 +50,14 @@ const DEEPGRAM_KEEPALIVE_MS       = 8_000;
 const DEEPGRAM_RECONNECT_DELAY_MS = 500;
 const SILENCE_THRESHOLD_MS        = 800;
 
+// Turn states
+const TURN_SPEAKING     = 'SPEAKING';
+const TURN_INTERRUPTED  = 'INTERRUPTED';
+const TURN_COMPLETED    = 'COMPLETED';
+
+// Generate unique turn ID
+const createTurnId = () => `turn_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const isValidObjectId = (id) => /^[a-f\d]{24}$/i.test(String(id ?? ''));
 
@@ -99,8 +107,10 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let userAudioChunks       = [];
     let isReconnectingDG      = false;
     let pendingAudioChunks    = [];
-    let firstMessageSent      = false;  // ensures first message plays only once
-    let currentTTSAbortCtrl   = null;   // abort current TTS when user interrupts
+    let firstMessageSent      = false;
+    let currentTTSAbortCtrl   = null;
+    let currentTurnId         = null;   // active AI turn ID
+    let currentTurnState      = null;   // SPEAKING | INTERRUPTED | COMPLETED
 
     // ── Keepalive ──────────────────────────────────────────────────────────────
     const stopKeepalive = () => {
@@ -257,13 +267,14 @@ export const handleVoiceAgentWebSocket = (wss) => {
     });
 
     // ── ElevenLabs TTS ────────────────────────────────────────────────────────
-    const streamElevenLabsTTS = async (text) => {
+    const streamElevenLabsTTS = async (text, turnId) => {
       let audioKey = null;
       const abortCtrl = new AbortController();
       currentTTSAbortCtrl = abortCtrl;
+      currentTurnId    = turnId;
+      currentTurnState = TURN_SPEAKING;
+      console.log(`[VoiceAgent] 🔊 TTS start | turnId: ${turnId}`);
       try {
-        console.log('[VoiceAgent] 🔊 Starting ElevenLabs TTS...');
-
         const voiceId  = voiceConfig?.voiceId  || FALLBACK_VOICE_ID;
         const modelId  = voiceConfig?.modelId  || FALLBACK_MODEL_ID;
         const settings = voiceConfig?.voiceSettings || { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true };
@@ -282,32 +293,42 @@ export const handleVoiceAgentWebSocket = (wss) => {
         const aiChunks = [];
         let chunkCount = 0;
         let sendBuffer = Buffer.alloc(0);
-        const MIN_CHUNK_SIZE = 4096; // Send chunks of at least 4KB
+        const MIN_CHUNK_SIZE = 4096;
 
         for await (const chunk of response.body) {
-          if (!isActive || abortCtrl.signal.aborted) break;
+          // Drop chunk if turn was interrupted
+          if (!isActive || abortCtrl.signal.aborted || currentTurnState !== TURN_SPEAKING) {
+            console.log(`[VoiceAgent] ⏭️ Chunk dropped | turnId: ${turnId} | state: ${currentTurnState}`);
+            break;
+          }
           chunkCount++;
           aiChunks.push(chunk);
           sendBuffer = Buffer.concat([sendBuffer, chunk]);
 
-          // Only send when buffer is large enough
           if (sendBuffer.length >= MIN_CHUNK_SIZE) {
-            safeSend({ type: 'audio_chunk', audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
+            // Final check before send
+            if (currentTurnState === TURN_SPEAKING) {
+              safeSend({ type: 'audio_chunk', turnId, audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
+            }
             sendBuffer = Buffer.alloc(0);
           }
         }
 
-        // Send remaining buffer
-        if (sendBuffer.length > 0 && !abortCtrl.signal.aborted) {
-          safeSend({ type: 'audio_chunk', audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
+        // Send remaining buffer only if not interrupted
+        if (sendBuffer.length > 0 && currentTurnState === TURN_SPEAKING && !abortCtrl.signal.aborted) {
+          safeSend({ type: 'audio_chunk', turnId, audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
         }
 
-        if (!abortCtrl.signal.aborted) {
-          safeSend({ type: 'audio_complete', totalChunks: chunkCount });
+        // Send audio_complete only if not interrupted
+        if (currentTurnState === TURN_SPEAKING && !abortCtrl.signal.aborted) {
+          currentTurnState = TURN_COMPLETED;
+          safeSend({ type: 'audio_complete', turnId, totalChunks: chunkCount });
+          console.log(`[VoiceAgent] ✅ TTS complete | turnId: ${turnId} | chunks: ${chunkCount}`);
+        } else {
+          console.log(`[VoiceAgent] ⏹️ TTS stopped | turnId: ${turnId} | state: ${currentTurnState}`);
         }
-        console.log('[VoiceAgent] ✅ TTS complete:', chunkCount, 'chunks');
 
-        if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME && !abortCtrl.signal.aborted) {
+        if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME && currentTurnState !== TURN_INTERRUPTED) {
           try {
             const { key } = await uploadBufferToS3(Buffer.concat(aiChunks), VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg');
             audioKey = key;
@@ -317,10 +338,10 @@ export const handleVoiceAgentWebSocket = (wss) => {
         }
       } catch (error) {
         if (error.name === 'AbortError') {
-          console.log('[VoiceAgent] ⏹️ TTS aborted - user interrupted');
+          console.log(`[VoiceAgent] ⏹️ TTS aborted | turnId: ${turnId}`);
         } else {
           console.error('[VoiceAgent] ElevenLabs TTS error:', error.message);
-          if (isActive) safeSend({ type: 'error', message: 'Error generating speech', error: error.message });
+          if (isActive) safeSend({ type: 'error', message: 'Error generating speech', error: error.message, turnId });
         }
       } finally {
         if (currentTTSAbortCtrl === abortCtrl) currentTTSAbortCtrl = null;
@@ -333,12 +354,20 @@ export const handleVoiceAgentWebSocket = (wss) => {
       if (!isActive)                     return;
       if (!accumulatedTranscript.trim()) return;
 
-      // If AI is currently speaking or processing, abort and let user's new question take over
-      if (currentTTSAbortCtrl) {
-        console.log('[VoiceAgent] ⏹️ User interrupted - aborting current TTS');
-        currentTTSAbortCtrl.abort();
-        currentTTSAbortCtrl = null;
-        safeSend({ type: 'audio_interrupted' });
+      // If AI is currently speaking, abort it and let user's new question take over
+      if (currentTTSAbortCtrl || currentTurnState === TURN_SPEAKING) {
+        const interruptedTurnId = currentTurnId;
+        console.log(`[VoiceAgent] ⏹️ User interrupted | turnId: ${interruptedTurnId}`);
+        if (currentTTSAbortCtrl) {
+          currentTTSAbortCtrl.abort();
+          currentTTSAbortCtrl = null;
+        }
+        currentTurnState = TURN_INTERRUPTED;
+        safeSend({
+          type:          'audio_interrupted',
+          turnId:        interruptedTurnId,
+          interruptedAt: Date.now()
+        });
       }
 
       // Reset LLM processing flag so new question can be processed
@@ -395,9 +424,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
         if (!isActive) return;
 
         const aiResponse = completion.choices[0].message.content;
-        safeSend({ type: 'ai_response', text: aiResponse });
+        const newTurnId  = createTurnId();
+        console.log(`[VoiceAgent] 🎬 New turn | turnId: ${newTurnId}`);
+        safeSend({ type: 'ai_response', text: aiResponse, turnId: newTurnId });
+        // Emit user_speech_started hint before TTS
+        safeSend({ type: 'user_speech_started', turnId: newTurnId });
 
-        const { audioKey: aiAudioKey } = await streamElevenLabsTTS(aiResponse);
+        const { audioKey: aiAudioKey } = await streamElevenLabsTTS(aiResponse, newTurnId);
 
         // Deduct credit after successful response
         const newBalance = Math.max(0, userDoc.credits - voiceCCR);
@@ -512,8 +545,9 @@ export const handleVoiceAgentWebSocket = (wss) => {
           if (agentFirstMessage && isActive && !firstMessageSent) {
             firstMessageSent = true;
             try {
-              safeSend({ type: 'ai_response', text: agentFirstMessage });
-              const { audioKey } = await streamElevenLabsTTS(agentFirstMessage);
+              const firstTurnId = createTurnId();
+              safeSend({ type: 'ai_response', text: agentFirstMessage, turnId: firstTurnId });
+              const { audioKey } = await streamElevenLabsTTS(agentFirstMessage, firstTurnId);
               if (isActive) {
                 chat.messages.push({ role: 'assistant', content: agentFirstMessage, ...(audioKey && { audioKey }) });
                 await chat.save();
@@ -528,6 +562,29 @@ export const handleVoiceAgentWebSocket = (wss) => {
           console.log('[VoiceAgent] Stop command received');
           cleanup();
           safeSend({ type: 'stopped', message: 'Voice agent stopped' });
+
+        // ── INTERRUPT (explicit from app) ─────────────────────────────────────
+        } else if (data.type === 'interrupt') {
+          const reqTurnId = data.turnId;
+          console.log(`[VoiceAgent] ⏹️ Interrupt command | turnId: ${reqTurnId} | current: ${currentTurnId}`);
+
+          // Idempotent - ignore if already interrupted or different turn
+          if (currentTurnState === TURN_SPEAKING && (!reqTurnId || reqTurnId === currentTurnId)) {
+            if (currentTTSAbortCtrl) {
+              currentTTSAbortCtrl.abort();
+              currentTTSAbortCtrl = null;
+            }
+            currentTurnState = TURN_INTERRUPTED;
+            isProcessingLLM  = false;
+            safeSend({
+              type:          'audio_interrupted',
+              turnId:        currentTurnId,
+              interruptedAt: Date.now()
+            });
+            console.log(`[VoiceAgent] ✅ Interrupt applied | turnId: ${currentTurnId}`);
+          } else {
+            console.log(`[VoiceAgent] ⏭️ Interrupt ignored | state: ${currentTurnState}`);
+          }
 
         // ── AUDIO ─────────────────────────────────────────────────────────────
         } else if (data.type === 'audio') {
