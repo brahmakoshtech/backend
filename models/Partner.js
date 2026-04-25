@@ -91,7 +91,7 @@ const partnerSchema = new mongoose.Schema({
   },
   expertiseCategory: {
     type: String,
-    enum: ['Astrology', 'Vastu', 'Reiki', 'Healer', 'Numerology', 'Others'],
+    enum: ['Astrology', 'Numerology', 'Tarot Reading', 'Vastu Shastra', 'Palmistry', 'Healing', 'Vastu', 'Reiki', 'Healer', 'Others'],
     default: null
   },
   emailOtp: {
