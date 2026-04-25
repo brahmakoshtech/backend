@@ -445,7 +445,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
         safeSend({ type: 'agent_state', state: 'processing' });
 
         const systemPrompt = agentPromptOverride || voiceConfig?.prompt || DEFAULT_PROMPT;
-        const voiceSystemPrompt = systemPrompt + '\n\nIMPORTANT VOICE RULES:\n- Do NOT say "Namaste" in every response. Say it only once at the very beginning.\n- Keep each response to maximum 2-3 sentences.\n- Be direct and answer the question asked.\n- Do not repeat greetings or introductions in follow-up responses.';
+        const voiceSystemPrompt = systemPrompt + '\n\nCRITICAL VOICE RULES (follow strictly):\n- NEVER say "Namaste" or any greeting after the very first message. No exceptions.\n- NEVER repeat your introduction or say who you are after the first message.\n- Answer ONLY what the user asked. Maximum 2 sentences per response.\n- Be direct. No filler phrases.';
         const completion   = await openai.chat.completions.create({
           model:       process.env.OPENAI_MODEL || 'gpt-4o-mini',
           messages:    [
@@ -453,7 +453,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
             ...chat.messages.map(m => ({ role: m.role, content: m.content })),
           ],
           temperature: 0.7,
-          max_tokens:  150,
+          max_tokens:  100,
         });
 
         if (!isActive) return;
