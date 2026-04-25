@@ -549,6 +549,9 @@ router.post('/register/step3', async (req, res) => {
         });
       }
       partner.skills = skills;
+      // Sync to expertise/specialization if not provided separately
+      if (!expertise || !expertise.length) partner.expertise = skills;
+      if (!specialization || !specialization.length) partner.specialization = skills;
     }
     
     if (consultationModes && Array.isArray(consultationModes)) {
