@@ -837,10 +837,25 @@ export const setupChatWebSocket = (server) => {
           durationSecondsForLog = Math.round(durationMs / 1000);
           billableMinutesForLog = Math.ceil(durationSecondsForLog / 60);
 
+          // Settle partner earnings for voice call
+          const partnerCredited = billableMinutesForLog * PARTNER_RATE_PER_MIN;
+          const partnerDoc = await Partner.findById(conversation.partnerId);
+          if (partnerDoc && partnerCredited > 0) {
+            const partnerPreviousBalance = partnerDoc.creditsEarnedBalance || 0;
+            partnerDoc.creditsEarnedBalance = partnerPreviousBalance + partnerCredited;
+            partnerDoc.creditsEarnedTotal = (partnerDoc.creditsEarnedTotal || 0) + partnerCredited;
+            if (partnerDoc.activeConversationsCount > 0) {
+              partnerDoc.activeConversationsCount -= 1;
+            }
+            await partnerDoc.updateBusyStatus();
+            console.log(`[ChatWebSocket] Voice partner earnings settled: +${partnerCredited} credits for ${billableMinutesForLog} min (${conversationId})`);
+          }
+
           // Get final balances for ledger record
           const userDoc = await User.findById(conversation.userId);
           if (userDoc) {
             const { voiceCCR: ledgerVoiceCCR } = await getCCRRates(userDoc.clientId);
+            const partnerPrevBal = partnerDoc ? (partnerDoc.creditsEarnedBalance - partnerCredited) : 0;
             await ServiceCreditLedger.findOneAndUpdate(
               { conversationId, serviceType: 'voice' },
               {
@@ -850,8 +865,13 @@ export const setupChatWebSocket = (server) => {
                 partnerId: conversation.partnerId,
                 billableMinutes: billableMinutesForLog,
                 userDebited: durationSecondsForLog * ledgerVoiceCCR,
+                partnerCredited,
+                userPreviousBalance: userDoc.credits + (durationSecondsForLog * ledgerVoiceCCR),
                 userNewBalance: userDoc.credits,
+                partnerPreviousBalance: partnerPrevBal,
+                partnerNewBalance: partnerDoc ? partnerDoc.creditsEarnedBalance : 0,
                 userRatePerMinute: ledgerVoiceCCR * 60,
+                partnerRatePerMinute: PARTNER_RATE_PER_MIN,
                 startTime,
                 endTime: endedAt
               },
