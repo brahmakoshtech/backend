@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import Partner from '../../models/Partner.js';
 import ServiceCreditLedger from '../../models/ServiceCreditLedger.js';
 import Client from '../../models/Client.js';
+import ExpertCategory from '../../models/ExpertCategory.js';
 import { generateToken, authenticate } from '../../middleware/auth.js';
 import {
   generateOTP,
@@ -97,12 +98,9 @@ router.post('/register/step1', async (req, res) => {
     if (partner) {
       partner.emailOtp = otp;
       partner.emailOtpExpiry = otpExpiry;
-      if (password) {
-        partner.password = password;
-      }
-      if (!partner.emailVerified) {
-        partner.emailVerified = false;
-      }
+      if (password) partner.password = password;
+      if (!partner.emailVerified) partner.emailVerified = false;
+      partner.isDeleted = false; // Reset soft-delete on re-registration
       await partner.save();
     } else {
       partner = new Partner({
@@ -521,7 +519,12 @@ router.post('/register/step3', async (req, res) => {
       if (!isNaN(expNum) && expNum >= 0) partner.experience = expNum;
     }
 
-    if (expertiseCategory) partner.expertiseCategory = expertiseCategory;
+    if (expertiseCategory) {
+      partner.expertiseCategory = expertiseCategory;
+      // Auto-set categoryId from ExpertCategory collection
+      const cat = await ExpertCategory.findOne({ name: expertiseCategory, isDeleted: false }).lean();
+      if (cat) partner.categoryId = cat._id;
+    }
 
     if (expertise && Array.isArray(expertise)) partner.expertise = expertise;
     if (specialization && Array.isArray(specialization)) partner.specialization = specialization;
