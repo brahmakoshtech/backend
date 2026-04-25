@@ -4,6 +4,9 @@ import { authenticate } from '../../middleware/auth.js';
 import { getChatCompletion } from '../../utils/openai.js';
 import { getPromptContent, PROMPT_KEYS } from '../../services/promptService.js';
 
+// Per-user processing lock — prevents concurrent requests for same user
+const processingUsers = new Set();
+
 const router = express.Router();
 
 /**
@@ -290,10 +293,24 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
       });
     }
 
+    const userId = req.user._id.toString();
+
+    // Block if previous request still processing
+    if (processingUsers.has(userId)) {
+      return res.status(429).json({
+        success: false,
+        message: 'Please wait for the previous response to complete before sending a new message.',
+        error: 'PROCESSING_IN_PROGRESS'
+      });
+    }
+
+    processingUsers.add(userId);
+
     const { chatId } = req.params;
     const { message } = req.body;
 
     if (!message || !message.trim()) {
+      processingUsers.delete(userId);
       return res.status(400).json({
         success: false,
         message: 'Message is required'

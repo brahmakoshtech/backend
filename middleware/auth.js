@@ -4,7 +4,16 @@ import Client from '../models/Client.js';
 import User from '../models/User.js';
 import Partner from '../models/Partner.js';
 
-export const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
+const getJwtSecret = () => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    console.error('[Auth] FATAL: JWT_SECRET environment variable is not set');
+    process.exit(1);
+  }
+  return secret;
+};
+
+export const JWT_SECRET = getJwtSecret();
 
 // Authentication middleware - works with all models
 export const authenticate = async (req, res, next) => {

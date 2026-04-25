@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import compression from 'compression';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -85,11 +86,13 @@ import { seedVoiceConfigs }         from './config/seedVoiceConfigs.js';
 
 import './services/cronJobs.js';
 
-dotenv.config();
 startClientNotificationScheduler();
 
 const app    = express();
 const server = http.createServer(app);
+
+// ─── Compression ─────────────────────────────────────────────────────────────
+app.use(compression());
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({

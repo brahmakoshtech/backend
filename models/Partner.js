@@ -367,7 +367,7 @@ const partnerSchema = new mongoose.Schema({
 });
 
 // Indexes for performance
-partnerSchema.index({ email: 1 });
+// Note: email already has unique:true index defined on the field itself, no need to redefine
 partnerSchema.index({ clientId: 1, registrationStep: 1, isActive: 1 });
 partnerSchema.index({ isActive: 1, isVerified: 1 });
 partnerSchema.index({ onlineStatus: 1 });

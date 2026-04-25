@@ -73,12 +73,16 @@ router.post('/register/step1', async (req, res) => {
     // Validate client
     const client = await validateClientId(clientCode);
 
-    // Check if partner already exists for this client
-    let partner = await Partner.findOne({ 
-      clientId: client._id,
-      email 
-    }).select('+emailOtp +emailOtpExpiry');
-    
+    // Check if partner already exists globally by email (unique constraint)
+    let partner = await Partner.findOne({ email }).select('+emailOtp +emailOtpExpiry');
+
+    if (partner && partner.clientId?.toString() !== client._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'This email is already registered with another client'
+      });
+    }
+
     if (partner && partner.registrationStep === 3) {
       return res.status(400).json({ 
         success: false, 
@@ -830,8 +834,26 @@ router.post('/check-email', async (req, res) => {
       });
     }
 
-    let partner = await Partner.findOne({ clientCode: clientCode, email });
-    const client = await validateClientId(clientCode);
+    if (!clientCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Client ID is required'
+      });
+    }
+
+    let client;
+    try {
+      client = await validateClientId(clientCode);
+    } catch (clientErr) {
+      return res.status(400).json({
+        success: false,
+        message: clientErr.message || 'Invalid Client ID'
+      });
+    }
+
+    // Check globally by email first to avoid duplicate key error
+    let partner = await Partner.findOne({ email });
+
     if (!partner) {
       // Create partner and mark email as verified
       partner = new Partner({
@@ -855,6 +877,14 @@ router.post('/check-email', async (req, res) => {
           registrationStep: 1,
           clientId: client.clientId
         }
+      });
+    }
+
+    // Partner exists but belongs to a different client
+    if (partner.clientId?.toString() !== client._id.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'This email is already registered with another client'
       });
     }
 

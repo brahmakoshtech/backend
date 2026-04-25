@@ -1,9 +1,8 @@
 // Entry point for the application
-import server from './app.js';
-import dotenv from 'dotenv';
-import './services/cronJobs.js';
+import 'dotenv/config';
 
-dotenv.config();
+import server from './app.js';
+import './services/cronJobs.js';
 
 const PORT = process.env.PORT || 4000;
 

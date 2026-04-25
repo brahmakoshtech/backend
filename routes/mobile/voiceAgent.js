@@ -139,6 +139,12 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
       isActive = false;  // ← gates ALL async callbacks from here on
 
+      // Abort any in-flight TTS
+      if (currentTTSAbortCtrl) {
+        try { currentTTSAbortCtrl.abort(); } catch (_) {}
+        currentTTSAbortCtrl = null;
+      }
+
       stopKeepalive();
       if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
 
@@ -152,6 +158,9 @@ export const handleVoiceAgentWebSocket = (wss) => {
       userAudioChunks    = [];
       isReconnectingDG   = false;
       firstMessageSent   = false;
+      isProcessingLLM    = false;
+      currentTurnState   = null;
+      currentTurnId      = null;
       console.log('[VoiceAgent] Cleanup complete');
     };
 
@@ -266,6 +275,27 @@ export const handleVoiceAgentWebSocket = (wss) => {
       }
     });
 
+    // ── Interrupt helper: TTS abort + pipeline flush + state broadcast ────────
+    const interruptCurrentTurn = () => {
+      if (currentTurnState !== TURN_SPEAKING) return;
+      const interruptedTurnId = currentTurnId;
+      console.log(`[VoiceAgent] ⏹️ Interrupting turn | turnId: ${interruptedTurnId}`);
+
+      if (currentTTSAbortCtrl) {
+        try { currentTTSAbortCtrl.abort(); } catch (_) {}
+        currentTTSAbortCtrl = null;
+      }
+      currentTurnState = TURN_INTERRUPTED;
+      isProcessingLLM  = false;
+
+      // Bug 2 Fix: Send newTurnId so frontend knows which turnId to accept next
+      const nextTurnId = createTurnId();
+      currentTurnId = nextTurnId;
+      safeSend({ type: 'interruption_acknowledged', turnId: interruptedTurnId, newTurnId: nextTurnId, interruptedAt: Date.now() });
+      // Bug 3 Fix: server-driven state — frontend knows backend is now listening
+      safeSend({ type: 'agent_state', state: 'listening' });
+    };
+
     // ── ElevenLabs TTS ────────────────────────────────────────────────────────
     const streamElevenLabsTTS = async (text, turnId) => {
       let audioKey = null;
@@ -274,10 +304,14 @@ export const handleVoiceAgentWebSocket = (wss) => {
       currentTurnId    = turnId;
       currentTurnState = TURN_SPEAKING;
       console.log(`[VoiceAgent] 🔊 TTS start | turnId: ${turnId}`);
+      safeSend({ type: 'agent_state', state: 'speaking', turnId });
       try {
         const voiceId  = voiceConfig?.voiceId  || FALLBACK_VOICE_ID;
         const modelId  = voiceConfig?.modelId  || FALLBACK_MODEL_ID;
         const settings = voiceConfig?.voiceSettings || { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true };
+
+        // Bug Fix: Add timeout to ElevenLabs fetch — prevents hanging forever on slow network
+        const fetchTimeout = setTimeout(() => { try { abortCtrl.abort(); } catch (_) {} }, 30_000);
 
         const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream`, {
           method:  'POST',
@@ -286,8 +320,11 @@ export const handleVoiceAgentWebSocket = (wss) => {
           signal:  abortCtrl.signal,
         });
 
+        clearTimeout(fetchTimeout);
+
         if (!response.ok) {
-          throw new Error(`ElevenLabs ${response.status}: ${await response.text()}`);
+          const errText = await response.text().catch(() => 'unknown');
+          throw new Error(`ElevenLabs ${response.status}: ${errText}`);
         }
 
         const aiChunks = [];
@@ -306,8 +343,8 @@ export const handleVoiceAgentWebSocket = (wss) => {
           sendBuffer = Buffer.concat([sendBuffer, chunk]);
 
           if (sendBuffer.length >= MIN_CHUNK_SIZE) {
-            // Final check before send
-            if (currentTurnState === TURN_SPEAKING) {
+            // Bug 2 Fix: Double-check abort signal AND turn state before every send
+            if (currentTurnState === TURN_SPEAKING && !abortCtrl.signal.aborted) {
               safeSend({ type: 'audio_chunk', turnId, audio: sendBuffer.toString('base64'), chunkIndex: chunkCount });
             }
             sendBuffer = Buffer.alloc(0);
@@ -323,25 +360,32 @@ export const handleVoiceAgentWebSocket = (wss) => {
         if (currentTurnState === TURN_SPEAKING && !abortCtrl.signal.aborted) {
           currentTurnState = TURN_COMPLETED;
           safeSend({ type: 'audio_complete', turnId, totalChunks: chunkCount });
+          // Problem 3 fix: agent_turn_ended so frontend stops guessing
+          safeSend({ type: 'agent_state', state: 'listening' });
           console.log(`[VoiceAgent] ✅ TTS complete | turnId: ${turnId} | chunks: ${chunkCount}`);
         } else {
           console.log(`[VoiceAgent] ⏹️ TTS stopped | turnId: ${turnId} | state: ${currentTurnState}`);
         }
 
+        // S3 upload — fire-and-forget, never block the turn
         if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME && currentTurnState !== TURN_INTERRUPTED) {
-          try {
-            const { key } = await uploadBufferToS3(Buffer.concat(aiChunks), VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg');
-            audioKey = key;
-          } catch (e) {
-            console.warn('[VoiceAgent] S3 upload failed (AI audio):', e.message);
-          }
+          uploadBufferToS3(Buffer.concat(aiChunks), VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg')
+            .then(({ key }) => { audioKey = key; })
+            .catch(e => console.warn('[VoiceAgent] S3 upload failed (AI audio):', e.message));
         }
       } catch (error) {
         if (error.name === 'AbortError') {
           console.log(`[VoiceAgent] ⏹️ TTS aborted | turnId: ${turnId}`);
         } else {
           console.error('[VoiceAgent] ElevenLabs TTS error:', error.message);
-          if (isActive) safeSend({ type: 'error', message: 'Error generating speech', error: error.message, turnId });
+          if (isActive) {
+            safeSend({ type: 'error', message: 'Error generating speech', error: error.message, turnId });
+            // Recover state so frontend doesn't get stuck
+            if (currentTurnState === TURN_SPEAKING) {
+              currentTurnState = TURN_COMPLETED;
+              safeSend({ type: 'agent_state', state: 'listening' });
+            }
+          }
         }
       } finally {
         if (currentTTSAbortCtrl === abortCtrl) currentTTSAbortCtrl = null;
@@ -353,25 +397,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
     const processTurnComplete = async () => {
       if (!isActive)                     return;
       if (!accumulatedTranscript.trim()) return;
+      // Bug Fix: Prevent concurrent LLM calls — drop duplicate utterance-end events
+      if (isProcessingLLM)               return;
 
       // If AI is currently speaking, abort it and let user's new question take over
-      if (currentTTSAbortCtrl || currentTurnState === TURN_SPEAKING) {
-        const interruptedTurnId = currentTurnId;
-        console.log(`[VoiceAgent] ⏹️ User interrupted | turnId: ${interruptedTurnId}`);
-        if (currentTTSAbortCtrl) {
-          currentTTSAbortCtrl.abort();
-          currentTTSAbortCtrl = null;
-        }
-        currentTurnState = TURN_INTERRUPTED;
-        safeSend({
-          type:          'audio_interrupted',
-          turnId:        interruptedTurnId,
-          interruptedAt: Date.now()
-        });
+      if (currentTurnState === TURN_SPEAKING) {
+        interruptCurrentTurn();
       }
-
-      // Reset LLM processing flag so new question can be processed
-      isProcessingLLM = false;
 
       if (!accumulatedTranscript.trim()) return;
 
@@ -379,14 +411,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
       accumulatedTranscript = '';
       isProcessingLLM       = true;
 
+      // S3 upload — fire-and-forget, capture key asynchronously
       let userAudioKey = null;
       if (userAudioChunks.length > 0 && process.env.AWS_BUCKET_NAME) {
-        try {
-          const { key } = await uploadBufferToS3(pcmToWav(Buffer.concat(userAudioChunks)), VOICE_AGENT_AUDIO_FOLDER, `user_${chat._id}_${Date.now()}.wav`, 'audio/wav');
-          userAudioKey = key;
-        } catch (e) {
-          console.warn('[VoiceAgent] S3 upload failed (user audio):', e.message);
-        }
+        const chunksToUpload = userAudioChunks.splice(0);
+        uploadBufferToS3(pcmToWav(Buffer.concat(chunksToUpload)), VOICE_AGENT_AUDIO_FOLDER, `user_${chat._id}_${Date.now()}.wav`, 'audio/wav')
+          .then(({ key }) => { userAudioKey = key; })
+          .catch(e => console.warn('[VoiceAgent] S3 upload failed (user audio):', e.message));
       }
       userAudioChunks = [];
 
@@ -404,21 +435,25 @@ export const handleVoiceAgentWebSocket = (wss) => {
         const clientId = userDoc.clientId?._id || userDoc.clientId;
         const voiceCCR = await getAgentVoiceCCR(clientId);
 
-        chat.messages.push({ role: 'user', content: userMessage, ...(userAudioKey && { audioKey: userAudioKey }) });
+        chat.messages.push({ role: 'user', content: userMessage });
         await chat.save();
 
         safeSend({ type: 'user_message', text: userMessage });
         if (!isActive) return;
 
+        // Problem 3 fix: tell frontend backend is processing
+        safeSend({ type: 'agent_state', state: 'processing' });
+
         const systemPrompt = agentPromptOverride || voiceConfig?.prompt || DEFAULT_PROMPT;
+        const voiceSystemPrompt = systemPrompt + '\n\nIMPORTANT VOICE RULES:\n- Do NOT say "Namaste" in every response. Say it only once at the very beginning.\n- Keep each response to maximum 2-3 sentences.\n- Be direct and answer the question asked.\n- Do not repeat greetings or introductions in follow-up responses.';
         const completion   = await openai.chat.completions.create({
           model:       process.env.OPENAI_MODEL || 'gpt-4o-mini',
           messages:    [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: voiceSystemPrompt },
             ...chat.messages.map(m => ({ role: m.role, content: m.content })),
           ],
           temperature: 0.7,
-          max_tokens:  500,
+          max_tokens:  150,
         });
 
         if (!isActive) return;
@@ -427,8 +462,6 @@ export const handleVoiceAgentWebSocket = (wss) => {
         const newTurnId  = createTurnId();
         console.log(`[VoiceAgent] 🎬 New turn | turnId: ${newTurnId}`);
         safeSend({ type: 'ai_response', text: aiResponse, turnId: newTurnId });
-        // Emit user_speech_started hint before TTS
-        safeSend({ type: 'user_speech_started', turnId: newTurnId });
 
         const { audioKey: aiAudioKey } = await streamElevenLabsTTS(aiResponse, newTurnId);
 
@@ -444,12 +477,16 @@ export const handleVoiceAgentWebSocket = (wss) => {
         }
 
         if (isActive) {
-          chat.messages.push({ role: 'assistant', content: aiResponse, ...(aiAudioKey && { audioKey: aiAudioKey }) });
+          chat.messages.push({ role: 'assistant', content: aiResponse });
           await chat.save();
         }
       } catch (error) {
         console.error('[VoiceAgent] Error processing turn:', error);
-        if (isActive) safeSend({ type: 'error', message: 'Error processing response', error: error.message });
+        if (isActive) {
+          safeSend({ type: 'error', message: 'Error processing response', error: error.message });
+          // Bug 3 Fix: Always recover to listening state on error — prevents frontend getting stuck
+          safeSend({ type: 'agent_state', state: 'listening' });
+        }
       } finally {
         isProcessingLLM = false;
       }
@@ -568,19 +605,8 @@ export const handleVoiceAgentWebSocket = (wss) => {
           const reqTurnId = data.turnId;
           console.log(`[VoiceAgent] ⏹️ Interrupt command | turnId: ${reqTurnId} | current: ${currentTurnId}`);
 
-          // Idempotent - ignore if already interrupted or different turn
-          if (currentTurnState === TURN_SPEAKING && (!reqTurnId || reqTurnId === currentTurnId)) {
-            if (currentTTSAbortCtrl) {
-              currentTTSAbortCtrl.abort();
-              currentTTSAbortCtrl = null;
-            }
-            currentTurnState = TURN_INTERRUPTED;
-            isProcessingLLM  = false;
-            safeSend({
-              type:          'audio_interrupted',
-              turnId:        currentTurnId,
-              interruptedAt: Date.now()
-            });
+          if (!reqTurnId || reqTurnId === currentTurnId) {
+            interruptCurrentTurn();
             console.log(`[VoiceAgent] ✅ Interrupt applied | turnId: ${currentTurnId}`);
           } else {
             console.log(`[VoiceAgent] ⏭️ Interrupt ignored | state: ${currentTurnState}`);
@@ -589,6 +615,9 @@ export const handleVoiceAgentWebSocket = (wss) => {
         // ── AUDIO ─────────────────────────────────────────────────────────────
         } else if (data.type === 'audio') {
           if (!isActive) return;
+          // Bug 1 Fix: Do NOT forward mic audio to Deepgram while AI is speaking.
+          // This prevents the speaker echo from triggering VAD / self-interruption.
+          if (currentTurnState === TURN_SPEAKING) return;
 
           const audioBuffer = Buffer.from(data.audio, 'base64');
           userAudioChunks.push(audioBuffer);

@@ -916,6 +916,23 @@ export const setupChatWebSocket = (server) => {
       activeConnections.delete(userId);
       socketMetadata.delete(socket.id);
 
+      // Bug Fix: Clear any active voice billing interval on disconnect to prevent memory leak
+      for (const [convId, interval] of voiceBillingIntervals.entries()) {
+        const conv = await Conversation.findOne({ conversationId: convId }).lean().catch(() => null);
+        if (conv) {
+          const isParticipant =
+            conv.userId?.toString() === userId ||
+            conv.partnerId?.toString() === userId;
+          if (isParticipant) {
+            clearInterval(interval);
+            voiceBillingIntervals.delete(convId);
+            voiceCallStartedAt.delete(convId);
+            activeVoiceCalls.delete(userId);
+            console.log(`[ChatWebSocket] Cleared billing interval on disconnect for conv: ${convId}`);
+          }
+        }
+      }
+
       if (userType === 'partner') {
         await Partner.findByIdAndUpdate(userId, {
           onlineStatus: 'offline',
