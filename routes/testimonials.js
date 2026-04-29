@@ -4,7 +4,7 @@ import Testimonial from '../models/Testimonial.js';
 import Client from '../models/Client.js';
 import { authenticate, authorize } from '../middleware/auth.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3, getobject } from '../utils/s3.js';
+import { uploadFile, deleteFile, getPresignedUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -104,7 +104,7 @@ router.get('/', authenticate, authorize('client','user'), async (req, res) => {
         const testimonialObj = testimonial.toObject();
         if (testimonialObj.imageKey) {
           try {
-            const signedUrl = await getobject(testimonialObj.imageKey, 604800);
+            const signedUrl = await getPresignedUrl(testimonialObj.imageKey, 604800);
             console.log('Generated signed URL for:', testimonialObj.imageKey, '→', signedUrl.substring(0, 100) + '...');
             testimonialObj.signedImageUrl = signedUrl;
             testimonialObj.image = signedUrl;
@@ -327,7 +327,7 @@ router.delete('/:id', authenticate, authorize('client','user'), async (req, res)
     // Delete image from S3 if exists (prefer key over URL)
     if (testimonial.imageKey || testimonial.image) {
       try {
-        await deleteFromS3(testimonial.imageKey || testimonial.image);
+        await deleteFile(testimonial.imageKey || testimonial.image);
       } catch (deleteError) {
         console.error('Failed to delete image from S3:', deleteError);
       }
@@ -383,14 +383,14 @@ router.post('/:id/upload-image', authenticate, authorize('client','user'), uploa
       });
     }
 
-    const uploadResult = await uploadToS3(req.file, 'testimonials');
+    const uploadResult = await uploadFile(req.file, 'testimonials');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 
     // Delete old image if exists (prefer key over URL)
     if (testimonial.imageKey || testimonial.image) {
       try {
-        await deleteFromS3(testimonial.imageKey || testimonial.image);
+        await deleteFile(testimonial.imageKey || testimonial.image);
       } catch (deleteError) {
         console.error('Failed to delete old image:', deleteError);
       }

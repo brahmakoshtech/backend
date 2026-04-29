@@ -1,7 +1,7 @@
 import express from 'express';
 import Prathana from '../models/Prathana.js';
 import { authenticate, authorize } from '../middleware/auth.js';
-import { getobject, generateUploadUrl, extractS3KeyFromUrl } from '../utils/s3.js';
+import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -56,7 +56,7 @@ router.get('/', authenticate, authorize('client','user'), async (req, res) => {
         
         if (prathana.videoKey) {
           try {
-            prathanaObj.videoUrl = await getobject(prathana.videoKey, 604800);
+            prathanaObj.videoUrl = await getPresignedUrl(prathana.videoKey, 604800);
           } catch (error) {
             console.error('Error generating video presigned URL:', error);
           }
@@ -64,7 +64,7 @@ router.get('/', authenticate, authorize('client','user'), async (req, res) => {
         
         if (prathana.thumbnailKey) {
           try {
-            prathanaObj.thumbnailUrl = await getobject(prathana.thumbnailKey, 604800);
+            prathanaObj.thumbnailUrl = await getPresignedUrl(prathana.thumbnailKey, 604800);
           } catch (error) {
             console.error('Error generating thumbnail presigned URL:', error);
           }
@@ -114,7 +114,7 @@ router.get('/:id', authenticate, authorize('client','user'), async (req, res) =>
     // Generate presigned URLs
     if (prathana.videoKey) {
       try {
-        prathanaObj.videoUrl = await getobject(prathana.videoKey, 604800);
+        prathanaObj.videoUrl = await getPresignedUrl(prathana.videoKey, 604800);
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
       }
@@ -122,7 +122,7 @@ router.get('/:id', authenticate, authorize('client','user'), async (req, res) =>
     
     if (prathana.thumbnailKey) {
       try {
-        prathanaObj.thumbnailUrl = await getobject(prathana.thumbnailKey, 604800);
+        prathanaObj.thumbnailUrl = await getPresignedUrl(prathana.thumbnailKey, 604800);
       } catch (error) {
         console.error('Error generating thumbnail presigned URL:', error);
       }
@@ -172,7 +172,7 @@ router.post('/', authenticate, authorize('client','user'), async (req, res) => {
     // Generate presigned URLs for response
     if (prathana.videoKey) {
       try {
-        prathanaObj.videoUrl = await getobject(prathana.videoKey, 604800);
+        prathanaObj.videoUrl = await getPresignedUrl(prathana.videoKey, 604800);
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
       }
@@ -180,7 +180,7 @@ router.post('/', authenticate, authorize('client','user'), async (req, res) => {
     
     if (prathana.thumbnailKey) {
       try {
-        prathanaObj.thumbnailUrl = await getobject(prathana.thumbnailKey, 604800);
+        prathanaObj.thumbnailUrl = await getPresignedUrl(prathana.thumbnailKey, 604800);
       } catch (error) {
         console.error('Error generating thumbnail presigned URL:', error);
       }
@@ -249,7 +249,7 @@ router.put('/:id', authenticate, authorize('client','user'), async (req, res) =>
     // Generate presigned URLs for response
     if (prathana.videoKey) {
       try {
-        prathanaObj.videoUrl = await getobject(prathana.videoKey, 604800);
+        prathanaObj.videoUrl = await getPresignedUrl(prathana.videoKey, 604800);
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
       }
@@ -257,7 +257,7 @@ router.put('/:id', authenticate, authorize('client','user'), async (req, res) =>
     
     if (prathana.thumbnailKey) {
       try {
-        prathanaObj.thumbnailUrl = await getobject(prathana.thumbnailKey, 604800);
+        prathanaObj.thumbnailUrl = await getPresignedUrl(prathana.thumbnailKey, 604800);
       } catch (error) {
         console.error('Error generating thumbnail presigned URL:', error);
       }

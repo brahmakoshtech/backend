@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import { authenticate, authorize } from '../middleware/auth.js';
-import { uploadToS3 } from '../utils/s3.js';
+import { uploadFile } from '../utils/storage.js';
 import Alert from '../models/Alert.js';
 
 const router = express.Router();
@@ -54,7 +54,7 @@ router.post(
       if (Array.isArray(req.files)) {
         for (const file of req.files) {
           try {
-            const uploadResult = await uploadToS3(file, 'alerts/media');
+            const uploadResult = await uploadFile(file, 'alerts/media');
             mediaFiles.push({
               key: uploadResult.key,
               url: uploadResult.url || uploadResult.Location,

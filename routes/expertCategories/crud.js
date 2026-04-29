@@ -1,6 +1,6 @@
 import ExpertCategory from '../../models/ExpertCategory.js';
 import { getClientIdFromToken } from '../../utils/auth.js';
-import { getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { getPresignedUrl } from '../../utils/storage.js';
 
 // Create Expert Category
 export const createExpertCategory = async (req, res) => {
@@ -80,7 +80,7 @@ export const getAllExpertCategories = async (req, res) => {
           try {
             const imageKey = categoryObj.imageKey || extractS3KeyFromUrl(categoryObj.image);
             if (imageKey) {
-              categoryObj.image = await getobject(imageKey, 604800);
+              categoryObj.image = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -141,7 +141,7 @@ export const getExpertCategoryById = async (req, res) => {
       try {
         const imageKey = categoryObj.imageKey || extractS3KeyFromUrl(categoryObj.image);
         if (imageKey) {
-          categoryObj.image = await getobject(imageKey, 604800);
+          categoryObj.image = await getPresignedUrl(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating image presigned URL:', error);
@@ -152,7 +152,7 @@ export const getExpertCategoryById = async (req, res) => {
       try {
         const backgroundImageKey = categoryObj.backgroundImageKey || extractS3KeyFromUrl(categoryObj.backgroundImage);
         if (backgroundImageKey) {
-          categoryObj.backgroundImage = await getobject(backgroundImageKey, 604800);
+          categoryObj.backgroundImage = await getPresignedUrl(backgroundImageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating background image presigned URL:', error);

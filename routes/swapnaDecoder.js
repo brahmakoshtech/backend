@@ -1,20 +1,9 @@
 import express from 'express';
 import SwapnaDecoder from '../models/SwapnaDecoder.js';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { getobject } from '../utils/s3.js';
+import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
-
-// Initialize S3 client
-const s3Client = new S3Client({
-  region: process.env.AWS_REGION,
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-  }
-});
 
 // GET search suggestions - MUST be before /:id (PUBLIC)
 router.get('/search/suggestions', async (req, res) => {
@@ -107,7 +96,7 @@ router.get('/', async (req, res) => {
       dreams.map(async (dream) => {
         if (dream.thumbnailKey) {
           try {
-            dream.thumbnailUrl = await getobject(dream.thumbnailKey);
+            dream.thumbnailUrl = await getPresignedUrl(dream.thumbnailKey);
           } catch (error) {
             console.error(`Error generating presigned URL for ${dream.thumbnailKey}:`, error);
           }
@@ -115,7 +104,7 @@ router.get('/', async (req, res) => {
           try {
             const url = new URL(dream.thumbnailUrl);
             const key = url.pathname.substring(1);
-            dream.thumbnailUrl = await getobject(key);
+            dream.thumbnailUrl = await getPresignedUrl(key);
           } catch (error) {
             console.error(`Error extracting key from URL:`, error);
           }
@@ -144,7 +133,7 @@ router.get('/:id', async (req, res) => {
     // Generate presigned URL for thumbnail
     if (dream.thumbnailKey) {
       try {
-        dream.thumbnailUrl = await getobject(dream.thumbnailKey);
+        dream.thumbnailUrl = await getPresignedUrl(dream.thumbnailKey);
       } catch (error) {
         console.error(`Error generating presigned URL for ${dream.thumbnailKey}:`, error);
       }
@@ -152,7 +141,7 @@ router.get('/:id', async (req, res) => {
       try {
         const url = new URL(dream.thumbnailUrl);
         const key = url.pathname.substring(1);
-        dream.thumbnailUrl = await getobject(key);
+        dream.thumbnailUrl = await getPresignedUrl(key);
       } catch (error) {
         console.error(`Error extracting key from URL:`, error);
       }
@@ -179,17 +168,7 @@ router.post('/upload-url', authenticateToken, async (req, res) => {
     
     const timestamp = Date.now();
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const key = `swapna-decoder/${timestamp}-${sanitizedFileName}`;
-    
-    const command = new PutObjectCommand({
-      Bucket: process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME,
-      Key: key,
-      ContentType: fileType
-    });
-    
-    const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-    const fileUrl = `https://${process.env.AWS_S3_BUCKET_NAME || process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-    
+    const { uploadUrl, fileUrl, key } = await generateUploadUrl(fileName, fileType, 'swapna-decoder');
     res.json({ uploadUrl, fileUrl, key });
   } catch (error) {
     console.error('Error generating upload URL:', error);

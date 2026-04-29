@@ -1,7 +1,7 @@
 import express from 'express';
 import Review from '../models/Review.js';
 import { authenticate, authorize } from '../middleware/auth.js';
-import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../utils/s3.js';
+import { uploadFile, deleteFile, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 import multer from 'multer';
 
 const router = express.Router();
@@ -41,7 +41,7 @@ router.get('/expert/:expertId', authenticate, authorize(['client', 'user']), asy
           try {
             const imageKey = review.userImageKey || extractS3KeyFromUrl(review.userImage);
             if (imageKey) {
-              review.userImage = await getobject(imageKey, 604800); // 7 days expiry
+              review.userImage = await getPresignedUrl(imageKey, 604800); // 7 days expiry
             }
           } catch (error) {
             console.error('Error generating presigned URL for review image:', error);
@@ -107,7 +107,7 @@ router.get('/:reviewId', authenticate, authorize(['client', 'user']), async (req
       try {
         const imageKey = review.userImageKey || extractS3KeyFromUrl(review.userImage);
         if (imageKey) {
-          review.userImage = await getobject(imageKey, 604800);
+          review.userImage = await getPresignedUrl(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating presigned URL for review image:', error);
@@ -327,14 +327,14 @@ router.post('/:reviewId/upload-image', authenticate, authorize(['client', 'user'
     // Delete old image if exists
     if (review.userImage) {
       try {
-        await deleteFromS3(review.userImage);
+        await deleteFile(review.userImage);
       } catch (deleteError) {
         console.warn('Failed to delete old review image:', deleteError);
       }
     }
 
     // Upload new image to S3 using same pattern as testimonials
-    const uploadResult = await uploadToS3(req.file, 'reviews');
+    const uploadResult = await uploadFile(req.file, 'reviews');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 

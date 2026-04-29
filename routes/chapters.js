@@ -2,7 +2,7 @@ import express from 'express';
 import Chapter from '../models/Chapter.js';
 import { authenticate } from '../middleware/auth.js';
 import multer from 'multer';
-import { uploadToS3 } from '../utils/s3.js';
+import { uploadFile, getPresignedUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -79,8 +79,8 @@ router.get('/', authenticate, async (req, res) => {
         const chapterObj = chapter.toObject();
         if (chapterObj.imageUrl) {
           try {
-            const { getobject } = await import('../utils/s3.js');
-            chapterObj.imageUrl = await getobject(chapterObj.imageUrl);
+            const { getPresignedUrl } = await import('../utils/storage.js');
+            chapterObj.imageUrl = await getPresignedUrl(chapterObj.imageUrl);
           } catch (error) {
             console.error('Error generating presigned URL:', error);
           }
@@ -124,8 +124,8 @@ router.get('/:id', authenticate, async (req, res) => {
     const chapterObj = chapter.toObject();
     if (chapterObj.imageUrl) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        chapterObj.imageUrl = await getobject(chapterObj.imageUrl);
+        const { getPresignedUrl } = await import('../utils/storage.js');
+        chapterObj.imageUrl = await getPresignedUrl(chapterObj.imageUrl);
       } catch (error) {
         console.error('Error generating presigned URL:', error);
       }
@@ -178,7 +178,7 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
     
     let imageUrl = null;
     if (req.file) {
-      const uploadResult = await uploadToS3(req.file, 'chapters');
+      const uploadResult = await uploadFile(req.file, 'chapters');
       imageUrl = uploadResult.url;
     }
     
@@ -198,8 +198,8 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
     const responseChapter = chapter.toObject();
     if (responseChapter.imageUrl) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        responseChapter.imageUrl = await getobject(responseChapter.imageUrl);
+        const { getPresignedUrl } = await import('../utils/storage.js');
+        responseChapter.imageUrl = await getPresignedUrl(responseChapter.imageUrl);
       } catch (error) {
         console.error('Error generating presigned URL for response:', error);
       }
@@ -266,7 +266,7 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
     
     // Handle image upload if provided
     if (req.file) {
-      const uploadResult = await uploadToS3(req.file, 'chapters');
+      const uploadResult = await uploadFile(req.file, 'chapters');
       updateData.imageUrl = uploadResult.url;
     }
     
@@ -287,8 +287,8 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
     const responseChapter = chapter.toObject();
     if (responseChapter.imageUrl) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        responseChapter.imageUrl = await getobject(responseChapter.imageUrl);
+        const { getPresignedUrl } = await import('../utils/storage.js');
+        responseChapter.imageUrl = await getPresignedUrl(responseChapter.imageUrl);
       } catch (error) {
         console.error('Error generating presigned URL for response:', error);
       }
@@ -332,8 +332,8 @@ router.patch('/:id/toggle-status', authenticate, async (req, res) => {
     const responseChapter = chapter.toObject();
     if (responseChapter.imageUrl) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        responseChapter.imageUrl = await getobject(responseChapter.imageUrl);
+        const { getPresignedUrl } = await import('../utils/storage.js');
+        responseChapter.imageUrl = await getPresignedUrl(responseChapter.imageUrl);
       } catch (error) {
         console.error('Error generating presigned URL for toggle response:', error);
       }
@@ -365,7 +365,7 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
     
     const actualClientId = await getClientId(req.user, req.decodedClientId);
     
-    const uploadResult = await uploadToS3(req.file, 'chapters');
+    const uploadResult = await uploadFile(req.file, 'chapters');
     
     const chapter = await Chapter.findOneAndUpdate(
       { _id: req.params.id, clientId: actualClientId },

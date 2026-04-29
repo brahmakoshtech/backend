@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import LiveAvatar from '../models/LiveAvatar.js';
 import Client from '../models/Client.js';
 import { authenticate } from '../middleware/auth.js';
-import { uploadToS3, deleteFromS3, generateUploadUrl, extractS3KeyFromUrl } from '../utils/s3.js';
+import { uploadFile, deleteFile, generateUploadUrl, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -134,7 +134,6 @@ router.post('/direct', authenticate, async (req, res) => {
     await avatar.save();
     
     // Generate presigned URLs for the new avatar
-    const { getobject } = await import('../utils/s3.js');
     const avatarObj = withClientIdString(await avatar.populate('clientId', 'clientId'));
     
     // Generate presigned URL for video if exists
@@ -142,7 +141,7 @@ router.post('/direct', authenticate, async (req, res) => {
       try {
         const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.videoUrl);
         if (videoKey) {
-          avatarObj.videoUrl = await getobject(videoKey);
+          avatarObj.videoUrl = await getPresignedUrl(videoKey);
         }
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
@@ -154,7 +153,7 @@ router.post('/direct', authenticate, async (req, res) => {
       try {
         const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.imageUrl);
         if (imageKey) {
-          avatarObj.imageUrl = await getobject(imageKey);
+          avatarObj.imageUrl = await getPresignedUrl(imageKey);
         }
       } catch (error) {
         console.error('Error generating image presigned URL:', error);
@@ -185,7 +184,6 @@ router.get('/public', async (req, res) => {
       .sort({ createdAt: -1 });
 
     // Generate presigned URLs for images and videos
-    const { getobject } = await import('../utils/s3.js');
     const avatarsWithUrls = await Promise.all(
       avatars.map(async (avatar) => {
         const avatarObj = withClientIdString(avatar);
@@ -195,7 +193,7 @@ router.get('/public', async (req, res) => {
           try {
             const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.videoUrl);
             if (videoKey) {
-              avatarObj.videoUrl = await getobject(videoKey);
+              avatarObj.videoUrl = await getPresignedUrl(videoKey);
             }
           } catch (error) {
             console.error('Error generating video presigned URL:', error);
@@ -207,7 +205,7 @@ router.get('/public', async (req, res) => {
           try {
             const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.imageUrl);
             if (imageKey) {
-              avatarObj.imageUrl = await getobject(imageKey);
+              avatarObj.imageUrl = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -252,7 +250,6 @@ router.get('/', authenticate, async (req, res) => {
       .sort({ createdAt: -1 });
 
     // Generate presigned URLs for images and videos
-    const { getobject } = await import('../utils/s3.js');
     const avatarsWithUrls = await Promise.all(
       avatars.map(async (avatar) => {
         const avatarObj = withClientIdString(avatar);
@@ -272,7 +269,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.videoUrl);
             if (videoKey) {
-              avatarObj.videoUrl = await getobject(videoKey);
+              avatarObj.videoUrl = await getPresignedUrl(videoKey);
             }
           } catch (error) {
             console.error('Error generating video presigned URL:', error);
@@ -284,7 +281,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.imageUrl);
             if (imageKey) {
-              avatarObj.imageUrl = await getobject(imageKey);
+              avatarObj.imageUrl = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -350,9 +347,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       if (avatar.videoUrl && avatar.videoUrl !== videoUrl) {
         try {
           if (avatar.videoKey) {
-            await deleteFromS3(avatar.videoKey);
+            await deleteFile(avatar.videoKey);
           } else {
-            await deleteFromS3(avatar.videoUrl);
+            await deleteFile(avatar.videoUrl);
           }
         } catch (error) {
           console.error('Failed to delete old video:', error);
@@ -366,7 +363,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     if (imageUrl) {
       if (avatar.imageUrl && avatar.imageUrl !== imageUrl) {
         try {
-          await deleteFromS3(avatar.imageKey || avatar.imageUrl);
+          await deleteFile(avatar.imageKey || avatar.imageUrl);
         } catch (error) {
           console.error('Failed to delete old image:', error);
         }
@@ -378,7 +375,6 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     await avatar.save();
     
     // Generate presigned URLs for the updated avatar
-    const { getobject } = await import('../utils/s3.js');
     const avatarObj = withClientIdString(await avatar.populate('clientId', 'clientId'));
     
     // Generate presigned URL for video if exists
@@ -386,7 +382,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       try {
         const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.videoUrl);
         if (videoKey) {
-          avatarObj.videoUrl = await getobject(videoKey);
+          avatarObj.videoUrl = await getPresignedUrl(videoKey);
         }
       } catch (error) {
         console.error('Error generating video presigned URL:', error);
@@ -398,7 +394,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       try {
         const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.imageUrl);
         if (imageKey) {
-          avatarObj.imageUrl = await getobject(imageKey);
+          avatarObj.imageUrl = await getPresignedUrl(imageKey);
         }
       } catch (error) {
         console.error('Error generating image presigned URL:', error);
@@ -448,14 +444,14 @@ router.delete('/:id', authenticate, async (req, res) => {
     // Delete files from S3
     if (avatar.videoKey || avatar.videoUrl) {
       try {
-        await deleteFromS3(avatar.videoKey || avatar.videoUrl);
+        await deleteFile(avatar.videoKey || avatar.videoUrl);
       } catch (error) {
         console.error('Failed to delete video from S3:', error);
       }
     }
     if (avatar.imageKey || avatar.imageUrl) {
       try {
-        await deleteFromS3(avatar.imageKey || avatar.imageUrl);
+        await deleteFile(avatar.imageKey || avatar.imageUrl);
       } catch (error) {
         console.error('Failed to delete image from S3:', error);
       }

@@ -1,6 +1,6 @@
 import express from 'express';
 import LiveAvatar from '../models/LiveAvatar.js';
-import { extractS3KeyFromUrl } from '../utils/s3.js';
+import { extractS3KeyFromUrl, getPresignedUrl } from '../utils/storage.js';
 import dailyPredictionRoutes from './public/dailyPrediction.js';
 
 const router = express.Router();
@@ -17,31 +17,23 @@ router.get('/live-avatars', async (req, res) => {
     .populate('clientId', 'clientId businessName')
     .sort({ createdAt: -1 });
 
-    // Generate presigned URLs for images and videos
-    const { getobject } = await import('../utils/s3.js');
     const avatarsWithUrls = await Promise.all(
       avatars.map(async (avatar) => {
         const avatarObj = avatar.toObject();
         
-        // Generate presigned URL for video if exists
         if (avatarObj.videoKey || avatarObj.videoUrl) {
           try {
             const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.videoUrl);
-            if (videoKey) {
-              avatarObj.videoUrl = await getobject(videoKey);
-            }
+            if (videoKey) avatarObj.videoUrl = await getPresignedUrl(videoKey);
           } catch (error) {
             console.error('Error generating video presigned URL:', error);
           }
         }
         
-        // Generate presigned URL for image if exists
         if (avatarObj.imageKey || avatarObj.imageUrl) {
           try {
             const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.imageUrl);
-            if (imageKey) {
-              avatarObj.imageUrl = await getobject(imageKey);
-            }
+            if (imageKey) avatarObj.imageUrl = await getPresignedUrl(imageKey);
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
           }

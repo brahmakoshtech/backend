@@ -1,6 +1,6 @@
 import express from 'express';
 import { authenticate } from '../middleware/auth.js';
-import { getobject } from '../utils/s3.js';
+import { getPresignedUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -44,7 +44,7 @@ router.get('/presigned-url', authenticate, async (req, res) => {
     }
     
     // Generate presigned URL
-    const presignedUrl = await getobject(key, expirationSeconds);
+    const presignedUrl = await getPresignedUrl(key, expirationSeconds);
     
     res.json({
       success: true,

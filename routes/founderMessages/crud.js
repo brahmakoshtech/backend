@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import FounderMessage from '../../models/FounderMessage.js';
 import Client from '../../models/Client.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { uploadFile, deleteFile, getPresignedUrl } from '../../utils/storage.js';
 import { authenticate } from '../../middleware/auth.js';
 
 console.log('FounderMessage CRUD routes loaded');
@@ -98,7 +98,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = messageObj.founderImageKey || extractS3KeyFromUrl(messageObj.founderImage);
             if (imageKey) {
-              messageObj.founderImage = await getobject(imageKey, 604800);
+              messageObj.founderImage = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -143,7 +143,7 @@ router.get('/:id', authenticate, async (req, res) => {
       try {
         const imageKey = messageObj.founderImageKey || extractS3KeyFromUrl(messageObj.founderImage);
         if (imageKey) {
-          messageObj.founderImage = await getobject(imageKey, 604800);
+          messageObj.founderImage = await getPresignedUrl(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating image presigned URL:', error);
@@ -239,7 +239,7 @@ router.post('/:id/upload-image', authenticate, upload.single('founderImage'), as
     }
 
     // Upload image to S3
-    const uploadResult = await uploadToS3(req.file, 'founder-messages');
+    const uploadResult = await uploadFile(req.file, 'founder-messages');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 
@@ -306,13 +306,13 @@ router.put('/:id', authenticate, upload.single('founderImage'), async (req, res)
       // Delete old image from S3 if exists
       if (message.founderImage) {
         try {
-          await deleteFromS3(message.founderImage);
+          await deleteFile(message.founderImage);
         } catch (deleteError) {
           console.warn('Failed to delete old image:', deleteError);
         }
       }
       
-      const uploadResult = await uploadToS3(req.file, 'founder-messages');
+      const uploadResult = await uploadFile(req.file, 'founder-messages');
       founderImageUrl = uploadResult.url;
       updateData.founderImageKey = uploadResult.key;
     }

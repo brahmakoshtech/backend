@@ -1,6 +1,6 @@
 import express from 'express';
 import multer from 'multer';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+
 import { v4 as uuidv4 } from 'uuid';
 import User from '../../models/User.js';
 import Credit from '../../models/Credit.js';
@@ -17,7 +17,7 @@ import {
   sendWhatsAppOTP,
 } from '../../utils/otp.js';
 import { verifyFirebaseToken, isFirebaseAuthEnabled } from '../../utils/firebaseAuth.js';
-import { putobject, getobject, s3Client, deleteObject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { getPresignedUrl, generateUploadUrl, extractS3KeyFromUrl } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -76,7 +76,7 @@ const resolveProfileImageUrl = async (user) => {
   }
 
   try {
-    return await getobject(user.profileImage);
+    return await getPresignedUrl(user.profileImage);
   } catch (error) {
     if (user.authMethod === 'google') {
       const googleAvatarUrl = buildGoogleAvatarUrlFromKey(user.profileImage);
@@ -1040,35 +1040,30 @@ router.post('/profile/image', authenticate, upload.single('image'), async (req, 
     }
 
     // Delete old image if exists
-    if (user.profileImage) {
+    if (user.profileImage && !user.profileImage.startsWith('http')) {
       try {
-        await deleteObject(user.profileImage);
+        const { deleteFile } = await import('../../utils/storage.js');
+        await deleteFile(user.profileImage);
       } catch (deleteErr) {
         console.error('Error deleting old profile image:', deleteErr);
       }
     }
 
-    // Generate unique key and upload new image to S3
+    // Generate unique key and upload new image
     const fileExtension = imageFile.originalname.split('.').pop() || 'jpg';
     const imageKey = `images/user/${user._id}/profile/${uuidv4()}.${fileExtension}`;
 
-    const uploadCommand = new PutObjectCommand({
-      Bucket: process.env.AWS_BUCKET_NAME,
-      Key: imageKey,
-      Body: imageFile.buffer,
-      ContentType: imageFile.mimetype,
-    });
+    const { uploadBuffer } = await import('../../utils/storage.js');
+    await uploadBuffer(imageFile.buffer, imageKey, imageFile.mimetype);
 
-    await s3Client.send(uploadCommand);
-
-    // Save S3 key in user profile
+    // Save key in user profile
     user.profileImage = imageKey;
     await user.save();
 
     // Return presigned URL for immediate use
     let profileImageUrl = null;
     try {
-      profileImageUrl = await getobject(imageKey);
+      profileImageUrl = await getPresignedUrl(imageKey);
     } catch (urlErr) {
       console.error('Error generating presigned URL:', urlErr);
     }
@@ -1447,7 +1442,7 @@ router.put('/profile', authenticate, async (req, res) => {
       const fileExtension = req.body.imageFileName.split('.').pop();
       imageKey = `images/user/${user._id}/profile/${uuidv4()}.${fileExtension}`;
       
-      presignedUrl = await putobject(imageKey, req.body.imageContentType);
+      presignedUrl = await generateUploadUrl(imageKey, req.body.imageContentType);
       
       user.profileImage = imageKey;
     }

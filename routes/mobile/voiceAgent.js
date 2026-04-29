@@ -7,7 +7,7 @@ import VoiceConfig from '../../models/voiceConfig.js';
 import Agent from '../../models/Agent.js';
 import User from '../../models/User.js';
 import Client from '../../models/Client.js';
-import { uploadBufferToS3 } from '../../utils/s3.js';
+import { uploadBuffer } from '../../utils/storage.js';
 
 const DEFAULT_AGENT_VOICE_CCR = 0.5;
 
@@ -368,8 +368,8 @@ export const handleVoiceAgentWebSocket = (wss) => {
         }
 
         // S3 upload — fire-and-forget, never block the turn
-        if (aiChunks.length > 0 && process.env.AWS_BUCKET_NAME && currentTurnState !== TURN_INTERRUPTED) {
-          uploadBufferToS3(Buffer.concat(aiChunks), VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg')
+        if (aiChunks.length > 0 && (process.env.R2_BUCKET || (process.env.R2_BUCKET || process.env.AWS_BUCKET_NAME)) && currentTurnState !== TURN_INTERRUPTED) {
+          uploadBuffer(Buffer.concat(aiChunks), VOICE_AGENT_AUDIO_FOLDER, `ai_${chat?._id}_${Date.now()}.mp3`, 'audio/mpeg')
             .then(({ key }) => { audioKey = key; })
             .catch(e => console.warn('[VoiceAgent] S3 upload failed (AI audio):', e.message));
         }
@@ -413,9 +413,9 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
       // S3 upload — fire-and-forget, capture key asynchronously
       let userAudioKey = null;
-      if (userAudioChunks.length > 0 && process.env.AWS_BUCKET_NAME) {
+      if (userAudioChunks.length > 0 && (process.env.R2_BUCKET || process.env.AWS_BUCKET_NAME)) {
         const chunksToUpload = userAudioChunks.splice(0);
-        uploadBufferToS3(pcmToWav(Buffer.concat(chunksToUpload)), VOICE_AGENT_AUDIO_FOLDER, `user_${chat._id}_${Date.now()}.wav`, 'audio/wav')
+        uploadBuffer(pcmToWav(Buffer.concat(chunksToUpload)), VOICE_AGENT_AUDIO_FOLDER, `user_${chat._id}_${Date.now()}.wav`, 'audio/wav')
           .then(({ key }) => { userAudioKey = key; })
           .catch(e => console.warn('[VoiceAgent] S3 upload failed (user audio):', e.message));
       }

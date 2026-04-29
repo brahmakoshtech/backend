@@ -1,7 +1,5 @@
 import express from 'express';
 import multer from 'multer';
-import { PutObjectCommand 
-      } from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
 import Partner from '../../models/Partner.js';
 import ServiceCreditLedger from '../../models/ServiceCreditLedger.js';
@@ -15,7 +13,7 @@ import {
   sendEmailOTP,
   sendMobileOTP,
 } from '../../utils/otp.js';
-import { putobject, getobject, s3Client, deleteObject } from '../../utils/s3.js';
+import { uploadBuffer, getPresignedUrl, deleteFile } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -676,35 +674,28 @@ router.post('/register/step4', authenticate, upload.any(), async (req, res) => {
     // Delete old picture if exists and not a Google profile picture
     if (partner.profilePicture && !partner.profilePicture.startsWith('http')) {
       try {
-        await deleteObject(partner.profilePicture);
+        await deleteFile(partner.profilePicture);
       } catch (deleteErr) {
         console.error('Error deleting old profile picture:', deleteErr);
       }
     }
 
-    // Generate unique key and upload new image to S3
+    // Generate unique key and upload new image
     const fileExtension = imageFile.originalname.split('.').pop() || 'jpg';
     const imageKey = `images/partner/${partner._id}/profile/${uuidv4()}.${fileExtension}`;
 
-    const uploadCommand = new PutObjectCommand({
-      Bucket: process.env.AWS_BUCKET_NAME,
-      Key: imageKey,
-      Body: imageFile.buffer,
-      ContentType: imageFile.mimetype,
-    });
+    await uploadBuffer(imageFile.buffer, imageKey, imageFile.mimetype);
 
-    await s3Client.send(uploadCommand);
-
-    // Save S3 key in partner profile (key + key field for consistency with experts/crud)
+    // Save key in partner profile
     partner.profilePicture = imageKey;
     partner.profilePictureKey = imageKey;
-    partner.registrationStep = 4; // Mark Step 4 as complete
+    partner.registrationStep = 4;
     await partner.save();
 
     // Return presigned URL for immediate use
     let profilePictureUrl = null;
     try {
-      profilePictureUrl = await getobject(imageKey);
+      profilePictureUrl = await getPresignedUrl(imageKey);
     } catch (urlErr) {
       console.error('Error generating presigned URL:', urlErr);
     }
@@ -772,26 +763,18 @@ router.post('/profile/picture', authenticate, upload.single('image'), async (req
     // Delete old picture if exists and not a Google profile picture
     if (partner.profilePicture && !partner.profilePicture.startsWith('http')) {
       try {
-        await deleteObject(partner.profilePicture);
+        await deleteFile(partner.profilePicture);
       } catch (deleteErr) {
         console.error('Error deleting old profile picture:', deleteErr);
       }
     }
 
-    // Generate unique key and upload new image to S3
+    // Generate unique key and upload new image
     const fileExtension = imageFile.originalname.split('.').pop() || 'jpg';
     const imageKey = `images/partner/${partner._id}/profile/${uuidv4()}.${fileExtension}`;
 
-    const uploadCommand = new PutObjectCommand({
-      Bucket: process.env.AWS_BUCKET_NAME,
-      Key: imageKey,
-      Body: imageFile.buffer,
-      ContentType: imageFile.mimetype,
-    });
+    await uploadBuffer(imageFile.buffer, imageKey, imageFile.mimetype);
 
-    await s3Client.send(uploadCommand);
-
-    // Save S3 key in partner profile (key + key field for consistency with experts/crud)
     partner.profilePicture = imageKey;
     partner.profilePictureKey = imageKey;
     await partner.save();
@@ -799,7 +782,7 @@ router.post('/profile/picture', authenticate, upload.single('image'), async (req
     // Return presigned URL for immediate use
     let profilePictureUrl = null;
     try {
-      profilePictureUrl = await getobject(imageKey);
+      profilePictureUrl = await getPresignedUrl(imageKey);
     } catch (urlErr) {
       console.error('Error generating presigned URL:', urlErr);
     }
@@ -1070,13 +1053,12 @@ router.get('/profile', authenticate, async (req, res) => {
     let profilePictureUrl = null;
     if (partner.profilePicture && !partner.profilePicture.startsWith('http')) {
       try {
-        const { getobject } = await import('../../utils/s3.js');
-        profilePictureUrl = await getobject(partner.profilePicture);
+        profilePictureUrl = await getPresignedUrl(partner.profilePicture);
       } catch (error) {
         console.error('Error generating profile picture URL:', error);
       }
     } else if (partner.profilePicture) {
-      profilePictureUrl = partner.profilePicture; // Google picture URL
+      profilePictureUrl = partner.profilePicture;
     }
 
     const partnerData = partner.toObject();

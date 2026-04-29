@@ -15,6 +15,13 @@ const appSettingsSchema = new mongoose.Schema({
     default: null,
     trim: true
   },
+  // Storage mode: s3_only | r2_only | both
+  storageMode: {
+    type: String,
+    enum: ['s3_only', 'r2_only', 'both'],
+    default: 'r2_only'
+  },
+
   // Stripe / credits settings (managed from admin dashboard)
   stripeCreditsPerUnit: {
     // How many credits for 1 currency unit (e.g. 1 INR = 2 credits)

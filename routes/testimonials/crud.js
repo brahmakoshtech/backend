@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import Testimonial from '../../models/Testimonial.js';
 import Client from '../../models/Client.js';
 import { authenticate } from '../../middleware/auth.js';
-import { getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { getPresignedUrl } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -76,10 +76,9 @@ router.get('/', authenticate, async (req, res) => {
         // Generate presigned URL for image if exists
         if (testimonialObj.imageKey || testimonialObj.image) {
           try {
-            // Use stored key if available, otherwise extract from URL
-            const imageKey = testimonialObj.imageKey || extractS3KeyFromUrl(testimonialObj.image);
+            const imageKey = testimonialObj.imageKey || testimonialObj.image;
             if (imageKey) {
-              testimonialObj.image = await getobject(imageKey);
+              testimonialObj.image = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -139,10 +138,9 @@ router.get('/:id', authenticate, async (req, res) => {
     // Generate presigned URL for image if exists
     if (obj.imageKey || obj.image) {
       try {
-        // Use stored key if available, otherwise extract from URL
-        const imageKey = obj.imageKey || extractS3KeyFromUrl(obj.image);
+        const imageKey = obj.imageKey || obj.image;
         if (imageKey) {
-          obj.image = await getobject(imageKey);
+          obj.image = await getPresignedUrl(imageKey);
         }
       } catch (error) {
         console.error('Error generating image presigned URL:', error);

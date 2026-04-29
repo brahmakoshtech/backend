@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import Sponsor from '../../models/Sponsor.js';
 import Client from '../../models/Client.js';
 import { authenticate } from '../../middleware/auth.js';
-import { getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { getPresignedUrl } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -79,7 +79,7 @@ router.get('/', authenticate, async (req, res) => {
             // Use stored key if available, otherwise extract from URL
             const logoKey = sponsorObj.logoKey || extractS3KeyFromUrl(sponsorObj.logo);
             if (logoKey) {
-              sponsorObj.logo = await getobject(logoKey);
+              sponsorObj.logo = await getPresignedUrl(logoKey);
             }
           } catch (error) {
             console.error('Error generating logo presigned URL:', error);
@@ -145,7 +145,7 @@ router.get('/:id', authenticate, async (req, res) => {
         // Use stored key if available, otherwise extract from URL
         const logoKey = obj.logoKey || extractS3KeyFromUrl(obj.logo);
         if (logoKey) {
-          obj.logo = await getobject(logoKey);
+          obj.logo = await getPresignedUrl(logoKey);
         }
       } catch (error) {
         console.error('Error generating logo presigned URL:', error);

@@ -2,7 +2,7 @@ import express from 'express';
 import Testimonial from '../../models/Testimonial.js';
 import { authenticate } from '../../middleware/auth.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3 } from '../../utils/s3.js';
+import { uploadFile, deleteFile } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -80,10 +80,10 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
       });
     }
 
-    // Upload new image to S3
-    const uploadResult = await uploadToS3(req.file, 'testimonials');
-    const imageUrl = uploadResult.url;
+    // Upload image using storage wrapper (R2/S3/both based on settings)
+    const uploadResult = await uploadFile(req.file, 'testimonials');
     const imageKey = uploadResult.key;
+    const imageUrl = uploadResult.url || imageKey;
 
     // Update testimonial with new image URL and key
     testimonial.image = imageUrl;

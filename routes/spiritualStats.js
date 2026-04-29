@@ -198,7 +198,7 @@ const getUserStats = async (req, res) => {
     }
     
     // Get recent activities based on role
-    const { getobject } = await import('../utils/s3.js');
+    const { getPresignedUrl } = await import('../utils/storage.js');
     const recentActivities = await Promise.all(sessions.map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
@@ -216,10 +216,10 @@ const getUserStats = async (req, res) => {
       
       try {
         if (session.videoKey) {
-          videoUrl = await getobject(session.videoKey, 604800); // 7 days
+          videoUrl = await getPresignedUrl(session.videoKey, 604800); // 7 days
         }
         if (session.audioKey) {
-          audioUrl = await getobject(session.audioKey, 604800); // 7 days
+          audioUrl = await getPresignedUrl(session.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for session:', session._id, error);
@@ -442,7 +442,7 @@ const getAllUsersStats = async (req, res) => {
     }
     
     // Generate presigned URLs for video/audio
-    const { getobject } = await import('../utils/s3.js');
+    const { getPresignedUrl } = await import('../utils/storage.js');
     const recentActivities = await Promise.all(sessions.map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
@@ -460,10 +460,10 @@ const getAllUsersStats = async (req, res) => {
       
       try {
         if (session.videoKey) {
-          videoUrl = await getobject(session.videoKey, 604800); // 7 days
+          videoUrl = await getPresignedUrl(session.videoKey, 604800); // 7 days
         }
         if (session.audioKey) {
-          audioUrl = await getobject(session.audioKey, 604800); // 7 days
+          audioUrl = await getPresignedUrl(session.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for session:', session._id, error);
@@ -658,7 +658,7 @@ router.get('/user/:userId', async (req, res) => {
     });
     
     // Get recent activities for this user
-    const { getobject } = await import('../utils/s3.js');
+    const { getPresignedUrl } = await import('../utils/storage.js');
     const recentActivities = await Promise.all(sessions.map(async session => {
       const completionPercentage = session.completionPercentage !== undefined ? session.completionPercentage :
                                   (session.targetDuration > 0 ? Math.round((session.actualDuration / session.targetDuration) * 100) : 100);
@@ -676,10 +676,10 @@ router.get('/user/:userId', async (req, res) => {
       
       try {
         if (session.videoKey) {
-          videoUrl = await getobject(session.videoKey, 604800); // 7 days
+          videoUrl = await getPresignedUrl(session.videoKey, 604800); // 7 days
         }
         if (session.audioKey) {
-          audioUrl = await getobject(session.audioKey, 604800); // 7 days
+          audioUrl = await getPresignedUrl(session.audioKey, 604800); // 7 days
         }
       } catch (error) {
         console.error('Error generating presigned URLs for session:', session._id, error);

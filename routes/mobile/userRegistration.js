@@ -1,8 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import User from '../../models/User.js';
-import { getobject, s3Client } from '../../utils/s3.js';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { getPresignedUrl, uploadBuffer } from '../../utils/storage.js';
 import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
@@ -51,25 +50,15 @@ router.post('/register-with-image', upload.single('image'), async (req, res) => 
 
     let profileImageKey = null;
 
-    // Upload image to S3 if provided
+    // Upload image if provided
     if (imageFile) {
       try {
-        // Generate unique key for the image
         const fileExtension = imageFile.originalname.split('.').pop() || 'jpg';
         const imageKey = `user-profiles/${uuidv4()}.${fileExtension}`;
-
-        // Upload to S3 directly using the existing s3Client
-        const uploadCommand = new PutObjectCommand({
-          Bucket: process.env.AWS_BUCKET_NAME,
-          Key: imageKey,
-          Body: imageFile.buffer,
-          ContentType: imageFile.mimetype,
-        });
-
-        await s3Client.send(uploadCommand);
+        await uploadBuffer(imageFile.buffer, imageKey, imageFile.mimetype);
         profileImageKey = imageKey;
-      } catch (s3Error) {
-        console.error('Error uploading image to S3:', s3Error);
+      } catch (uploadError) {
+        console.error('Error uploading image:', uploadError);
         return res.status(500).json({
           success: false,
           message: 'Failed to upload image. Please try again.'
@@ -100,7 +89,7 @@ router.post('/register-with-image', upload.single('image'), async (req, res) => 
     let profileImageUrl = null;
     if (profileImageKey) {
       try {
-        profileImageUrl = await getobject(profileImageKey);
+        profileImageUrl = await getPresignedUrl(profileImageKey);
       } catch (error) {
         console.error('Error generating presigned URL for profile image:', error);
         // Continue without image URL

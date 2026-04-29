@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import express from 'express';
 import SpiritualReward from '../models/SpiritualReward.js';
 import User from '../models/User.js';
-import { generateUploadUrl, deleteFromS3, getobject } from '../utils/s3.js';
+import { generateUploadUrl, deleteFile, getPresignedUrl } from '../utils/storage.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
@@ -63,7 +63,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
           photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
         }
         if (photoKey) {
-          rewardObj.image = await getobject(photoKey);
+          rewardObj.image = await getPresignedUrl(photoKey);
         }
       } catch (error) {
         console.error('Failed to generate photo presigned URL:', error);
@@ -77,7 +77,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
           bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
         }
         if (bannerKey) {
-          rewardObj.banner = await getobject(bannerKey);
+          rewardObj.banner = await getPresignedUrl(bannerKey);
         }
       } catch (error) {
         console.error('Failed to generate banner presigned URL:', error);
@@ -148,7 +148,7 @@ router.get('/', authenticateToken, async (req, res) => {
             
             if (photoKey) {
               rewardObj.photoKey = photoKey;
-              rewardObj.image = await getobject(photoKey);
+              rewardObj.image = await getPresignedUrl(photoKey);
             }
           } catch (error) {
             console.error('Failed to generate photo presigned URL:', error);
@@ -167,7 +167,7 @@ router.get('/', authenticateToken, async (req, res) => {
             
             if (bannerKey) {
               rewardObj.bannerKey = bannerKey;
-              rewardObj.banner = await getobject(bannerKey);
+              rewardObj.banner = await getPresignedUrl(bannerKey);
             }
           } catch (error) {
             console.error('Failed to generate banner presigned URL:', error);
@@ -373,7 +373,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     // Delete files from S3 if they exist
     if (reward.photoKey) {
       try {
-        await deleteFromS3(reward.photoKey);
+        await deleteFile(reward.photoKey);
       } catch (error) {
         console.error('Failed to delete photo from S3:', error);
       }
@@ -381,7 +381,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
     if (reward.bannerKey) {
       try {
-        await deleteFromS3(reward.bannerKey);
+        await deleteFile(reward.bannerKey);
       } catch (error) {
         console.error('Failed to delete banner from S3:', error);
       }

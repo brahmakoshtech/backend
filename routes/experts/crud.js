@@ -4,7 +4,7 @@ import Partner from '../../models/Partner.js';
 import Client from '../../models/Client.js';
 import Review from '../../models/Review.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { uploadFile, deleteFile, getPresignedUrl } from '../../utils/storage.js';
 import { authenticate } from '../../middleware/auth.js';
 
 const router = express.Router();
@@ -151,7 +151,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = expertObj.profilePictureKey || extractS3KeyFromUrl(expertObj.profilePicture);
             if (imageKey) {
-              expertObj.profilePicture = await getobject(imageKey, 604800);
+              expertObj.profilePicture = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating profile photo presigned URL:', error);
@@ -161,7 +161,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = expertObj.backgroundBannerKey || extractS3KeyFromUrl(expertObj.backgroundBanner);
             if (imageKey) {
-              expertObj.backgroundBanner = await getobject(imageKey, 604800);
+              expertObj.backgroundBanner = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating banner presigned URL:', error);
@@ -223,7 +223,7 @@ router.get('/:id', authenticate, async (req, res) => {
       try {
         const imageKey = expertObj.profilePictureKey || extractS3KeyFromUrl(expertObj.profilePicture);
         if (imageKey) {
-          expertObj.profilePicture = await getobject(imageKey, 604800);
+          expertObj.profilePicture = await getPresignedUrl(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating profile photo presigned URL:', error);
@@ -233,7 +233,7 @@ router.get('/:id', authenticate, async (req, res) => {
       try {
         const imageKey = expertObj.backgroundBannerKey || extractS3KeyFromUrl(expertObj.backgroundBanner);
         if (imageKey) {
-          expertObj.backgroundBanner = await getobject(imageKey, 604800);
+          expertObj.backgroundBanner = await getPresignedUrl(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating banner presigned URL:', error);
@@ -353,7 +353,7 @@ router.post('/:id/upload-profile-photo', authenticate, upload.single('profilePho
       });
     }
 
-    const uploadResult = await uploadToS3(req.file, 'experts/profile-photos');
+    const uploadResult = await uploadFile(req.file, 'experts/profile-photos');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 
@@ -412,7 +412,7 @@ router.post('/:id/upload-banner', authenticate, upload.single('backgroundBanner'
       });
     }
 
-    const uploadResult = await uploadToS3(req.file, 'experts/banners');
+    const uploadResult = await uploadFile(req.file, 'experts/banners');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 

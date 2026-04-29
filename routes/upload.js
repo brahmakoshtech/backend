@@ -1,104 +1,48 @@
 import express from 'express';
-import { putobject, getobject, deleteObject } from '../utils/s3.js';
 import { authenticate } from '../middleware/auth.js';
 import { v4 as uuidv4 } from 'uuid';
+import { getPresignedUrl, deleteFile, generateUploadUrl } from '../utils/storage.js';
 
 const router = express.Router();
-
-// All routes require authentication
 router.use(authenticate);
 
-// Generate presigned URL for image upload
+// Generate presigned URL for upload (PUT)
 router.post('/presigned-url', async (req, res) => {
   try {
     const { fileName, contentType } = req.body;
-
     if (!fileName || !contentType) {
-      return res.status(400).json({
-        success: false,
-        message: 'fileName and contentType are required'
-      });
+      return res.status(400).json({ success: false, message: 'fileName and contentType are required' });
     }
-
-    // Generate unique key for the file
-    const fileExtension = fileName.split('.').pop();
-    const key = `images/${req.user.role}/${req.user._id}/${uuidv4()}.${fileExtension}`;
-
-    // Generate presigned URL
-    const presignedUrl = await putobject(key, contentType);
-
-    res.json({
-      success: true,
-      data: {
-        presignedUrl,
-        key
-      }
-    });
+    const folder = `images/${req.user.role}/${req.user._id}`;
+    const { uploadUrl, key } = await generateUploadUrl(fileName, contentType, folder);
+    res.json({ success: true, data: { presignedUrl: uploadUrl, key } });
   } catch (error) {
     console.error('Error generating presigned URL:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to generate presigned URL'
-    });
+    res.status(500).json({ success: false, message: error.message || 'Failed to generate presigned URL' });
   }
 });
 
-// Get presigned URL for viewing an image
+// Get presigned URL for viewing a file
 router.get('/presigned-url/:key(*)', async (req, res) => {
   try {
-    const { key } = req.params;
-    
-    // Debug logging - detailed user info
-    const clientId = req.user?._id || req.user?.id || null;
-    console.log('[Upload GET Presigned URL]', {
-      key: decodeURIComponent(key),
-      userRole: req.user?.role,
-      userId: req.user?._id?.toString(),
-      userIdAlt: req.user?.id,
-      clientId: clientId?.toString(),
-      userEmail: req.user?.email,
-      hasUser: !!req.user,
-      userType: req.user?.constructor?.name,
-      userKeys: req.user ? Object.keys(req.user) : [],
-      fullUser: req.user ? JSON.stringify(req.user, null, 2) : 'No user'
-    });
-    
-    const presignedUrl = await getobject(decodeURIComponent(key));
-
-    res.json({
-      success: true,
-      data: {
-        presignedUrl
-      }
-    });
+    const key = decodeURIComponent(req.params.key);
+    const presignedUrl = await getPresignedUrl(key);
+    res.json({ success: true, data: { presignedUrl } });
   } catch (error) {
     console.error('Error generating get presigned URL:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to generate presigned URL'
-    });
+    res.status(500).json({ success: false, message: error.message || 'Failed to generate presigned URL' });
   }
 });
 
-// Delete an image
+// Delete a file
 router.delete('/:key(*)', async (req, res) => {
   try {
-    const { key } = req.params;
-    
-    await deleteObject(key);
-
-    res.json({
-      success: true,
-      message: 'Image deleted successfully'
-    });
+    await deleteFile(req.params.key);
+    res.json({ success: true, message: 'File deleted successfully' });
   } catch (error) {
-    console.error('Error deleting image:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to delete image'
-    });
+    console.error('Error deleting file:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to delete file' });
   }
 });
 
 export default router;
-

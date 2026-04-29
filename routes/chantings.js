@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import Chanting from '../models/Chanting.js';
 import Client from '../models/Client.js';
 import { authenticate } from '../middleware/auth.js';
-import { deleteFromS3, generateUploadUrl, extractS3KeyFromUrl } from '../utils/s3.js';
+import { deleteFile, generateUploadUrl, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -131,8 +131,6 @@ router.get('/', authenticate, async (req, res) => {
       clientId: c.clientId?.toString()
     })));
 
-    // Generate presigned URLs for videos and images
-    const { getobject } = await import('../utils/s3.js');
     const chantingsWithUrls = await Promise.all(
       chantings.map(async (chanting) => {
         const chantingObj = withClientIdString(chanting);
@@ -143,7 +141,7 @@ router.get('/', authenticate, async (req, res) => {
             // Use stored key if available, otherwise extract from URL
             const videoKey = chantingObj.videoKey || extractS3KeyFromUrl(chantingObj.videoUrl);
             if (videoKey) {
-              chantingObj.videoUrl = await getobject(videoKey);
+              chantingObj.videoUrl = await getPresignedUrl(videoKey);
             }
           } catch (error) {
             console.error('Error generating video presigned URL:', error);
@@ -156,7 +154,7 @@ router.get('/', authenticate, async (req, res) => {
             // Use stored key if available, otherwise extract from URL
             const imageKey = chantingObj.imageKey || extractS3KeyFromUrl(chantingObj.imageUrl);
             if (imageKey) {
-              chantingObj.imageUrl = await getobject(imageKey);
+              chantingObj.imageUrl = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -209,38 +207,11 @@ router.get('/:id', authenticate, async (req, res) => {
     }
 
     const chantingObj = withClientIdString(chanting);
-    
-    // Generate presigned URLs
-    const { getobject } = await import('../utils/s3.js');
-    
-    if (chantingObj.videoKey || chantingObj.videoUrl) {
-      try {
-        // Use stored key if available, otherwise extract from URL
-        const videoKey = chantingObj.videoKey || extractS3KeyFromUrl(chantingObj.videoUrl);
-        if (videoKey) {
-          chantingObj.videoUrl = await getobject(videoKey);
-        }
-      } catch (error) {
-        console.error('Error generating video presigned URL:', error);
-      }
-    }
-    
-    if (chantingObj.imageKey || chantingObj.imageUrl) {
-      try {
-        // Use stored key if available, otherwise extract from URL
-        const imageKey = chantingObj.imageKey || extractS3KeyFromUrl(chantingObj.imageUrl);
-        if (imageKey) {
-          chantingObj.imageUrl = await getobject(imageKey);
-        }
-      } catch (error) {
-        console.error('Error generating image presigned URL:', error);
-      }
-    }
-
-    res.json({
-      success: true,
-      data: chantingObj
-    });
+    const cvk = chantingObj.videoKey || extractS3KeyFromUrl(chantingObj.videoUrl);
+    if (cvk) { try { chantingObj.videoUrl = await getPresignedUrl(cvk); } catch(e) {} }
+    const cik = chantingObj.imageKey || extractS3KeyFromUrl(chantingObj.imageUrl);
+    if (cik) { try { chantingObj.imageUrl = await getPresignedUrl(cik); } catch(e) {} }
+    res.json({ success: true, data: chantingObj });
   } catch (error) {
     console.error('Error fetching chanting:', error);
     res.status(500).json({
@@ -390,9 +361,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         try {
           // Delete using key if available, otherwise use URL
           if (chanting.videoKey) {
-            await deleteFromS3(chanting.videoKey);
+            await deleteFile(chanting.videoKey);
           } else {
-            await deleteFromS3(chanting.videoUrl);
+            await deleteFile(chanting.videoUrl);
           }
           console.log('✅ Old video deleted from S3');
         } catch (error) {
@@ -409,9 +380,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         try {
           // Delete using key if available, otherwise use URL
           if (chanting.imageKey) {
-            await deleteFromS3(chanting.imageKey);
+            await deleteFile(chanting.imageKey);
           } else {
-            await deleteFromS3(chanting.imageUrl);
+            await deleteFile(chanting.imageUrl);
           }
           console.log('✅ Old image deleted from S3');
         } catch (error) {
@@ -475,7 +446,7 @@ router.delete('/:id', authenticate, async (req, res) => {
     // Delete files from S3 (prefer keys over URLs)
     if (chanting.videoKey || chanting.videoUrl) {
       try {
-        await deleteFromS3(chanting.videoKey || chanting.videoUrl);
+        await deleteFile(chanting.videoKey || chanting.videoUrl);
         console.log('✅ Video deleted from S3');
       } catch (error) {
         console.error('Failed to delete video from S3:', error);
@@ -483,7 +454,7 @@ router.delete('/:id', authenticate, async (req, res) => {
     }
     if (chanting.imageKey || chanting.imageUrl) {
       try {
-        await deleteFromS3(chanting.imageKey || chanting.imageUrl);
+        await deleteFile(chanting.imageKey || chanting.imageUrl);
         console.log('✅ Image deleted from S3');
       } catch (error) {
         console.error('Failed to delete image from S3:', error);

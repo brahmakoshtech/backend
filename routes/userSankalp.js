@@ -21,7 +21,7 @@ router.get('/', authenticate, async (req, res) => {
       .populate({ path: 'clientId', select: 'clientId' })
       .sort({ createdAt: -1 });
 
-    const { getobject } = await import('../utils/s3.js');
+    const { getPresignedUrl } = await import('../utils/storage.js');
     const sankalpasWithUrls = await Promise.all(
       userSankalpas.map(async (us) => {
         const obj = us.toObject();
@@ -35,7 +35,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = obj.sankalpId.bannerImageKey || obj.sankalpId.bannerImage;
             if (imageKey) {
-              obj.sankalpId.bannerImage = await getobject(imageKey);
+              obj.sankalpId.bannerImage = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating presigned URL:', error);
@@ -99,8 +99,8 @@ router.post('/join', authenticate, async (req, res) => {
       // Generate presigned URL for banner
       if (response.sankalpId?.bannerImageKey) {
         try {
-          const { getobject } = await import('../utils/s3.js');
-          response.sankalpId.bannerImage = await getobject(response.sankalpId.bannerImageKey);
+          const { getPresignedUrl } = await import('../utils/storage.js');
+          response.sankalpId.bannerImage = await getPresignedUrl(response.sankalpId.bannerImageKey);
         } catch (error) {
           console.error('Error generating presigned URL:', error);
         }
@@ -170,8 +170,8 @@ router.post('/join', authenticate, async (req, res) => {
     // Generate presigned URL for banner
     if (response.sankalpId?.bannerImageKey) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        response.sankalpId.bannerImage = await getobject(response.sankalpId.bannerImageKey);
+        const { getPresignedUrl } = await import('../utils/storage.js');
+        response.sankalpId.bannerImage = await getPresignedUrl(response.sankalpId.bannerImageKey);
       } catch (error) {
         console.error('Error generating presigned URL:', error);
       }
@@ -213,7 +213,7 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
       .sort({ createdAt: -1 });
 
     // Generate presigned URLs for banners
-    const { getobject } = await import('../utils/s3.js');
+    const { getPresignedUrl } = await import('../utils/storage.js');
     const sankalpasWithUrls = await Promise.all(
       userSankalpas.map(async (us) => {
         const obj = us.toObject();
@@ -227,7 +227,7 @@ router.get('/my-sankalpas', authenticate, async (req, res) => {
           try {
             const imageKey = obj.sankalpId.bannerImageKey || obj.sankalpId.bannerImage;
             if (imageKey) {
-              obj.sankalpId.bannerImage = await getobject(imageKey);
+              obj.sankalpId.bannerImage = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating presigned URL:', error);
@@ -331,10 +331,10 @@ router.get('/:id', authenticate, async (req, res) => {
     // Generate presigned URL for banner
     if (obj.sankalpId?.bannerImageKey || obj.sankalpId?.bannerImage) {
       try {
-        const { getobject } = await import('../utils/s3.js');
+        const { getPresignedUrl } = await import('../utils/storage.js');
         const imageKey = obj.sankalpId.bannerImageKey || obj.sankalpId.bannerImage;
         if (imageKey) {
-          obj.sankalpId.bannerImage = await getobject(imageKey);
+          obj.sankalpId.bannerImage = await getPresignedUrl(imageKey);
         }
       } catch (error) {
         console.error('Error generating presigned URL:', error);
@@ -547,8 +547,8 @@ router.get('/:id/progress', authenticate, async (req, res) => {
     // Generate presigned URL for banner
     if (obj.sankalpId?.bannerImageKey) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        obj.sankalpId.bannerImage = await getobject(obj.sankalpId.bannerImageKey);
+        const { getPresignedUrl } = await import('../utils/storage.js');
+        obj.sankalpId.bannerImage = await getPresignedUrl(obj.sankalpId.bannerImageKey);
       } catch (error) {
         console.error('Error generating presigned URL:', error);
       }

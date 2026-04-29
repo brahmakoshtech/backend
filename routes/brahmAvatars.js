@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import BrahmAvatar from '../models/BrahmAvatar.js';
 import Client from '../models/Client.js';
 import { authenticate } from '../middleware/auth.js';
-import { deleteFromS3, generateUploadUrl, extractS3KeyFromUrl } from '../utils/s3.js';
+import { deleteFile, generateUploadUrl, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -145,7 +145,6 @@ router.get('/', authenticate, async (req, res) => {
     console.log('🎬 Found avatars:', brahmAvatars.length);
 
     // Generate presigned URLs for videos and images
-    const { getobject } = await import('../utils/s3.js');
     const avatarsWithUrls = await Promise.all(
       brahmAvatars.map(async (avatar) => {
         const avatarObj = withClientIdString(avatar);
@@ -155,7 +154,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.video);
             if (videoKey) {
-              const videoUrl = await getobject(videoKey);
+              const videoUrl = await getPresignedUrl(videoKey);
               avatarObj.videoUrl = videoUrl;
               avatarObj.video = videoUrl; // Dual field for compatibility
             }
@@ -169,7 +168,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.image);
             if (imageKey) {
-              const imageUrl = await getobject(imageKey);
+              const imageUrl = await getPresignedUrl(imageKey);
               avatarObj.imageUrl = imageUrl;
               avatarObj.image = imageUrl; // Dual field for compatibility
             }
@@ -227,13 +226,12 @@ router.get('/:id', authenticate, async (req, res) => {
     const avatarObj = withClientIdString(brahmAvatar);
     
     // Generate presigned URLs
-    const { getobject } = await import('../utils/s3.js');
     
     if (avatarObj.videoKey || avatarObj.video) {
       try {
         const videoKey = avatarObj.videoKey || extractS3KeyFromUrl(avatarObj.video);
         if (videoKey) {
-          const videoUrl = await getobject(videoKey);
+          const videoUrl = await getPresignedUrl(videoKey);
           avatarObj.videoUrl = videoUrl;
           avatarObj.video = videoUrl;
         }
@@ -246,7 +244,7 @@ router.get('/:id', authenticate, async (req, res) => {
       try {
         const imageKey = avatarObj.imageKey || extractS3KeyFromUrl(avatarObj.image);
         if (imageKey) {
-          const imageUrl = await getobject(imageKey);
+          const imageUrl = await getPresignedUrl(imageKey);
           avatarObj.imageUrl = imageUrl;
           avatarObj.image = imageUrl;
         }
@@ -331,7 +329,6 @@ router.post('/direct', authenticate, async (req, res) => {
     await brahmAvatar.save();
     
     // Generate presigned URLs for response
-    const { getobject } = await import('../utils/s3.js');
     const createdObj = withClientIdString(await brahmAvatar.populate('clientId', 'clientId'));
     
     // Add presigned URLs with dual fields
@@ -339,7 +336,7 @@ router.post('/direct', authenticate, async (req, res) => {
       try {
         const videoKey = createdObj.videoKey || extractS3KeyFromUrl(createdObj.video);
         if (videoKey) {
-          const videoUrl = await getobject(videoKey);
+          const videoUrl = await getPresignedUrl(videoKey);
           createdObj.videoUrl = videoUrl;
           createdObj.video = videoUrl;
         }
@@ -352,7 +349,7 @@ router.post('/direct', authenticate, async (req, res) => {
       try {
         const imageKey = createdObj.imageKey || extractS3KeyFromUrl(createdObj.image);
         if (imageKey) {
-          const imageUrl = await getobject(imageKey);
+          const imageUrl = await getPresignedUrl(imageKey);
           createdObj.imageUrl = imageUrl;
           createdObj.image = imageUrl;
         }
@@ -416,9 +413,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       if (videoUrl && brahmAvatar.video && brahmAvatar.video !== videoUrl) {
         try {
           if (brahmAvatar.videoKey) {
-            await deleteFromS3(brahmAvatar.videoKey);
+            await deleteFile(brahmAvatar.videoKey);
           } else {
-            await deleteFromS3(brahmAvatar.video);
+            await deleteFile(brahmAvatar.video);
           }
         } catch (error) {
           console.error('Failed to delete old video:', error);
@@ -433,9 +430,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       if (imageUrl && brahmAvatar.image && brahmAvatar.image !== imageUrl) {
         try {
           if (brahmAvatar.imageKey) {
-            await deleteFromS3(brahmAvatar.imageKey);
+            await deleteFile(brahmAvatar.imageKey);
           } else {
-            await deleteFromS3(brahmAvatar.image);
+            await deleteFile(brahmAvatar.image);
           }
         } catch (error) {
           console.error('Failed to delete old image:', error);
@@ -448,7 +445,6 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     await brahmAvatar.save();
     
     // Generate presigned URLs for response
-    const { getobject } = await import('../utils/s3.js');
     const updatedObj = withClientIdString(await brahmAvatar.populate('clientId', 'clientId'));
     
     // Add presigned URLs with dual fields
@@ -456,7 +452,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       try {
         const videoKey = updatedObj.videoKey || extractS3KeyFromUrl(updatedObj.video);
         if (videoKey) {
-          const videoUrl = await getobject(videoKey);
+          const videoUrl = await getPresignedUrl(videoKey);
           updatedObj.videoUrl = videoUrl;
           updatedObj.video = videoUrl;
         }
@@ -469,7 +465,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       try {
         const imageKey = updatedObj.imageKey || extractS3KeyFromUrl(updatedObj.image);
         if (imageKey) {
-          const imageUrl = await getobject(imageKey);
+          const imageUrl = await getPresignedUrl(imageKey);
           updatedObj.imageUrl = imageUrl;
           updatedObj.image = imageUrl;
         }
@@ -521,14 +517,14 @@ router.delete('/:id', authenticate, async (req, res) => {
     // Delete files from S3 (prefer keys over URLs)
     if (brahmAvatar.videoKey || brahmAvatar.video) {
       try {
-        await deleteFromS3(brahmAvatar.videoKey || brahmAvatar.video);
+        await deleteFile(brahmAvatar.videoKey || brahmAvatar.video);
       } catch (error) {
         console.error('Failed to delete video from S3:', error);
       }
     }
     if (brahmAvatar.imageKey || brahmAvatar.image) {
       try {
-        await deleteFromS3(brahmAvatar.imageKey || brahmAvatar.image);
+        await deleteFile(brahmAvatar.imageKey || brahmAvatar.image);
       } catch (error) {
         console.error('Failed to delete image from S3:', error);
       }

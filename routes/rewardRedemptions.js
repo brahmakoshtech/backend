@@ -3,7 +3,7 @@ import RewardRedemption from '../models/RewardRedemption.js';
 import SpiritualReward from '../models/SpiritualReward.js';
 import User from '../models/User.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
-import { getobject } from '../utils/s3.js';
+import { getPresignedUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -125,7 +125,7 @@ router.get('/history', authenticateToken, async (req, res) => {
         
         if (redemptionObj.rewardId?.photoKey) {
           try {
-            redemptionObj.rewardId.image = await getobject(redemptionObj.rewardId.photoKey);
+            redemptionObj.rewardId.image = await getPresignedUrl(redemptionObj.rewardId.photoKey);
           } catch (error) {
             console.error('Failed to generate photo presigned URL:', error);
           }
@@ -133,7 +133,7 @@ router.get('/history', authenticateToken, async (req, res) => {
         
         if (redemptionObj.rewardId?.bannerKey) {
           try {
-            redemptionObj.rewardId.banner = await getobject(redemptionObj.rewardId.bannerKey);
+            redemptionObj.rewardId.banner = await getPresignedUrl(redemptionObj.rewardId.bannerKey);
           } catch (error) {
             console.error('Failed to generate banner presigned URL:', error);
           }

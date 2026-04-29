@@ -4,7 +4,7 @@ import multer from 'multer';
 import Sankalp from '../models/Sankalp.js';
 import Client from '../models/Client.js';
 import { authenticate } from '../middleware/authMiddleware.js';
-import { uploadToS3, deleteFromS3, generateUploadUrl, extractS3KeyFromUrl } from '../utils/s3.js';
+import { uploadFile, deleteFile, generateUploadUrl, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -145,7 +145,6 @@ router.get('/', async (req, res) => {
       sankalpas = [];
     }
 
-    const { getobject } = await import('../utils/s3.js');
     const sankalpasWithUrls = await Promise.all(
       sankalpas.map(async (sankalp) => {
         const sankalpObj = withClientIdString(sankalp);
@@ -153,7 +152,7 @@ router.get('/', async (req, res) => {
           try {
             const imageKey = sankalpObj.bannerImageKey || extractS3KeyFromUrl(sankalpObj.bannerImage);
             if (imageKey) {
-              sankalpObj.bannerImage = await getobject(imageKey);
+              sankalpObj.bannerImage = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating presigned URL:', error);
@@ -224,10 +223,9 @@ router.get('/:id', async (req, res) => {
     // Generate presigned URL for banner if exists
     if (sankalpObj.bannerImageKey || sankalpObj.bannerImage) {
       try {
-        const { getobject } = await import('../utils/s3.js');
-        const imageKey = sankalpObj.bannerImageKey || extractS3KeyFromUrl(sankalpObj.bannerImage);
+            const imageKey = sankalpObj.bannerImageKey || extractS3KeyFromUrl(sankalpObj.bannerImage);
         if (imageKey) {
-          sankalpObj.bannerImage = await getobject(imageKey);
+          sankalpObj.bannerImage = await getPresignedUrl(imageKey);
         }
       } catch (error) {
         console.error('Error generating presigned URL:', error);
@@ -356,7 +354,7 @@ router.put('/:id', authenticate, async (req, res) => {
     if (bannerImage) {
       if (sankalp.bannerImage && sankalp.bannerImage !== bannerImage) {
         try {
-          await deleteFromS3(sankalp.bannerImageKey || sankalp.bannerImage);
+          await deleteFile(sankalp.bannerImageKey || sankalp.bannerImage);
         } catch (error) {
           console.error('Failed to delete old banner:', error);
         }
@@ -409,7 +407,7 @@ router.delete('/:id', authenticate, async (req, res) => {
 
     if (sankalp.bannerImageKey || sankalp.bannerImage) {
       try {
-        await deleteFromS3(sankalp.bannerImageKey || sankalp.bannerImage);
+        await deleteFile(sankalp.bannerImageKey || sankalp.bannerImage);
       } catch (error) {
         console.error('Failed to delete banner from S3:', error);
       }

@@ -2,7 +2,7 @@ import express from 'express';
 import Sponsor from '../../models/Sponsor.js';
 import { authenticate } from '../../middleware/auth.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3 } from '../../utils/s3.js';
+import { uploadFile, deleteFile } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -81,7 +81,7 @@ router.post('/:id/upload-logo', authenticate, upload.single('logo'), async (req,
     }
 
     // Upload new logo to S3
-    const uploadResult = await uploadToS3(req.file, 'sponsors');
+    const uploadResult = await uploadFile(req.file, 'sponsors');
     const logoUrl = uploadResult.url;
     const logoKey = uploadResult.key;
 

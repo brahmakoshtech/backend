@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import SpiritualActivity from '../models/SpiritualActivity.js';
 import Client from '../models/Client.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../utils/s3.js';
+import { uploadFile, deleteFile, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -64,7 +64,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = activityObj.imageKey || extractS3KeyFromUrl(activityObj.image);
             if (imageKey) {
-              activityObj.image = await getobject(imageKey, 604800);
+              activityObj.image = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -98,7 +98,7 @@ router.get('/:id', authenticate, async (req, res) => {
       try {
         const imageKey = activityObj.imageKey || extractS3KeyFromUrl(activityObj.image);
         if (imageKey) {
-          activityObj.image = await getobject(imageKey, 604800);
+          activityObj.image = await getPresignedUrl(imageKey, 604800);
         }
       } catch (error) {
         console.error('Error generating image presigned URL:', error);
@@ -187,16 +187,15 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
       });
     }
 
-    const uploadResult = await uploadToS3(req.file, 'spiritual-activities/images');
-    const imageUrl = uploadResult.url;
+    const uploadResult = await uploadFile(req.file, 'spiritual-activities/images');
     const imageKey = uploadResult.key;
 
-    activity.image = imageUrl;
+    activity.image = uploadResult.url || null;
     activity.imageKey = imageKey;
     await activity.save();
 
     // Generate presigned URL for immediate use
-    const presignedUrl = await getobject(imageKey, 604800);
+    const presignedUrl = await getPresignedUrl(imageKey, 604800);
 
     res.json({
       success: true,
@@ -204,7 +203,6 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
       data: {
         imageUrl: presignedUrl,
         imageKey: imageKey,
-        clientId: activity.clientId?.clientId || activity.clientId
       }
     });
   } catch (error) {

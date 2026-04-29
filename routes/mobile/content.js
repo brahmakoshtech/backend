@@ -7,7 +7,7 @@ import SpiritualActivity from '../../models/SpiritualActivity.js';
 import SpiritualSession from '../../models/SpiritualSession.js';
 import { authenticateToken } from '../../middleware/auth.js';
 import mongoose from 'mongoose';
-import { getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { getPresignedUrl, extractS3KeyFromUrl } from '../../utils/storage.js';
 
 const router = express.Router();
 
@@ -57,7 +57,7 @@ router.get('/spiritual-checkin', authenticateToken, async (req, res) => {
           try {
             const imageKey = activityObj.imageKey || extractS3KeyFromUrl(activityObj.image);
             if (imageKey) {
-              activityObj.image = await getobject(imageKey, 604800);
+              activityObj.image = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);

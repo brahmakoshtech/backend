@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import BrandAsset from '../../models/BrandAsset.js';
 import Client from '../../models/Client.js';
 import multer from 'multer';
-import { uploadToS3, deleteFromS3, getobject, extractS3KeyFromUrl } from '../../utils/s3.js';
+import { uploadFile, deleteFile, getPresignedUrl } from '../../utils/storage.js';
 import { authenticate } from '../../middleware/auth.js';
 
 const router = express.Router();
@@ -109,7 +109,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = assetObj.brandLogoImageKey || extractS3KeyFromUrl(assetObj.brandLogoImage);
             if (imageKey) {
-              assetObj.brandLogoImage = await getobject(imageKey, 604800);
+              assetObj.brandLogoImage = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -119,7 +119,7 @@ router.get('/', authenticate, async (req, res) => {
           try {
             const imageKey = assetObj.backgroundLogoImageKey || extractS3KeyFromUrl(assetObj.backgroundLogoImage);
             if (imageKey) {
-              assetObj.backgroundLogoImage = await getobject(imageKey, 604800);
+              assetObj.backgroundLogoImage = await getPresignedUrl(imageKey, 604800);
             }
           } catch (error) {
             console.error('Error generating background image presigned URL:', error);
@@ -451,14 +451,14 @@ router.post('/:id/upload-image', authenticate, upload.single('brandLogoImage'), 
     // Delete old image if exists (prefer key over URL)
     if (brandAsset.brandLogoImageKey || brandAsset.brandLogoImage) {
       try {
-        await deleteFromS3(brandAsset.brandLogoImageKey || brandAsset.brandLogoImage);
+        await deleteFile(brandAsset.brandLogoImageKey || brandAsset.brandLogoImage);
       } catch (error) {
         console.warn('Failed to delete old image:', error.message);
       }
     }
 
     // Upload new image to S3
-    const uploadResult = await uploadToS3(req.file, 'brand-assets');
+    const uploadResult = await uploadFile(req.file, 'brand-assets');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 
@@ -537,14 +537,14 @@ router.post('/:id/upload-background-image', authenticate, upload.single('backgro
     // Delete old background image if exists
     if (brandAsset.backgroundLogoImageKey || brandAsset.backgroundLogoImage) {
       try {
-        await deleteFromS3(brandAsset.backgroundLogoImageKey || brandAsset.backgroundLogoImage);
+        await deleteFile(brandAsset.backgroundLogoImageKey || brandAsset.backgroundLogoImage);
       } catch (error) {
         console.warn('Failed to delete old background image:', error.message);
       }
     }
 
     // Upload new background image to S3
-    const uploadResult = await uploadToS3(req.file, 'brand-assets');
+    const uploadResult = await uploadFile(req.file, 'brand-assets');
     const imageUrl = uploadResult.url;
     const imageKey = uploadResult.key;
 

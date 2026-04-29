@@ -15,7 +15,8 @@ import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
-import { getobject, generateUploadUrl } from '../utils/s3.js';
+import { getobject, generateUploadUrl as s3GenerateUploadUrl } from '../utils/s3.js';
+import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
@@ -779,7 +780,7 @@ router.get('/conversations', authenticate, async (req, res) => {
         // Partner: profilePicture may be S3 key — use presigned URL so client can show image
         if (otherUser.profilePicture && !otherUser.profilePicture.startsWith('http')) {
           try {
-            const url = await getobject(otherUser.profilePicture);
+            const url = await getPresignedUrl(otherUser.profilePicture);
             otherUser.profilePictureUrl = url;
             otherUser.profilePicture = url;
           } catch (err) {
@@ -791,7 +792,7 @@ router.get('/conversations', authenticate, async (req, res) => {
         // User: profileImage may be S3 key — use presigned URL so client can show image
         if (otherUser.profileImage && !otherUser.profileImage.startsWith('http')) {
           try {
-            const url = await getobject(otherUser.profileImage);
+            const url = await getPresignedUrl(otherUser.profileImage);
             otherUser.profileImageUrl = url;
             otherUser.profileImage = url;
           } catch (err) {
@@ -910,7 +911,7 @@ router.get('/conversations/:conversationId/messages', authenticate, async (req, 
         // Partner: profilePicture may be S3 key — use presigned URL so client can show image
         if (senderData.profilePicture && !senderData.profilePicture.startsWith('http')) {
           try {
-            const url = await getobject(senderData.profilePicture);
+            const url = await getPresignedUrl(senderData.profilePicture);
             senderData.profilePictureUrl = url;
             senderData.profilePicture = url;
           } catch (err) {
@@ -923,7 +924,7 @@ router.get('/conversations/:conversationId/messages', authenticate, async (req, 
         // User: profileImage may be S3 key — use presigned URL so client can show image
         if (senderData.profileImage && !senderData.profileImage.startsWith('http')) {
           try {
-            const url = await getobject(senderData.profileImage);
+            const url = await getPresignedUrl(senderData.profileImage);
             senderData.profileImageUrl = url;
             senderData.profileImage = url;
           } catch (err) {
@@ -1711,7 +1712,7 @@ router.get('/voice/calls/history/user', authenticate, async (req, res) => {
         const rec = out?.[side];
         if (!rec || !rec.key) continue;
         try {
-          const signedUrl = await getobject(rec.key);
+          const signedUrl = await getPresignedUrl(rec.key);
           out[side] = {
             ...rec,
             // Provide a directly playable URL (raw S3 URLs can be AccessDenied)
@@ -1782,7 +1783,7 @@ router.get('/voice/calls/history/partner', authenticate, async (req, res) => {
         const rec = out?.[side];
         if (!rec || !rec.key) continue;
         try {
-          const signedUrl = await getobject(rec.key);
+          const signedUrl = await getPresignedUrl(rec.key);
           out[side] = {
             ...rec,
             signedUrl,

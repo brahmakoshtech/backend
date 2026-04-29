@@ -4,7 +4,7 @@ import multer from 'multer';
 import Meditation from '../models/Meditation.js';
 import Client from '../models/Client.js';
 import { authenticate } from '../middleware/authMiddleware.js';
-import { uploadToS3, deleteFromS3, generateUploadUrl, extractS3KeyFromUrl } from '../utils/s3.js';
+import { uploadFile, deleteFile, generateUploadUrl, getPresignedUrl, extractS3KeyFromUrl } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -177,48 +177,13 @@ router.post('/direct', authenticate, async (req, res) => {
     const meditation = new Meditation(meditationData);
     await meditation.save();
     
-    // Generate presigned URLs for response
-    const { getobject } = await import('../utils/s3.js');
     const meditationObj = withClientIdString(await meditation.populate('clientId', 'clientId'));
-    
-    // Generate presigned URL for video if exists
-    if (meditationObj.videoKey || meditationObj.videoUrl) {
-      try {
-        const videoKey = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
-        if (videoKey) {
-          const presignedVideoUrl = await getobject(videoKey);
-          meditationObj.videoUrl = presignedVideoUrl;
-        }
-      } catch (error) {
-        console.error('Error generating video presigned URL:', error);
-      }
-    }
-    
-    // Generate presigned URL for image if exists
-    if (meditationObj.imageKey || meditationObj.imageUrl) {
-      try {
-        const imageKey = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
-        if (imageKey) {
-          const presignedImageUrl = await getobject(imageKey);
-          meditationObj.imageUrl = presignedImageUrl;
-        }
-      } catch (error) {
-        console.error('Error generating image presigned URL:', error);
-      }
-    }
-    
-    res.status(201).json({
-      success: true,
-      message: 'Meditation created successfully',
-      data: meditationObj
-    });
+    if (meditationObj.videoKey) { try { meditationObj.videoUrl = await getPresignedUrl(meditationObj.videoKey); } catch(e) {} }
+    if (meditationObj.imageKey) { try { meditationObj.imageUrl = await getPresignedUrl(meditationObj.imageKey); } catch(e) {} }
+    res.status(201).json({ success: true, message: 'Meditation created successfully', data: meditationObj });
   } catch (error) {
     console.error('Error creating meditation:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create meditation',
-      error: error.message
-    });
+    res.status(500).json({ success: false, message: 'Failed to create meditation', error: error.message });
   }
 });
 
@@ -261,8 +226,6 @@ router.get('/', authenticate, async (req, res) => {
       clientId: m.clientId?.toString()
     })));
 
-    // Generate presigned URLs for videos and images
-    const { getobject } = await import('../utils/s3.js');
     const meditationsWithUrls = await Promise.all(
       meditations.map(async (meditation) => {
         const meditationObj = withClientIdString(meditation);
@@ -273,7 +236,7 @@ router.get('/', authenticate, async (req, res) => {
             // Use stored key if available, otherwise extract from URL
             const videoKey = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
             if (videoKey) {
-              meditationObj.videoUrl = await getobject(videoKey);
+              meditationObj.videoUrl = await getPresignedUrl(videoKey);
             }
           } catch (error) {
             console.error('Error generating video presigned URL:', error);
@@ -286,7 +249,7 @@ router.get('/', authenticate, async (req, res) => {
             // Use stored key if available, otherwise extract from URL
             const imageKey = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
             if (imageKey) {
-              meditationObj.imageUrl = await getobject(imageKey);
+              meditationObj.imageUrl = await getPresignedUrl(imageKey);
             }
           } catch (error) {
             console.error('Error generating image presigned URL:', error);
@@ -340,37 +303,11 @@ router.get('/:id', authenticate, async (req, res) => {
 
     const meditationObj = withClientIdString(meditation);
     
-    // Generate presigned URLs
-    const { getobject } = await import('../utils/s3.js');
-    
-    if (meditationObj.videoKey || meditationObj.videoUrl) {
-      try {
-        // Use stored key if available, otherwise extract from URL
-        const videoKey = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
-        if (videoKey) {
-          meditationObj.videoUrl = await getobject(videoKey);
-        }
-      } catch (error) {
-        console.error('Error generating video presigned URL:', error);
-      }
-    }
-    
-    if (meditationObj.imageKey || meditationObj.imageUrl) {
-      try {
-        // Use stored key if available, otherwise extract from URL
-        const imageKey = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
-        if (imageKey) {
-          meditationObj.imageUrl = await getobject(imageKey);
-        }
-      } catch (error) {
-        console.error('Error generating image presigned URL:', error);
-      }
-    }
-
-    res.json({
-      success: true,
-      data: meditationObj
-    });
+    const vKey = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
+    if (vKey) { try { meditationObj.videoUrl = await getPresignedUrl(vKey); } catch(e) {} }
+    const iKey = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
+    if (iKey) { try { meditationObj.imageUrl = await getPresignedUrl(iKey); } catch(e) {} }
+    res.json({ success: true, data: meditationObj });
   } catch (error) {
     console.error('Error fetching meditation:', error);
     res.status(500).json({
@@ -479,9 +416,8 @@ router.post('/', authenticate, upload.fields([
           hasBuffer: !!videoFile.buffer
         });
         
-        const videoUploadResult = await uploadToS3(videoFile, 'meditations/videos');
-        uploadedVideoUrl = videoUploadResult.url;
-        console.log('Video uploaded successfully:', uploadedVideoUrl);
+        const videoUploadResult = await uploadFile(videoFile, 'meditations/videos');
+        uploadedVideoUrl = videoUploadResult.url || null;
         meditationData.videoUrl = uploadedVideoUrl;
         meditationData.videoKey = videoUploadResult.key;
       } else {
@@ -498,9 +434,8 @@ router.post('/', authenticate, upload.fields([
           hasBuffer: !!imageFile.buffer
         });
         
-        const imageUploadResult = await uploadToS3(imageFile, 'meditations/images');
-        uploadedImageUrl = imageUploadResult.url;
-        console.log('Image uploaded successfully:', uploadedImageUrl);
+        const imageUploadResult = await uploadFile(imageFile, 'meditations/images');
+        uploadedImageUrl = imageUploadResult.url || null;
         meditationData.imageUrl = uploadedImageUrl;
         meditationData.imageKey = imageUploadResult.key;
       } else {
@@ -512,7 +447,7 @@ router.post('/', authenticate, upload.fields([
       // Cleanup any successfully uploaded files
       if (uploadedVideoUrl) {
         try {
-          await deleteFromS3(uploadedVideoUrl);
+          await deleteFile(uploadedVideoUrl);
           console.log('Cleaned up uploaded video after error');
         } catch (cleanupError) {
           console.error('Failed to cleanup video:', cleanupError);
@@ -520,7 +455,7 @@ router.post('/', authenticate, upload.fields([
       }
       if (uploadedImageUrl) {
         try {
-          await deleteFromS3(uploadedImageUrl);
+          await deleteFile(uploadedImageUrl);
           console.log('Cleaned up uploaded image after error');
         } catch (cleanupError) {
           console.error('Failed to cleanup image:', cleanupError);
@@ -549,11 +484,10 @@ router.post('/', authenticate, upload.fields([
     await meditation.save();
     console.log('Meditation saved successfully with ID:', meditation._id.toString());
 
-    res.status(201).json({
-      success: true,
-      message: 'Meditation created successfully',
-      data: withClientIdString(await meditation.populate('clientId', 'clientId'))
-    });
+    const createdObj = withClientIdString(await meditation.populate('clientId', 'clientId'));
+    if (createdObj.videoKey) { try { createdObj.videoUrl = await getPresignedUrl(createdObj.videoKey); } catch(e) {} }
+    if (createdObj.imageKey) { try { createdObj.imageUrl = await getPresignedUrl(createdObj.imageKey); } catch(e) {} }
+    res.status(201).json({ success: true, message: 'Meditation created successfully', data: createdObj });
     
   } catch (error) {
     console.error('=== MEDITATION CREATE ERROR ===');
@@ -605,9 +539,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         try {
           // Delete using key if available, otherwise use URL
           if (meditation.videoKey) {
-            await deleteFromS3(meditation.videoKey);
+            await deleteFile(meditation.videoKey);
           } else {
-            await deleteFromS3(meditation.videoUrl);
+            await deleteFile(meditation.videoUrl);
           }
         } catch (error) {
           console.error('Failed to delete old video:', error);
@@ -622,7 +556,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       if (meditation.imageUrl && meditation.imageUrl !== imageUrl) {
         try {
           // Delete using key if available, otherwise use URL
-          await deleteFromS3(meditation.imageKey || meditation.imageUrl);
+          await deleteFile(meditation.imageKey || meditation.imageUrl);
         } catch (error) {
           console.error('Failed to delete old image:', error);
         }
@@ -633,39 +567,12 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     
     await meditation.save();
     
-    // Generate presigned URLs for response
-    const { getobject } = await import('../utils/s3.js');
     const meditationObj = withClientIdString(await meditation.populate('clientId', 'clientId'));
-    
-    // Generate presigned URL for video if exists
-    if (meditationObj.videoKey || meditationObj.videoUrl) {
-      try {
-        const videoKey = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
-        if (videoKey) {
-          meditationObj.videoUrl = await getobject(videoKey);
-        }
-      } catch (error) {
-        console.error('Error generating video presigned URL:', error);
-      }
-    }
-    
-    // Generate presigned URL for image if exists
-    if (meditationObj.imageKey || meditationObj.imageUrl) {
-      try {
-        const imageKey = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
-        if (imageKey) {
-          meditationObj.imageUrl = await getobject(imageKey);
-        }
-      } catch (error) {
-        console.error('Error generating image presigned URL:', error);
-      }
-    }
-    
-    res.json({
-      success: true,
-      message: 'Meditation updated successfully',
-      data: meditationObj
-    });
+    const vk = meditationObj.videoKey || extractS3KeyFromUrl(meditationObj.videoUrl);
+    if (vk) { try { meditationObj.videoUrl = await getPresignedUrl(vk); } catch(e) {} }
+    const ik = meditationObj.imageKey || extractS3KeyFromUrl(meditationObj.imageUrl);
+    if (ik) { try { meditationObj.imageUrl = await getPresignedUrl(ik); } catch(e) {} }
+    res.json({ success: true, message: 'Meditation updated successfully', data: meditationObj });
   } catch (error) {
     console.error('Error updating meditation:', error);
     res.status(500).json({
@@ -724,15 +631,11 @@ router.put('/:id', authenticate, upload.fields([
       console.log('Uploading new video to S3...');
       try {
         const videoFile = req.files.video[0];
-        const videoUploadResult = await uploadToS3(videoFile, 'meditations/videos');
-        const videoUrl = videoUploadResult.url;
-        
-        // Delete old video if exists (prefer key over URL)
+        const videoUploadResult = await uploadFile(videoFile, 'meditations/videos');
         if (meditation.videoKey || meditation.videoUrl) {
-          await deleteFromS3(meditation.videoKey || meditation.videoUrl);
+          await deleteFile(meditation.videoKey || meditation.videoUrl);
         }
-        
-        meditation.videoUrl = videoUrl;
+        meditation.videoUrl = videoUploadResult.url || null;
         meditation.videoKey = videoUploadResult.key;
         console.log('Video updated in S3:', videoUrl);
       } catch (error) {
@@ -750,15 +653,11 @@ router.put('/:id', authenticate, upload.fields([
       console.log('Uploading new image to S3...');
       try {
         const imageFile = req.files.image[0];
-        const imageUploadResult = await uploadToS3(imageFile, 'meditations/images');
-        const imageUrl = imageUploadResult.url;
-        
-        // Delete old image if exists (prefer key over URL)
+        const imageUploadResult = await uploadFile(imageFile, 'meditations/images');
         if (meditation.imageKey || meditation.imageUrl) {
-          await deleteFromS3(meditation.imageKey || meditation.imageUrl);
+          await deleteFile(meditation.imageKey || meditation.imageUrl);
         }
-        
-        meditation.imageUrl = imageUrl;
+        meditation.imageUrl = imageUploadResult.url || null;
         meditation.imageKey = imageUploadResult.key;
         console.log('Image updated in S3:', imageUrl);
       } catch (error) {
@@ -774,11 +673,10 @@ router.put('/:id', authenticate, upload.fields([
     await meditation.save();
     console.log('Meditation updated successfully:', meditation._id);
 
-    res.json({
-      success: true,
-      message: 'Meditation updated successfully',
-      data: withClientIdString(await meditation.populate('clientId', 'clientId'))
-    });
+    const updatedObj = withClientIdString(await meditation.populate('clientId', 'clientId'));
+    if (updatedObj.videoKey) { try { updatedObj.videoUrl = await getPresignedUrl(updatedObj.videoKey); } catch(e) {} }
+    if (updatedObj.imageKey) { try { updatedObj.imageUrl = await getPresignedUrl(updatedObj.imageKey); } catch(e) {} }
+    res.json({ success: true, message: 'Meditation updated successfully', data: updatedObj });
   } catch (error) {
     console.error('=== MEDITATION UPDATE ERROR ===');
     console.error('Error type:', error.constructor.name);
@@ -828,7 +726,7 @@ router.delete('/:id', authenticate, async (req, res) => {
     // Delete files from S3 (prefer keys over URLs)
     if (meditation.videoKey || meditation.videoUrl) {
       try {
-        await deleteFromS3(meditation.videoKey || meditation.videoUrl);
+        await deleteFile(meditation.videoKey || meditation.videoUrl);
         console.log('✅ Video deleted from S3');
       } catch (error) {
         console.error('Failed to delete video from S3:', error);
@@ -836,7 +734,7 @@ router.delete('/:id', authenticate, async (req, res) => {
     }
     if (meditation.imageKey || meditation.imageUrl) {
       try {
-        await deleteFromS3(meditation.imageKey || meditation.imageUrl);
+        await deleteFile(meditation.imageKey || meditation.imageUrl);
         console.log('✅ Image deleted from S3');
       } catch (error) {
         console.error('Failed to delete image from S3:', error);

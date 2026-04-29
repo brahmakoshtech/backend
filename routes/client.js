@@ -10,7 +10,7 @@ import Partner from '../models/Partner.js';
 import Agent from '../models/Agent.js';
 import Chat from '../models/Chat.js';
 import VoiceConfig from '../models/voiceConfig.js';
-import { getobject } from '../utils/s3.js';
+import { getPresignedUrl } from '../utils/storage.js';
 import Astrology from '../models/Astrology.js';
 import Panchang from '../models/Panchang.js';
 import Credit from '../models/Credit.js';
@@ -23,7 +23,9 @@ import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import { astrologyExternalService } from '../services/astrologyExternalService.js';
 import axios from 'axios';
-import { uploadBufferToS3 } from '../utils/s3.js';
+import AppSettings from '../models/AppSettings.js';
+import { bustStorageModeCache } from '../utils/storage.js';
+import { uploadBuffer } from '../utils/storage.js';
 
 const router = express.Router();
 
@@ -79,6 +81,113 @@ const checkUserAccess = (requestingUser, targetUser) => {
 
   return false;
 };
+
+/**
+ * GET  /api/client/settings/storage-mode
+ * PUT  /api/client/settings/storage-mode
+ */
+router.get('/settings/storage-mode', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const settings = await AppSettings.getSettings();
+    return res.json({ success: true, data: { storageMode: settings.storageMode || 's3_only' } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.put('/settings/storage-mode', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { storageMode } = req.body;
+    if (!['s3_only', 'r2_only', 'both'].includes(storageMode)) {
+      return res.status(400).json({ success: false, message: 'Invalid storageMode. Use: s3_only | r2_only | both' });
+    }
+    const settings = await AppSettings.getSettings();
+    settings.storageMode = storageMode;
+    await settings.save();
+    bustStorageModeCache();
+    return res.json({ success: true, message: 'Storage mode updated', data: { storageMode: settings.storageMode } });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+/**
+ * GET /api/client/settings/r2-browser
+ * List R2 bucket files with counts by type, pagination, presigned URLs
+ */
+router.get('/settings/r2-browser', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const { prefix = '', limit = 50, cursor } = req.query;
+    const { S3Client, ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
+    const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+
+    const r2 = new S3Client({
+      region: 'auto',
+      endpoint: process.env.R2_ENDPOINT,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY,
+        secretAccessKey: process.env.R2_SECRET_KEY,
+      },
+    });
+
+    const params = {
+      Bucket: process.env.R2_BUCKET,
+      MaxKeys: Math.min(parseInt(limit) || 50, 200),
+      Prefix: prefix || undefined,
+      ContinuationToken: cursor || undefined,
+    };
+
+    const result = await r2.send(new ListObjectsV2Command(params));
+    const objects = result.Contents || [];
+
+    const getFileType = (key) => {
+      const ext = key.split('.').pop()?.toLowerCase();
+      if (['jpg','jpeg','png','gif','webp','svg','bmp'].includes(ext)) return 'image';
+      if (['mp4','webm','mov','avi','mkv'].includes(ext)) return 'video';
+      if (['mp3','wav','ogg','m4a','aac','webm'].includes(ext)) return 'audio';
+      if (['pdf'].includes(ext)) return 'pdf';
+      return 'other';
+    };
+
+    // Generate presigned URLs for each file
+    const files = await Promise.all(objects.map(async (obj) => {
+      let url = null;
+      try {
+        const cmd = new GetObjectCommand({ Bucket: process.env.R2_BUCKET, Key: obj.Key });
+        url = await getSignedUrl(r2, cmd, { expiresIn: 3600 });
+      } catch (e) { /* ignore */ }
+      return {
+        key: obj.Key,
+        size: obj.Size,
+        lastModified: obj.LastModified,
+        type: getFileType(obj.Key),
+        url
+      };
+    }));
+
+    // Count by type
+    const counts = files.reduce((acc, f) => {
+      acc[f.type] = (acc[f.type] || 0) + 1;
+      acc.total = (acc.total || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.json({
+      success: true,
+      data: {
+        files,
+        counts,
+        nextCursor: result.NextContinuationToken || null,
+        isTruncated: result.IsTruncated || false,
+        totalInPage: files.length
+      }
+    });
+  } catch (error) {
+    console.error('[R2 Browser]', error.message);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 /**
  * GET  /api/client/settings/ccr-rates
@@ -2369,10 +2478,10 @@ router.post('/users/:userId/reports/kundali/:reportType', authenticate, authoriz
     const pdfResponse = await axios.get(providerPdfUrl, { responseType: 'arraybuffer' });
     const buffer = Buffer.from(pdfResponse.data);
 
-    // 3) Upload to S3
+    // 3) Upload to storage (R2/S3/both based on settings)
     const s3Folder = 'astrology-reports';
     const filename = `${userId}_${rt}_${Date.now()}.pdf`;
-    const uploadResult = await uploadBufferToS3(buffer, s3Folder, filename, 'application/pdf');
+    const uploadResult = await uploadBuffer(buffer, `${s3Folder}/${filename}`, 'application/pdf');
 
     // 4) Save history record
     const reportDoc = await AstrologyReport.create({
@@ -2491,7 +2600,7 @@ router.get('/users/:userId/reports/kundali/:reportId/download', authenticate, au
       return res.status(403).json({ success: false, message: 'Astrology tools are disabled by client settings' });
     }
 
-    const signedUrl = await getobject(report.s3Key, 600); // 10 minutes
+    const signedUrl = await getPresignedUrl(report.s3Key, 600); // 10 minutes
     return res.json({ success: true, url: signedUrl });
   } catch (error) {
     console.error('[Client API] Download kundali report error:', error);
@@ -3236,7 +3345,7 @@ router.get('/agents/conversation-logs', authenticate, authorize('client', 'admin
         const m = { ...msg };
         if (msg.audioKey) {
           try {
-            m.audioUrl = await getobject(msg.audioKey, 3600);
+            m.audioUrl = await getPresignedUrl(msg.audioKey, 3600);
           } catch (e) {
             m.audioUrl = null;
           }
