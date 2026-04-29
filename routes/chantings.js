@@ -229,7 +229,7 @@ router.post('/direct', authenticate, async (req, res) => {
     console.log('User:', req.user._id, 'Role:', req.user.role);
     console.log('Request body:', req.body);
     
-    const { name, description, malaCount, videoUrl, imageUrl, link, duration } = req.body;
+    const { name, description, malaCount, videoUrl, imageUrl, link, duration, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -276,9 +276,9 @@ router.post('/direct', authenticate, async (req, res) => {
       malaCount: malaCount,
       clientId: clientId,
       videoUrl: videoUrl || undefined,
-      videoKey: videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined,
+      videoKey: vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined),
       imageUrl: imageUrl || undefined,
-      imageKey: imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined,
+      imageKey: iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined),
       link: link ? link.trim() : undefined,
       duration: duration || undefined
     };
@@ -312,7 +312,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     console.log('Chanting ID:', req.params.id);
     console.log('Request body:', req.body);
     
-    const { name, description, malaCount, videoUrl, imageUrl, link, duration } = req.body;
+    const { name, description, malaCount, videoUrl, imageUrl, link, duration, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -356,10 +356,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     }
     
     // Update video URL if provided
-    if (videoUrl !== undefined) {
+    if (videoUrl !== undefined || vKey !== undefined) {
       if (videoUrl && chanting.videoUrl && chanting.videoUrl !== videoUrl) {
         try {
-          // Delete using key if available, otherwise use URL
           if (chanting.videoKey) {
             await deleteFile(chanting.videoKey);
           } else {
@@ -371,14 +370,13 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         }
       }
       chanting.videoUrl = videoUrl || undefined;
-      chanting.videoKey = videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined;
+      chanting.videoKey = vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined);
     }
     
     // Update image URL if provided
-    if (imageUrl !== undefined) {
+    if (imageUrl !== undefined || iKey !== undefined) {
       if (imageUrl && chanting.imageUrl && chanting.imageUrl !== imageUrl) {
         try {
-          // Delete using key if available, otherwise use URL
           if (chanting.imageKey) {
             await deleteFile(chanting.imageKey);
           } else {
@@ -390,7 +388,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         }
       }
       chanting.imageUrl = imageUrl || undefined;
-      chanting.imageKey = imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined;
+      chanting.imageKey = iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined);
     }
     
     await chanting.save();

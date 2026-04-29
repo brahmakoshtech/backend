@@ -270,7 +270,7 @@ router.get('/:id', authenticate, async (req, res) => {
 // POST /api/brahm-avatars/direct - Create brahm avatar with direct S3 URLs
 router.post('/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, category, type, videoUrl, imageUrl, imagePrompt, videoPrompt } = req.body;
+    const { name, description, category, type, videoUrl, imageUrl, imagePrompt, videoPrompt, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -320,9 +320,9 @@ router.post('/direct', authenticate, async (req, res) => {
       videoPrompt: videoPrompt.trim(),
       clientId: clientId,
       video: videoUrl || undefined,
-      videoKey: videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined,
+      videoKey: vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined),
       image: imageUrl || undefined,
-      imageKey: imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined
+      imageKey: iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined)
     };
     
     const brahmAvatar = new BrahmAvatar(avatarData);
@@ -376,7 +376,7 @@ router.post('/direct', authenticate, async (req, res) => {
 // PUT /api/brahm-avatars/:id/direct - Update brahm avatar with direct S3 URLs
 router.put('/:id/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, category, type, videoUrl, imageUrl, imagePrompt, videoPrompt } = req.body;
+    const { name, description, category, type, videoUrl, imageUrl, imagePrompt, videoPrompt, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -409,7 +409,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     if (videoPrompt !== undefined) brahmAvatar.videoPrompt = videoPrompt.trim();
     
     // Update video URL if provided
-    if (videoUrl !== undefined) {
+    if (videoUrl !== undefined || vKey !== undefined) {
       if (videoUrl && brahmAvatar.video && brahmAvatar.video !== videoUrl) {
         try {
           if (brahmAvatar.videoKey) {
@@ -422,11 +422,11 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         }
       }
       brahmAvatar.video = videoUrl || undefined;
-      brahmAvatar.videoKey = videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined;
+      brahmAvatar.videoKey = vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined);
     }
     
     // Update image URL if provided
-    if (imageUrl !== undefined) {
+    if (imageUrl !== undefined || iKey !== undefined) {
       if (imageUrl && brahmAvatar.image && brahmAvatar.image !== imageUrl) {
         try {
           if (brahmAvatar.imageKey) {
@@ -439,7 +439,7 @@ router.put('/:id/direct', authenticate, async (req, res) => {
         }
       }
       brahmAvatar.image = imageUrl || undefined;
-      brahmAvatar.imageKey = imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined;
+      brahmAvatar.imageKey = iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined);
     }
     
     await brahmAvatar.save();

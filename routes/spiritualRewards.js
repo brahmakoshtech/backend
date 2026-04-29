@@ -58,10 +58,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     // Generate presigned URLs
     if (rewardObj.photoKey || rewardObj.photoUrl) {
       try {
-        let photoKey = rewardObj.photoKey;
-        if (!photoKey && rewardObj.photoUrl) {
-          photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
-        }
+        const photoKey = rewardObj.photoKey || rewardObj.photoUrl;
         if (photoKey) {
           rewardObj.image = await getPresignedUrl(photoKey);
         }
@@ -72,10 +69,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     if (rewardObj.bannerKey || rewardObj.bannerUrl) {
       try {
-        let bannerKey = rewardObj.bannerKey;
-        if (!bannerKey && rewardObj.bannerUrl) {
-          bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
-        }
+        const bannerKey = rewardObj.bannerKey || rewardObj.bannerUrl;
         if (bannerKey) {
           rewardObj.banner = await getPresignedUrl(bannerKey);
         }
@@ -138,14 +132,7 @@ router.get('/', authenticateToken, async (req, res) => {
         // Generate presigned URLs for photo and banner
         if (rewardObj.photoKey || rewardObj.photoUrl) {
           try {
-            // Extract full key from URL if photoKey is just filename
-            let photoKey = rewardObj.photoKey;
-            if (photoKey && !photoKey.includes('/')) {
-              photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
-            } else if (!photoKey && rewardObj.photoUrl) {
-              photoKey = rewardObj.photoUrl.split('.amazonaws.com/')[1]?.split('?')[0];
-            }
-            
+            const photoKey = rewardObj.photoKey || rewardObj.photoUrl;
             if (photoKey) {
               rewardObj.photoKey = photoKey;
               rewardObj.image = await getPresignedUrl(photoKey);
@@ -157,14 +144,7 @@ router.get('/', authenticateToken, async (req, res) => {
         
         if (rewardObj.bannerKey || rewardObj.bannerUrl) {
           try {
-            // Extract full key from URL if bannerKey is just filename
-            let bannerKey = rewardObj.bannerKey;
-            if (bannerKey && !bannerKey.includes('/')) {
-              bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
-            } else if (!bannerKey && rewardObj.bannerUrl) {
-              bannerKey = rewardObj.bannerUrl.split('.amazonaws.com/')[1]?.split('?')[0];
-            }
-            
+            const bannerKey = rewardObj.bannerKey || rewardObj.bannerUrl;
             if (bannerKey) {
               rewardObj.bannerKey = bannerKey;
               rewardObj.banner = await getPresignedUrl(bannerKey);

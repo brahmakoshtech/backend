@@ -83,7 +83,7 @@ router.post('/upload-url', authenticate, async (req, res) => {
 // POST /api/live-avatars/direct - Create live avatar with direct S3 URLs
 router.post('/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, agentId, gender, category, link, videoUrl, imageUrl } = req.body;
+    const { name, description, agentId, gender, category, link, videoUrl, imageUrl, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -125,9 +125,9 @@ router.post('/direct', authenticate, async (req, res) => {
       link: link ? link.trim() : '',
       clientId: clientId,
       videoUrl: videoUrl || undefined,
-      videoKey: videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined,
+      videoKey: vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined),
       imageUrl: imageUrl || undefined,
-      imageKey: imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined
+      imageKey: iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined)
     };
     
     const avatar = new LiveAvatar(avatarData);
@@ -310,7 +310,7 @@ router.get('/', authenticate, async (req, res) => {
 // PUT /api/live-avatars/:id/direct - Update live avatar with direct S3 URLs
 router.put('/:id/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, agentId, gender, category, link, videoUrl, imageUrl } = req.body;
+    const { name, description, agentId, gender, category, link, videoUrl, imageUrl, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -343,8 +343,8 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     if (link !== undefined) avatar.link = link.trim();
     
     // Update video URL if provided
-    if (videoUrl) {
-      if (avatar.videoUrl && avatar.videoUrl !== videoUrl) {
+    if (videoUrl || vKey) {
+      if (videoUrl && avatar.videoUrl && avatar.videoUrl !== videoUrl) {
         try {
           if (avatar.videoKey) {
             await deleteFile(avatar.videoKey);
@@ -355,21 +355,21 @@ router.put('/:id/direct', authenticate, async (req, res) => {
           console.error('Failed to delete old video:', error);
         }
       }
-      avatar.videoUrl = videoUrl;
-      avatar.videoKey = extractS3KeyFromUrl(videoUrl);
+      avatar.videoUrl = videoUrl || null;
+      avatar.videoKey = vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : null);
     }
     
     // Update image URL if provided
-    if (imageUrl) {
-      if (avatar.imageUrl && avatar.imageUrl !== imageUrl) {
+    if (imageUrl || iKey) {
+      if (imageUrl && avatar.imageUrl && avatar.imageUrl !== imageUrl) {
         try {
           await deleteFile(avatar.imageKey || avatar.imageUrl);
         } catch (error) {
           console.error('Failed to delete old image:', error);
         }
       }
-      avatar.imageUrl = imageUrl;
-      avatar.imageKey = extractS3KeyFromUrl(imageUrl);
+      avatar.imageUrl = imageUrl || null;
+      avatar.imageKey = iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : null);
     }
     
     await avatar.save();

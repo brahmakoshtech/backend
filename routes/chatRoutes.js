@@ -15,7 +15,6 @@ import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
-import { getobject, generateUploadUrl as s3GenerateUploadUrl } from '../utils/s3.js';
 import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
 
 const router = express.Router();

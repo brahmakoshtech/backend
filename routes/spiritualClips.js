@@ -180,7 +180,7 @@ router.post('/direct', authenticate, async (req, res) => {
       });
     }
 
-    const { title, description, suitableTime, guided, transcript, type, videoUrl, audioUrl, suitableConfiguration } = req.body;
+    const { title, description, suitableTime, guided, transcript, type, videoUrl, audioUrl, videoKey, audioKey, suitableConfiguration } = req.body;
 
     // Validation
     if (!title || !description) {
@@ -190,8 +190,6 @@ router.post('/direct', authenticate, async (req, res) => {
       });
     }
 
-    // extractS3KeyFromUrl not needed for R2
-    
     const clipData = {
       clientId,
       title: title.trim(),
@@ -199,12 +197,12 @@ router.post('/direct', authenticate, async (req, res) => {
       suitableTime: suitableTime || '',
       guided: guided || '',
       transcript: transcript || '',
-      type: type || 'meditation',  // Default to meditation if not provided
+      type: type || 'meditation',
       suitableConfiguration: suitableConfiguration || null,
-      videoUrl: videoUrl || undefined,
-      videoKey: videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined,
-      audioUrl: audioUrl || undefined,
-      audioKey: audioUrl ? extractS3KeyFromUrl(audioUrl) : undefined
+      videoUrl: videoUrl || null,
+      videoKey: videoKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : null),
+      audioUrl: audioUrl || null,
+      audioKey: audioKey || (audioUrl ? extractS3KeyFromUrl(audioUrl) : null)
     };
 
     const clip = new SpiritualClip(clipData);
@@ -241,13 +239,14 @@ router.put('/:id/direct', authenticate, async (req, res) => {
       type: type || undefined
     };
 
-    if (videoUrl) {
-      updateData.videoUrl = videoUrl;
-      updateData.videoKey = extractS3KeyFromUrl(videoUrl);
+    const { videoKey: vKey, audioKey: aKey } = req.body;
+    if (videoUrl || vKey) {
+      updateData.videoUrl = videoUrl || null;
+      updateData.videoKey = vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : null);
     }
-    if (audioUrl) {
-      updateData.audioUrl = audioUrl;
-      updateData.audioKey = extractS3KeyFromUrl(audioUrl);
+    if (audioUrl || aKey) {
+      updateData.audioUrl = audioUrl || null;
+      updateData.audioKey = aKey || (audioUrl ? extractS3KeyFromUrl(audioUrl) : null);
     }
 
     const clip = await SpiritualClip.findByIdAndUpdate(

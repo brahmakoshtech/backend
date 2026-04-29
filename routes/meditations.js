@@ -137,7 +137,7 @@ router.post('/upload-url', authenticate, async (req, res) => {
 // POST /api/meditations/direct - Create meditation with direct S3 URLs
 router.post('/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, link, videoUrl, imageUrl } = req.body;
+    const { name, description, link, videoUrl, imageUrl, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -169,9 +169,9 @@ router.post('/direct', authenticate, async (req, res) => {
       link: link ? link.trim() : '',
       clientId: clientId,
       videoUrl: videoUrl || undefined,
-      videoKey: videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined,
+      videoKey: vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : undefined),
       imageUrl: imageUrl || undefined,
-      imageKey: imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined
+      imageKey: iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : undefined)
     };
     
     const meditation = new Meditation(meditationData);
@@ -504,7 +504,7 @@ router.post('/', authenticate, upload.fields([
 // PUT /api/meditations/:id/direct - Update meditation with direct S3 URLs
 router.put('/:id/direct', authenticate, async (req, res) => {
   try {
-    const { name, description, link, videoUrl, imageUrl } = req.body;
+    const { name, description, link, videoUrl, imageUrl, videoKey: vKey, imageKey: iKey } = req.body;
     
     let clientId;
     try {
@@ -534,10 +534,9 @@ router.put('/:id/direct', authenticate, async (req, res) => {
     if (link !== undefined) meditation.link = link.trim();
     
     // Update video URL if provided
-    if (videoUrl) {
-      if (meditation.videoUrl && meditation.videoUrl !== videoUrl) {
+    if (videoUrl || vKey) {
+      if (videoUrl && meditation.videoUrl && meditation.videoUrl !== videoUrl) {
         try {
-          // Delete using key if available, otherwise use URL
           if (meditation.videoKey) {
             await deleteFile(meditation.videoKey);
           } else {
@@ -547,22 +546,21 @@ router.put('/:id/direct', authenticate, async (req, res) => {
           console.error('Failed to delete old video:', error);
         }
       }
-      meditation.videoUrl = videoUrl;
-      meditation.videoKey = extractS3KeyFromUrl(videoUrl);
+      meditation.videoUrl = videoUrl || null;
+      meditation.videoKey = vKey || (videoUrl ? extractS3KeyFromUrl(videoUrl) : null);
     }
     
     // Update image URL if provided
-    if (imageUrl) {
-      if (meditation.imageUrl && meditation.imageUrl !== imageUrl) {
+    if (imageUrl || iKey) {
+      if (imageUrl && meditation.imageUrl && meditation.imageUrl !== imageUrl) {
         try {
-          // Delete using key if available, otherwise use URL
           await deleteFile(meditation.imageKey || meditation.imageUrl);
         } catch (error) {
           console.error('Failed to delete old image:', error);
         }
       }
-      meditation.imageUrl = imageUrl;
-      meditation.imageKey = extractS3KeyFromUrl(imageUrl);
+      meditation.imageUrl = imageUrl || null;
+      meditation.imageKey = iKey || (imageUrl ? extractS3KeyFromUrl(imageUrl) : null);
     }
     
     await meditation.save();
@@ -637,7 +635,7 @@ router.put('/:id', authenticate, upload.fields([
         }
         meditation.videoUrl = videoUploadResult.url || null;
         meditation.videoKey = videoUploadResult.key;
-        console.log('Video updated in S3:', videoUrl);
+        console.log('Video updated in S3:', videoUploadResult.key);
       } catch (error) {
         console.error('Video upload failed:', error);
         return res.status(400).json({
