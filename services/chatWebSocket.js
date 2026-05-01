@@ -319,6 +319,11 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Conversation not found' });
         }
 
+        // ✅ FIX: ended conversation mein message nahi bhej sakte
+        if (conversation.status === 'ended' || conversation.status === 'cancelled' || conversation.status === 'rejected') {
+          return callback?.({ success: false, message: 'This conversation has ended. No messages can be sent.' });
+        }
+
         const isPartner = userType === 'partner';
 
         // Credit deduction: only user pays per message
@@ -826,6 +831,18 @@ export const setupChatWebSocket = (server) => {
           clearInterval(existingInterval);
           voiceBillingIntervals.delete(conversationId);
         }
+
+        // ✅ FIX: Mark conversation as ended after voice call ends
+        // This prevents chat billing from continuing after voice call
+        await Conversation.findOneAndUpdate(
+          { conversationId },
+          { 
+            status: 'ended',
+            endedAt,
+            voiceCallActive: false,
+            lastVoiceCallEndedAt: endedAt
+          }
+        );
 
         // Log voice call duration in ledger (credits already deducted per-second)
         let durationSecondsForLog = 0;
