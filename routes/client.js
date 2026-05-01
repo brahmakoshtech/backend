@@ -26,6 +26,8 @@ import axios from 'axios';
 import AppSettings from '../models/AppSettings.js';
 import { bustStorageModeCache } from '../utils/storage.js';
 import { uploadBuffer } from '../utils/storage.js';
+import ConversationSession from '../models/ConversationSession.js';
+import LiveAvatar from '../models/LiveAvatar.js';
 
 const router = express.Router();
 
@@ -3294,6 +3296,124 @@ router.patch('/agents/:agentId/toggle', authenticate, authorize('client', 'admin
       success: false,
       message: 'Failed to toggle agent',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /avatar-conversations
+// Returns ConversationSession records for users belonging to this client.
+// Query: page (default 1), limit (default 20), avatarId (optional live avatar _id filter)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/avatar-conversations', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    let clientId = null;
+    if (req.user.role === 'client') {
+      clientId = req.user._id;
+    } else if (req.query.clientId) {
+      clientId = req.query.clientId;
+    }
+    if (!clientId) {
+      return res.status(400).json({ success: false, message: 'clientId required' });
+    }
+
+    const page  = Math.max(1, parseInt(req.query.page,  10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+
+    const userDocs = await User.find({ clientId }).select('_id').lean();
+    const userIds  = userDocs.map((u) => u._id);
+
+    if (userIds.length === 0) {
+      return res.json({
+        success: true,
+        data: [],
+        meta: { page, limit, total: 0, pages: 0, totalConversations: 0 }
+      });
+    }
+
+    // Live Avatar chats — liveAvatarId set hoga ya avatarName set hoga
+    const query = {
+      userId: { $in: userIds },
+      title: { $ne: 'Voice Agent Chat' },
+      $or: [
+        { liveAvatarId: { $ne: null } },
+        { avatarName: { $ne: null } },
+        { title: { $regex: '^Chat with', $options: 'i' } }
+      ]
+    };
+    const excludeAgentQuery = query;
+
+    const [total, chats, allAvatars] = await Promise.all([
+      Chat.countDocuments(excludeAgentQuery),
+      Chat.find(excludeAgentQuery)
+        .sort({ updatedAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('userId', 'email profile')
+        .populate('liveAvatarId', 'name category gender imageUrl imageKey')
+        .lean(),
+      LiveAvatar.find({ isActive: true }).select('name imageUrl imageKey category').lean()
+    ]);
+
+    // Build avatar name->image map for fallback with presigned URLs
+    const avatarImageMap = {};
+    for (const a of allAvatars) {
+      let imageUrl = null;
+      const imgKey = a.imageKey || a.imageUrl;
+      if (imgKey) {
+        try { imageUrl = await getPresignedUrl(imgKey, 3600); } catch (e) {}
+      }
+      avatarImageMap[a.name?.toLowerCase()] = { ...a, imageUrl };
+    }
+
+    const data = await Promise.all(chats.map(async (c) => {
+      let avatarData;
+      if (c.liveAvatarId) {
+        let imageUrl = null;
+        const imgKey = c.liveAvatarId.imageKey || c.liveAvatarId.imageUrl;
+        if (imgKey) {
+          try { imageUrl = await getPresignedUrl(imgKey, 3600); } catch (e) {}
+        }
+        avatarData = { _id: c.liveAvatarId._id, name: c.liveAvatarId.name, category: c.liveAvatarId.category, imageUrl };
+      } else {
+        const name = c.avatarName || c.title?.replace(/^Chat with /i, '') || 'Unknown Avatar';
+        const matched = avatarImageMap[name?.toLowerCase()];
+        avatarData = { name, category: matched?.category || null, imageUrl: matched?.imageUrl || null };
+      }
+      return {
+        _id: c._id,
+        user: c.userId ? {
+          _id:   c.userId._id,
+          name:  c.userId.profile?.name || c.userId.profile?.firstName || 'Unknown',
+          email: c.userId.email
+        } : null,
+        avatar: avatarData,
+        avatarName:    c.avatarName,
+        messagesCount: c.messages?.length || 0,
+        startTime:     c.createdAt,
+        endTime:       c.updatedAt,
+        createdAt:     c.createdAt,
+        updatedAt:     c.updatedAt,
+      };
+    }));
+
+    return res.json({
+      success: true,
+      data,
+      meta: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit) || 0,
+        totalConversations: total
+      }
+    });
+  } catch (error) {
+    console.error('[Client API] Avatar conversations error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch avatar conversations',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });

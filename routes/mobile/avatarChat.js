@@ -24,7 +24,7 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
     }
 
     const { chatId } = req.params;
-    const { message, avatarName } = req.body;
+    const { message, avatarName, liveAvatarId } = req.body;
 
     if (!message?.trim()) {
       return res.status(400).json({ success: false, message: 'Message is required' });
@@ -51,6 +51,8 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
       chat = new Chat({
         userId: req.user._id,
         title: `Chat with ${avatarName || 'Avatar'}`,
+        avatarName: avatarName || null,
+        liveAvatarId: liveAvatarId || null,
         messages: []
       });
     }
@@ -60,11 +62,11 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
     // Fetch user profile
     const userProfile = await User.findById(req.user._id).select('profile astrology numerology doshas').lean();
 
-    // Set chat title from first user message
-    if (chat.messages.length === 1) {
-      const firstMessage = message.trim();
-      chat.title = firstMessage.length > 50 ? firstMessage.substring(0, 50) + '...' : firstMessage;
-    }
+    // Keep title as avatar name always
+    chat.title = `Chat with ${avatarName || 'Avatar'}`;
+    // Always update avatarName in case it was missing
+    if (avatarName && !chat.avatarName) chat.avatarName = avatarName;
+    if (liveAvatarId && !chat.liveAvatarId) chat.liveAvatarId = liveAvatarId;
 
     let systemPrompt = `You are ${avatarName || 'a spiritual guide'}, a divine AI avatar providing personalized spiritual guidance. Always respond in English.`;
 

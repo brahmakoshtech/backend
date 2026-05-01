@@ -39,6 +39,17 @@ const chatSchema = new mongoose.Schema({
     default: null,
     index: true
   },
+  liveAvatarId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'LiveAvatar',
+    default: null,
+    index: true
+  },
+  avatarName: {
+    type: String,
+    default: null,
+    trim: true
+  },
   messages: [messageSchema],
   createdAt: {
     type: Date,
