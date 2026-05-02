@@ -9,7 +9,8 @@ import User from '../../models/User.js';
 import Client from '../../models/Client.js';
 import { uploadBuffer } from '../../utils/storage.js';
 
-const DEFAULT_AGENT_VOICE_CCR = 0.5;
+const DEFAULT_AGENT_VOICE_CCR = 20; // credits per 10 seconds
+const VOICE_BILLING_INTERVAL_MS = 10_000; // 10 seconds
 
 const getAgentVoiceCCR = async (clientId) => {
   if (!clientId) return DEFAULT_AGENT_VOICE_CCR;
@@ -111,6 +112,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
     let currentTTSAbortCtrl   = null;
     let currentTurnId         = null;   // active AI turn ID
     let currentTurnState      = null;   // SPEAKING | INTERRUPTED | COMPLETED
+    let voiceBillingInterval  = null;   // 10-second billing timer
 
     // ── Keepalive ──────────────────────────────────────────────────────────────
     const stopKeepalive = () => {
@@ -138,6 +140,12 @@ export const handleVoiceAgentWebSocket = (wss) => {
       console.log('[VoiceAgent] Cleaning up session...');
 
       isActive = false;  // ← gates ALL async callbacks from here on
+
+      // Stop voice billing interval
+      if (voiceBillingInterval) {
+        clearInterval(voiceBillingInterval);
+        voiceBillingInterval = null;
+      }
 
       // Abort any in-flight TTS
       if (currentTTSAbortCtrl) {
@@ -424,7 +432,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
       console.log('[VoiceAgent] 💬 Processing turn:', userMessage);
 
       try {
-        // Credit check before processing
+        // Credit check before processing (deduction interval se hoti hai)
         const userDoc = await User.findById(userId);
         if (!userDoc || userDoc.credits <= 0) {
           safeSend({ type: 'error', message: 'Insufficient credits', error: 'INSUFFICIENT_CREDITS', remainingBalance: userDoc?.credits ?? 0 });
@@ -433,7 +441,6 @@ export const handleVoiceAgentWebSocket = (wss) => {
         }
 
         const clientId = userDoc.clientId?._id || userDoc.clientId;
-        const voiceCCR = await getAgentVoiceCCR(clientId);
 
         chat.messages.push({ role: 'user', content: userMessage });
         await chat.save();
@@ -465,17 +472,7 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
         const { audioKey: aiAudioKey } = await streamElevenLabsTTS(aiResponse, newTurnId);
 
-        // Deduct credit after successful response
-        const newBalance = Math.max(0, userDoc.credits - voiceCCR);
-        userDoc.credits = newBalance;
-        await userDoc.save();
-        safeSend({ type: 'credit:update', creditsDeducted: voiceCCR, remainingBalance: newBalance });
-
-        if (newBalance <= 0) {
-          safeSend({ type: 'error', message: 'Insufficient credits', error: 'INSUFFICIENT_CREDITS', remainingBalance: 0 });
-          cleanup();
-        }
-
+        // Credit deduction ab interval se hota hai — per turn nahi
         if (isActive) {
           chat.messages.push({ role: 'assistant', content: aiResponse });
           await chat.save();
@@ -560,9 +557,12 @@ export const handleVoiceAgentWebSocket = (wss) => {
             chat = await Chat.findOne({ _id: data.chatId, userId });
           }
           if (!chat) {
-            chat = new Chat({ userId, title: 'Voice Chat', agentId: isValidObjectId(data.agentId) ? data.agentId : null, messages: [] });
+            chat = new Chat({ userId, title: 'Voice Agent Chat', agentId: isValidObjectId(data.agentId) ? data.agentId : null, messages: [], voiceStartTime: new Date() });
             await chat.save();
             console.log('[VoiceAgent] Created new chat:', chat._id);
+          } else if (!chat.voiceStartTime) {
+            chat.voiceStartTime = new Date();
+            await chat.save();
           }
 
           // Init Deepgram
@@ -577,6 +577,47 @@ export const handleVoiceAgentWebSocket = (wss) => {
 
           safeSend({ type: 'deepgram_connected', message: 'Speech recognition active' });
           safeSend({ type: 'started', chatId: chat._id, voiceName: voiceConfig?.name || requestedVoice, message: 'Voice agent started' });
+
+          // ✅ Start 10-second billing interval
+          const userDocForBilling = await User.findById(userId).select('credits clientId').lean();
+          const billingClientId = userDocForBilling?.clientId?._id || userDocForBilling?.clientId;
+          const voiceCCR = await getAgentVoiceCCR(billingClientId);
+
+          voiceBillingInterval = setInterval(async () => {
+            if (!isActive) {
+              clearInterval(voiceBillingInterval);
+              voiceBillingInterval = null;
+              return;
+            }
+            try {
+              const userDoc = await User.findById(userId);
+              if (!userDoc) return;
+
+              if (userDoc.credits <= 0) {
+                clearInterval(voiceBillingInterval);
+                voiceBillingInterval = null;
+                safeSend({ type: 'error', message: 'Insufficient credits', error: 'INSUFFICIENT_CREDITS', remainingBalance: 0 });
+                cleanup();
+                return;
+              }
+
+              const newBalance = Math.max(0, userDoc.credits - voiceCCR);
+              userDoc.credits = newBalance;
+              await userDoc.save();
+
+              safeSend({ type: 'credit:update', creditsDeducted: voiceCCR, remainingBalance: newBalance });
+              console.log(`[VoiceAgent] 💳 Billed ${voiceCCR} credits | balance: ${newBalance}`);
+
+              if (newBalance <= 0) {
+                clearInterval(voiceBillingInterval);
+                voiceBillingInterval = null;
+                safeSend({ type: 'error', message: 'Insufficient credits', error: 'INSUFFICIENT_CREDITS', remainingBalance: 0 });
+                cleanup();
+              }
+            } catch (err) {
+              console.error('[VoiceAgent] Billing interval error:', err.message);
+            }
+          }, VOICE_BILLING_INTERVAL_MS);
 
           // First message — only once per session, never on Deepgram reconnects
           if (agentFirstMessage && isActive && !firstMessageSent) {
@@ -597,6 +638,13 @@ export const handleVoiceAgentWebSocket = (wss) => {
         // ── STOP ──────────────────────────────────────────────────────────────
         } else if (data.type === 'stop') {
           console.log('[VoiceAgent] Stop command received');
+          // Save voice end time
+          if (chat) {
+            try {
+              chat.voiceEndTime = new Date();
+              await chat.save();
+            } catch (e) {}
+          }
           cleanup();
           safeSend({ type: 'stopped', message: 'Voice agent stopped' });
 
@@ -647,6 +695,11 @@ export const handleVoiceAgentWebSocket = (wss) => {
     // ─── Client disconnect / error ────────────────────────────────────────────
     ws.on('close', () => {
       console.log('[VoiceAgent] Client disconnected');
+      if (chat && isActive) {
+        try {
+          Chat.findByIdAndUpdate(chat._id, { voiceEndTime: new Date() }).catch(() => {});
+        } catch (e) {}
+      }
       cleanup();
     });
 

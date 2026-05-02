@@ -3331,14 +3331,15 @@ router.get('/avatar-conversations', authenticate, authorize('client', 'admin', '
       });
     }
 
-    // Live Avatar chats — liveAvatarId set hoga ya avatarName set hoga
+    // Text chats: liveAvatarId, avatarName, 'Chat with' title, ya agentId wale non-voice chats
     const query = {
       userId: { $in: userIds },
-      title: { $ne: 'Voice Agent Chat' },
       $or: [
         { liveAvatarId: { $ne: null } },
         { avatarName: { $ne: null } },
-        { title: { $regex: '^Chat with', $options: 'i' } }
+        { title: { $regex: '^Chat with', $options: 'i' } },
+        // Rashmi/Krishna text chats: agentId set hai but title 'Voice Agent Chat' nahi
+        { agentId: { $ne: null }, title: { $nin: ['Voice Agent Chat', 'Voice Chat'] } }
       ]
     };
     const excludeAgentQuery = query;
@@ -3351,6 +3352,7 @@ router.get('/avatar-conversations', authenticate, authorize('client', 'admin', '
         .limit(limit)
         .populate('userId', 'email profile')
         .populate('liveAvatarId', 'name category gender imageUrl imageKey')
+        .populate('agentId', 'name voiceName')
         .lean(),
       LiveAvatar.find({ isActive: true }).select('name imageUrl imageKey category').lean()
     ]);
@@ -3376,9 +3378,18 @@ router.get('/avatar-conversations', authenticate, authorize('client', 'admin', '
         }
         avatarData = { _id: c.liveAvatarId._id, name: c.liveAvatarId.name, category: c.liveAvatarId.category, imageUrl };
       } else {
-        const name = c.avatarName || c.title?.replace(/^Chat with /i, '') || 'Unknown Avatar';
+        // agentId se naam lo, ya avatarName se, ya title se
+        const agentName = c.agentId?.name || null;
+        const name = agentName || c.avatarName || 
+          (c.title === 'Voice Agent Chat' || c.title === 'Voice Chat' ? null : c.title?.replace(/^Chat with /i, '')) || 
+          'Unknown Avatar';
         const matched = avatarImageMap[name?.toLowerCase()];
-        avatarData = { name, category: matched?.category || null, imageUrl: matched?.imageUrl || null };
+        avatarData = { 
+          name, 
+          category: c.agentId ? 'AI Agent' : (matched?.category || (c.title === 'Voice Agent Chat' || c.title === 'Voice Chat' ? 'Voice Agent' : null)),
+          imageUrl: matched?.imageUrl || null,
+          voiceName: c.agentId?.voiceName || null
+        };
       }
       return {
         _id: c._id,
@@ -3413,6 +3424,106 @@ router.get('/avatar-conversations', authenticate, authorize('client', 'admin', '
     res.status(500).json({
       success: false,
       message: 'Failed to fetch avatar conversations',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /agents/voice-call-logs
+// Returns Voice Agent call sessions (Rashmi, Krishna) for this client's users.
+// Query: agentId (optional), page (default 1), limit (default 20)
+// Status: ongoing (voiceEndTime null) | completed (voiceEndTime set)
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/agents/voice-call-logs', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    let clientId = null;
+    if (req.user.role === 'client') {
+      clientId = req.user._id;
+    } else if (req.query.clientId) {
+      clientId = req.query.clientId;
+    }
+    if (!clientId) return res.status(400).json({ success: false, message: 'clientId required' });
+
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const agentId = req.query.agentId?.trim() || null;
+
+    const userDocs = await User.find({ clientId }).select('_id').lean();
+    const userIds  = userDocs.map((u) => u._id);
+    if (userIds.length === 0) {
+      return res.json({ success: true, data: [], meta: { page, limit, total: 0, pages: 0 } });
+    }
+
+    const query = {
+      userId: { $in: userIds },
+      title: { $in: ['Voice Agent Chat', 'Voice Chat'] }
+    };
+    if (agentId) query.agentId = agentId;
+
+    const [total, chats] = await Promise.all([
+      Chat.countDocuments(query),
+      Chat.find(query)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('userId', 'profile email')
+        .populate('agentId', 'name voiceName description')
+        .lean()
+    ]);
+
+    // Get voiceCCR for this client
+    const clientDoc = await Client.findById(clientId).select('settings.voiceCCR').lean();
+    const voiceCCR = clientDoc?.settings?.voiceCCR ?? 20; // 20 credits per 10 seconds
+
+    const data = chats.map((c) => {
+      const startTime = c.voiceStartTime || c.createdAt;
+      // Agar voiceEndTime null hai to updatedAt use karo (purani calls ke liye)
+      // Agar updatedAt aur createdAt same hain to bhi completed maano (session khatam)
+      const endTime = c.voiceEndTime || (c.updatedAt && c.updatedAt !== c.createdAt ? c.updatedAt : null);
+      // Only mark ongoing if call started within last 2 hours and no endTime
+      const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+      const isOngoing = !endTime && new Date(startTime).getTime() > twoHoursAgo;
+      const effectiveEndTime = endTime || (isOngoing ? null : c.updatedAt || c.createdAt);
+      let durationSeconds = 0;
+      if (startTime && effectiveEndTime) {
+        durationSeconds = Math.max(0, Math.round((new Date(effectiveEndTime) - new Date(startTime)) / 1000));
+      }
+      const durationMinutes = Math.round(durationSeconds / 60);
+
+      return {
+        _id:       c._id,
+        user: c.userId ? {
+          _id:   c.userId._id,
+          name:  c.userId.profile?.name || c.userId.profile?.firstName || 'Unknown',
+          email: c.userId.email
+        } : null,
+        agent: c.agentId ? {
+          _id:       c.agentId._id,
+          name:      c.agentId.name,
+          voiceName: c.agentId.voiceName
+        } : { name: 'Voice Agent', voiceName: '—' },
+        startTime,
+        endTime:         effectiveEndTime,
+        durationSeconds,
+        durationMinutes,
+        messagesCount: c.messages?.length || 0,
+        status: isOngoing ? 'ongoing' : 'completed',
+        creditsUsed: Math.floor(durationSeconds / 10) * voiceCCR,
+        createdAt: c.createdAt
+      };
+    });
+
+    return res.json({
+      success: true,
+      data,
+      meta: { page, limit, total, pages: Math.ceil(total / limit) || 0 }
+    });
+  } catch (error) {
+    console.error('[Client API] Voice call logs error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch voice call logs',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

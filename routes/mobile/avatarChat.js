@@ -63,10 +63,14 @@ router.post('/:chatId/message', authenticate, async (req, res) => {
     const userProfile = await User.findById(req.user._id).select('profile astrology numerology doshas').lean();
 
     // Keep title as avatar name always
-    chat.title = `Chat with ${avatarName || 'Avatar'}`;
-    // Always update avatarName in case it was missing
-    if (avatarName && !chat.avatarName) chat.avatarName = avatarName;
+    chat.title = `Chat with ${avatarName || chat.avatarName || 'Avatar'}`;
+    // Always update avatarName
+    if (avatarName) chat.avatarName = avatarName;
     if (liveAvatarId && !chat.liveAvatarId) chat.liveAvatarId = liveAvatarId;
+    // Extract avatarName from title if still missing
+    if (!chat.avatarName && chat.title?.startsWith('Chat with ')) {
+      chat.avatarName = chat.title.replace(/^Chat with /i, '').trim() || null;
+    }
 
     let systemPrompt = `You are ${avatarName || 'a spiritual guide'}, a divine AI avatar providing personalized spiritual guidance. Always respond in English.`;
 

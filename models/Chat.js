@@ -50,6 +50,14 @@ const chatSchema = new mongoose.Schema({
     default: null,
     trim: true
   },
+  voiceStartTime: {
+    type: Date,
+    default: null
+  },
+  voiceEndTime: {
+    type: Date,
+    default: null
+  },
   messages: [messageSchema],
   createdAt: {
     type: Date,
