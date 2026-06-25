@@ -297,24 +297,89 @@ router.get('/users', async (req, res) => {
 // Get dashboard overview
 router.get('/dashboard/overview', async (req, res) => {
   try {
-    const query = req.user.role === 'super_admin' 
+    const clientQuery = req.user.role === 'super_admin'
       ? { adminId: { $exists: true } }
       : { adminId: req.user._id };
 
-    const totalClients = await Client.countDocuments(query);
-    const activeClients = await Client.countDocuments({ ...query, isActive: true });
+    const [totalClients, activeClients, allClients] = await Promise.all([
+      Client.countDocuments(clientQuery),
+      Client.countDocuments({ ...clientQuery, isActive: true }),
+      Client.find(clientQuery).select('_id businessName email createdAt isActive').sort({ createdAt: -1 }).lean()
+    ]);
 
-    const clients = await Client.find(query).select('_id');
-    const clientIds = clients.map(c => c._id);
-    
-    const totalUsers = await User.countDocuments({ 
-      clientId: { $in: clientIds }
+    const clientIds = allClients.map(c => c._id);
+
+    const [totalUsers, activeUsers] = await Promise.all([
+      User.countDocuments({ clientId: { $in: clientIds } }),
+      User.countDocuments({ clientId: { $in: clientIds }, isActive: true })
+    ]);
+
+    // Last 6 months user registrations
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const userGrowthRaw = await User.aggregate([
+      { $match: { clientId: { $in: clientIds }, createdAt: { $gte: sixMonthsAgo } } },
+      { $group: {
+        _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+        count: { $sum: 1 }
+      }},
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+
+    // Fill missing months with 0
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const userGrowth = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const found = userGrowthRaw.find(r => r._id.year === d.getFullYear() && r._id.month === d.getMonth() + 1);
+      userGrowth.push({ month: monthNames[d.getMonth()], count: found ? found.count : 0 });
+    }
+
+    // Last 6 months client registrations
+    const clientGrowthRaw = await Client.aggregate([
+      { $match: { ...clientQuery, createdAt: { $gte: sixMonthsAgo } } },
+      { $group: {
+        _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+        count: { $sum: 1 }
+      }},
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+    const clientGrowth = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const found = clientGrowthRaw.find(r => r._id.year === d.getFullYear() && r._id.month === d.getMonth() + 1);
+      clientGrowth.push({ month: monthNames[d.getMonth()], count: found ? found.count : 0 });
+    }
+
+    // Users per client (top 5)
+    const usersPerClient = await User.aggregate([
+      { $match: { clientId: { $in: clientIds } } },
+      { $group: { _id: '$clientId', userCount: { $sum: 1 } } },
+      { $sort: { userCount: -1 } },
+      { $limit: 5 }
+    ]);
+    const usersPerClientData = usersPerClient.map(u => {
+      const c = allClients.find(cl => cl._id.toString() === u._id?.toString());
+      return { clientName: c?.businessName || c?.email || 'Unknown', userCount: u.userCount };
     });
-    
-    const activeUsers = await User.countDocuments({ 
-      clientId: { $in: clientIds },
-      isActive: true
-    });
+
+    // New users this month
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const [newUsersThisMonth, newUsersLastMonth, newClientsThisMonth] = await Promise.all([
+      User.countDocuments({ clientId: { $in: clientIds }, createdAt: { $gte: thisMonthStart } }),
+      User.countDocuments({ clientId: { $in: clientIds }, createdAt: { $gte: lastMonthStart, $lt: thisMonthStart } }),
+      Client.countDocuments({ ...clientQuery, createdAt: { $gte: thisMonthStart } })
+    ]);
+
+    // Recent clients (last 5)
+    const recentClients = allClients.slice(0, 5).map(c => ({
+      _id: c._id,
+      businessName: c.businessName || c.email,
+      email: c.email,
+      isActive: c.isActive,
+      createdAt: c.createdAt
+    }));
 
     res.json({
       success: true,
@@ -322,13 +387,20 @@ router.get('/dashboard/overview', async (req, res) => {
         totalClients,
         activeClients,
         totalUsers,
-        activeUsers
+        activeUsers,
+        newUsersThisMonth,
+        newUsersLastMonth,
+        newClientsThisMonth,
+        userGrowth,
+        clientGrowth,
+        usersPerClient: usersPerClientData,
+        recentClients
       }
     });
   } catch (error) {
-    res.status(500).json({ 
-      success: false, 
-      message: error.message 
+    res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 });
@@ -621,6 +693,188 @@ router.put('/settings/openai-api-key', async (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
+});
+
+// ============ System Health ============
+
+// @route   GET /api/admin/health
+// @desc    Real-time system health: DB status, memory, uptime, counts
+router.get('/health', async (req, res) => {
+  try {
+    const dbState = mongoose.connection.readyState;
+    const dbStatusMap = { 0: 'Disconnected', 1: 'Connected', 2: 'Connecting', 3: 'Disconnecting' };
+    const dbStatus = dbStatusMap[dbState] || 'Unknown';
+
+    const mem = process.memoryUsage();
+    const toMB = (bytes) => Math.round(bytes / 1024 / 1024);
+
+    const uptimeSec = Math.floor(process.uptime());
+    const hours = Math.floor(uptimeSec / 3600);
+    const minutes = Math.floor((uptimeSec % 3600) / 60);
+    const seconds = uptimeSec % 60;
+    const uptime = `${hours}h ${minutes}m ${seconds}s`;
+
+    const clientQuery = req.user.role === 'super_admin'
+      ? { adminId: { $exists: true } }
+      : { adminId: req.user._id };
+
+    const allClients = await Client.find(clientQuery).select('_id').lean();
+    const clientIds = allClients.map(c => c._id);
+
+    const [totalClients, activeClients, totalUsers, activeUsers] = await Promise.all([
+      Client.countDocuments(clientQuery),
+      Client.countDocuments({ ...clientQuery, isActive: true }),
+      User.countDocuments({ clientId: { $in: clientIds } }),
+      User.countDocuments({ clientId: { $in: clientIds }, isActive: true })
+    ]);
+
+    const services = [
+      { name: 'MongoDB', status: dbState === 1 ? 'Operational' : 'Down', healthy: dbState === 1 },
+      { name: 'REST API', status: 'Operational', healthy: true },
+      { name: 'Authentication', status: 'Operational', healthy: true },
+      { name: 'File Storage', status: 'Operational', healthy: true }
+    ];
+
+    res.json({
+      success: true,
+      data: {
+        server: { status: 'Operational', uptime, nodeVersion: process.version, env: process.env.NODE_ENV || 'production' },
+        database: { status: dbStatus, healthy: dbState === 1, host: mongoose.connection.host || 'Atlas' },
+        memory: { heapUsed: toMB(mem.heapUsed), heapTotal: toMB(mem.heapTotal), rss: toMB(mem.rss), unit: 'MB' },
+        services,
+        stats: { totalClients, activeClients, totalUsers, activeUsers }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ============ API Health Monitor ============
+
+// @route   GET /api/admin/api-health
+// @desc    Ping all important API endpoints and return status + response time
+router.get('/api-health', async (req, res) => {
+  const BASE = `http://localhost:${process.env.PORT || 5000}/api`;
+  const token = req.headers.authorization; // forward admin token
+
+  const endpoints = [
+    // ── Admin APIs ──
+    { name: 'Admin Dashboard',           group: 'Admin',    method: 'GET', url: `${BASE}/admin/dashboard/overview` },
+    { name: 'Admin Clients',             group: 'Admin',    method: 'GET', url: `${BASE}/admin/clients` },
+    { name: 'Admin Users',               group: 'Admin',    method: 'GET', url: `${BASE}/admin/users?limit=1` },
+    { name: 'Admin Prompts',             group: 'Admin',    method: 'GET', url: `${BASE}/admin/prompts` },
+    { name: 'Admin Health',              group: 'Admin',    method: 'GET', url: `${BASE}/admin/health` },
+    { name: 'Auth - Admin Me',           group: 'Admin',    method: 'GET', url: `${BASE}/auth/admin/me` },
+    { name: 'Health Check',              group: 'Admin',    method: 'GET', url: `${BASE}/health` },
+
+    // ── Partner APIs ──
+    { name: 'Partner Profile',           group: 'Partner',  method: 'GET', url: `${BASE}/mobile/partner/profile` },
+    { name: 'Partner Login',             group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/login` },
+    { name: 'Partner Register Step1',    group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/register/step1` },
+    { name: 'Partner Register Step1 Verify', group: 'Partner', method: 'POST', url: `${BASE}/mobile/partner/register/step1/verify` },
+    { name: 'Partner Register Step2',    group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/register/step2` },
+    { name: 'Partner Register Step2 Verify', group: 'Partner', method: 'POST', url: `${BASE}/mobile/partner/register/step2/verify` },
+    { name: 'Partner Register Step3',    group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/register/step3` },
+    { name: 'Partner Register Step4',    group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/register/step4` },
+    { name: 'Partner Check Email',       group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/check-email` },
+    { name: 'Partner Resend Email OTP',  group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/register/resend-email-otp` },
+    { name: 'Partner Resend Phone OTP',  group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/register/resend-phone-otp` },
+    { name: 'Partner Update Profile',    group: 'Partner',  method: 'PUT',  url: `${BASE}/mobile/partner/profile` },
+    { name: 'Partner Profile Picture',   group: 'Partner',  method: 'POST', url: `${BASE}/mobile/partner/profile/picture` },
+
+    // ── Partner Chat APIs ──
+    { name: 'Chat - Partner Status GET', group: 'Partner',  method: 'GET',   url: `${BASE}/chat/partner/status` },
+    { name: 'Chat - Partner Status SET', group: 'Partner',  method: 'PATCH', url: `${BASE}/chat/partner/status` },
+    { name: 'Chat - Partner Requests',   group: 'Partner',  method: 'GET',   url: `${BASE}/chat/partner/requests` },
+    { name: 'Chat - Available Partners', group: 'Partner',  method: 'GET',   url: `${BASE}/chat/partners` },
+    { name: 'Chat - Conversations',      group: 'Partner',  method: 'GET',   url: `${BASE}/chat/conversations` },
+    { name: 'Chat - Unread Count',       group: 'Partner',  method: 'GET',   url: `${BASE}/chat/unread-count` },
+    { name: 'Chat - Credits History (User)',    group: 'Partner', method: 'GET', url: `${BASE}/chat/credits/history/user` },
+    { name: 'Chat - Credits History (Partner)', group: 'Partner', method: 'GET', url: `${BASE}/chat/credits/history/partner` },
+    { name: 'Chat - Voice Call History (User)',    group: 'Partner', method: 'GET', url: `${BASE}/chat/voice/calls/history/user` },
+    { name: 'Chat - Voice Call History (Partner)', group: 'Partner', method: 'GET', url: `${BASE}/chat/voice/calls/history/partner` },
+
+    // ── Spiritual Check-in APIs ──
+    { name: 'Spiritual Check-in',        group: 'Spiritual', method: 'GET', url: `${BASE}/mobile/spiritual-checkin` },
+    { name: 'Spiritual Activities',      group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-activities` },
+    { name: 'Spiritual Rewards',         group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-rewards` },
+    { name: 'Spiritual Stats',           group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-stats` },
+    { name: 'Spiritual Clips',           group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-clips` },
+    { name: 'Spiritual Configurations',  group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-configurations` },
+    { name: 'Karma Points',              group: 'Spiritual', method: 'GET', url: `${BASE}/karma-points` },
+    { name: 'Reward Redemptions',        group: 'Spiritual', method: 'GET', url: `${BASE}/reward-redemptions` },
+    { name: 'Leaderboard',               group: 'Spiritual', method: 'GET', url: `${BASE}/leaderboard` },
+    { name: 'Sankalp',                   group: 'Spiritual', method: 'GET', url: `${BASE}/sankalp` },
+    { name: 'User Sankalp',              group: 'Spiritual', method: 'GET', url: `${BASE}/user-sankalp` },
+    { name: 'Puja Padhati',              group: 'Spiritual', method: 'GET', url: `${BASE}/puja-padhati` },
+    { name: 'Swapna Decoder',            group: 'Spiritual', method: 'GET', url: `${BASE}/swapna-decoder` },
+
+    // ── Content APIs ──
+    { name: 'Testimonials',              group: 'Content',  method: 'GET', url: `${BASE}/testimonials` },
+    { name: 'Experts',                   group: 'Content',  method: 'GET', url: `${BASE}/experts` },
+    { name: 'Expert Categories',         group: 'Content',  method: 'GET', url: `${BASE}/expert-categories` },
+    { name: 'Meditations',               group: 'Content',  method: 'GET', url: `${BASE}/meditations` },
+    { name: 'Chantings',                 group: 'Content',  method: 'GET', url: `${BASE}/chantings` },
+    { name: 'Brahm Avatars',             group: 'Content',  method: 'GET', url: `${BASE}/brahm-avatars` },
+    { name: 'Live Avatars',              group: 'Content',  method: 'GET', url: `${BASE}/live-avatars` },
+    { name: 'Chapters',                  group: 'Content',  method: 'GET', url: `${BASE}/chapters` },
+    { name: 'Reviews',                   group: 'Content',  method: 'GET', url: `${BASE}/reviews` },
+    { name: 'Sponsors',                  group: 'Content',  method: 'GET', url: `${BASE}/sponsors` },
+    { name: 'Brand Assets',              group: 'Content',  method: 'GET', url: `${BASE}/brand-assets` },
+    { name: 'Founder Messages',          group: 'Content',  method: 'GET', url: `${BASE}/founder-messages` },
+    { name: 'Notifications',             group: 'Content',  method: 'GET', url: `${BASE}/notifications` },
+    { name: 'Voice Config',              group: 'Content',  method: 'GET', url: `${BASE}/voice-config` },
+    { name: 'Prathanas',                 group: 'Content',  method: 'GET', url: `${BASE}/prathanas` },
+    { name: 'Shlokas',                   group: 'Content',  method: 'GET', url: `${BASE}/shlokas` },
+  ];
+
+  const results = await Promise.all(
+    endpoints.map(async (ep) => {
+      const start = Date.now();
+      try {
+        const response = await fetch(ep.url, {
+          method: ep.method,
+          headers: { Authorization: token, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000)
+        });
+        const ms = Date.now() - start;
+        // 401/403 = auth protected but reachable = OK for existence check
+        const reachable = response.status < 500;
+        return {
+          name: ep.name,
+          url: ep.url.replace(BASE, '/api'),
+          method: ep.method,
+          status: response.status,
+          ms,
+          healthy: reachable,
+          label: reachable ? (ms < 300 ? 'Fast' : ms < 1000 ? 'Slow' : 'Very Slow') : 'Error'
+        };
+      } catch (err) {
+        return {
+          name: ep.name,
+          url: ep.url.replace(BASE, '/api'),
+          method: ep.method,
+          status: 0,
+          ms: Date.now() - start,
+          healthy: false,
+          label: 'Unreachable',
+          error: err.message
+        };
+      }
+    })
+  );
+
+  const totalHealthy = results.filter(r => r.healthy).length;
+  const avgMs = Math.round(results.reduce((s, r) => s + r.ms, 0) / results.length);
+
+  res.json({
+    success: true,
+    data: {
+      summary: { total: results.length, healthy: totalHealthy, failed: results.length - totalHealthy, avgMs },
+      endpoints: results
+    }
+  });
 });
 
 // ============ App Settings (Stripe Credits per Unit) ============

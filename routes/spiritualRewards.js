@@ -11,19 +11,22 @@ const router = express.Router();
 const getClientId = (req) => {
   // For client role, clientId is directly available in CLI-XXXXXX format
   if (req.user.role === 'client' && req.user.clientId) {
-    return req.user.clientId; // Already in CLI-XXXXXX format
+    return req.user.clientId;
   }
   
   // For user role, get from populated clientId or token
   if (req.user.role === 'user') {
-    // From populated Client document
     if (req.user.clientId && req.user.clientId.clientId) {
       return req.user.clientId.clientId;
     }
-    // From token
     if (req.user.tokenClientId) {
       return req.user.tokenClientId;
     }
+  }
+
+  // For admin/super_admin, clientId query param se lo (optional filter)
+  if (req.user.role === 'admin' || req.user.role === 'super_admin') {
+    return req.query.clientId || null;
   }
   
   throw new Error('Unable to determine clientId');
@@ -118,7 +121,8 @@ router.get('/', authenticateToken, async (req, res) => {
       }
     }
     
-    const rewards = await SpiritualReward.find({ clientId })
+    const query = clientId ? { clientId } : {};
+    const rewards = await SpiritualReward.find(query)
       .sort({ createdAt: -1 });
 
     console.log('Found rewards count:', rewards.length);

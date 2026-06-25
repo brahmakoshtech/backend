@@ -179,7 +179,7 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
     let imageUrl = null;
     if (req.file) {
       const uploadResult = await uploadFile(req.file, 'chapters');
-      imageUrl = uploadResult.url;
+      imageUrl = uploadResult.key || uploadResult.url;
     }
     
     const chapter = new Chapter({
@@ -267,7 +267,7 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
     // Handle image upload if provided
     if (req.file) {
       const uploadResult = await uploadFile(req.file, 'chapters');
-      updateData.imageUrl = uploadResult.url;
+      updateData.imageUrl = uploadResult.key || uploadResult.url;
     }
     
     const chapter = await Chapter.findOneAndUpdate(
@@ -369,7 +369,7 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
     
     const chapter = await Chapter.findOneAndUpdate(
       { _id: req.params.id, clientId: actualClientId },
-      { imageUrl: uploadResult.url },
+      { imageUrl: uploadResult.key || uploadResult.url },
       { new: true }
     );
     
@@ -384,7 +384,7 @@ router.post('/:id/upload-image', authenticate, upload.single('image'), async (re
       success: true,
       message: 'Image uploaded successfully',
       data: chapter,
-      imageUrl: uploadResult.url
+      imageUrl: uploadResult.key || uploadResult.url
     });
   } catch (error) {
     res.status(500).json({

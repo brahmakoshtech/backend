@@ -86,14 +86,34 @@ router.get('/:id', authenticateToken, async (req, res) => {
 // Create new dream request
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { dreamSymbol, additionalDetails, clientId } = req.body;
+    const { dreamSymbol, additionalDetails } = req.body;
+    let { clientId } = req.body;
 
-    if (!dreamSymbol || !clientId) {
-      return res.status(400).json({ error: 'Dream symbol and client ID are required' });
+    if (!dreamSymbol) {
+      return res.status(400).json({ error: 'Dream symbol is required' });
     }
 
     if (!req.user || !req.user._id) {
       return res.status(401).json({ error: 'User authentication failed' });
+    }
+
+    // If clientId not sent from frontend, extract from user token
+    if (!clientId) {
+      if (req.user.clientId) {
+        // clientId may be ObjectId — resolve to string clientId
+        const rawClientId = req.user.clientId?.toString();
+        if (rawClientId && rawClientId.length === 24 && /^[0-9a-fA-F]{24}$/.test(rawClientId)) {
+          const Client = (await import('../models/Client.js')).default;
+          const client = await Client.findById(rawClientId);
+          clientId = client?.clientId || rawClientId;
+        } else {
+          clientId = rawClientId;
+        }
+      }
+    }
+
+    if (!clientId) {
+      return res.status(400).json({ error: 'Client ID is required' });
     }
 
     const userId = req.user._id;

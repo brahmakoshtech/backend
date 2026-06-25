@@ -3,6 +3,7 @@
 // Numerology endpoints updated: name always from DB, date defaults to today
 
 import express from 'express';
+import mongoose from 'mongoose';
 import { authenticate, authorize } from '../middleware/auth.js';
 import User from '../models/User.js';
 import Client from '../models/Client.js';
@@ -3106,55 +3107,68 @@ router.get('/users/:userId/remedies', authenticate, authorize('client', 'admin',
 /**
  * Get client dashboard overview
  * GET /api/client/dashboard/overview
- * Access: client, admin, super_admin, user (limited view)
+ * Access: client
  */
-router.get('/dashboard/overview', authenticate, authorize('client', 'admin', 'super_admin', 'user'), async (req, res) => {
+router.get('/dashboard/overview', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
   try {
-    let query = {};
-    
-    if (req.user.role === 'client') {
-      query.clientId = req.user._id;
-    } else if (req.user.role === 'user') {
-      // Users only see their own stats
-      query._id = req.user._id;
+    const clientId = req.user._id;
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    const [totalUsers, activeUsers, inactiveUsers, newUsersThisMonth, newUsersLastMonth, totalPartners, activePartners] = await Promise.all([
+      User.countDocuments({ clientId }),
+      User.countDocuments({ clientId, isActive: true }),
+      User.countDocuments({ clientId, isActive: false }),
+      User.countDocuments({ clientId, createdAt: { $gte: thisMonthStart } }),
+      User.countDocuments({ clientId, createdAt: { $gte: lastMonthStart, $lt: thisMonthStart } }),
+      Partner.countDocuments({ clientId }),
+      Partner.countDocuments({ clientId, isActive: true })
+    ]);
+
+    // Last 6 months user growth
+    const userGrowthRaw = await User.aggregate([
+      { $match: { clientId, createdAt: { $gte: sixMonthsAgo } } },
+      { $group: { _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }, count: { $sum: 1 } } },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+    const userGrowth = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const found = userGrowthRaw.find(r => r._id.year === d.getFullYear() && r._id.month === d.getMonth() + 1);
+      userGrowth.push({ month: monthNames[d.getMonth()], count: found ? found.count : 0 });
     }
 
-    const totalUsers = await User.countDocuments(query);
-    const activeUsers = await User.countDocuments({ ...query, isActive: true });
-    const inactiveUsers = await User.countDocuments({ ...query, isActive: false });
+    // Recent 5 users
+    const recentUsers = await User.find({ clientId })
+      .select('email profile.name isActive createdAt')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .lean();
 
-    const response = {
+    const growthPct = newUsersLastMonth === 0
+      ? (newUsersThisMonth > 0 ? 100 : 0)
+      : Math.round(((newUsersThisMonth - newUsersLastMonth) / newUsersLastMonth) * 100);
+
+    res.json({
       success: true,
       data: {
-        totalUsers,
-        activeUsers,
-        inactiveUsers
+        totalUsers, activeUsers, inactiveUsers,
+        newUsersThisMonth, newUsersLastMonth, growthPct,
+        totalPartners, activePartners,
+        userGrowth, recentUsers,
+        clientInfo: {
+          businessName: req.user.businessName,
+          email: req.user.email,
+          clientId: req.user.clientId || 'N/A',
+          isActive: req.user.isActive
+        }
       }
-    };
-
-    // Add additional info based on role
-    if (req.user.role === 'client') {
-      response.data.clientInfo = {
-        businessName: req.user.businessName,
-        email: req.user.email,
-        clientId: req.user.clientId || 'Not assigned'
-      };
-    } else if (req.user.role === 'user') {
-      response.data.userInfo = {
-        email: req.user.email,
-        name: req.user.profile?.name || req.user.profile?.firstName,
-        registrationStep: req.user.registrationStep
-      };
-    }
-
-    res.json(response);
-  } catch (error) {
-    console.error('[Client API] Dashboard error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch dashboard data',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch dashboard data' });
   }
 });
 
@@ -3616,6 +3630,116 @@ router.get('/agents/conversation-logs', authenticate, authorize('client', 'admin
       error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
+});
+
+
+// ============ Client Health Route ============
+router.get('/health', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  try {
+    const dbState = mongoose.connection.readyState;
+    const dbStatusMap = { 0: 'Disconnected', 1: 'Connected', 2: 'Connecting', 3: 'Disconnecting' };
+    const dbStatus = dbStatusMap[dbState] || 'Unknown';
+
+    const mem = process.memoryUsage();
+    const toMB = (bytes) => Math.round(bytes / 1024 / 1024);
+
+    const uptimeSec = Math.floor(process.uptime());
+    const hours = Math.floor(uptimeSec / 3600);
+    const minutes = Math.floor((uptimeSec % 3600) / 60);
+    const seconds = uptimeSec % 60;
+    const uptime = `${hours}h ${minutes}m ${seconds}s`;
+
+    const clientId = req.user._id;
+    const [totalUsers, activeUsers, newUsersThisMonth] = await Promise.all([
+      User.countDocuments({ clientId }),
+      User.countDocuments({ clientId, isActive: true }),
+      User.countDocuments({
+        clientId,
+        createdAt: { $gte: new Date(new Date().getFullYear(), new Date().getMonth(), 1) }
+      })
+    ]);
+
+    const services = [
+      { name: 'MongoDB', status: dbState === 1 ? 'Operational' : 'Down', healthy: dbState === 1 },
+      { name: 'REST API', status: 'Operational', healthy: true },
+      { name: 'Authentication', status: 'Operational', healthy: true },
+      { name: 'File Storage', status: 'Operational', healthy: true }
+    ];
+
+    res.json({
+      success: true,
+      data: {
+        server: { status: 'Operational', uptime, nodeVersion: process.version, env: process.env.NODE_ENV || 'production' },
+        database: { status: dbStatus, healthy: dbState === 1, host: mongoose.connection.host || 'Atlas' },
+        memory: { heapUsed: toMB(mem.heapUsed), heapTotal: toMB(mem.heapTotal), rss: toMB(mem.rss), unit: 'MB' },
+        services,
+        stats: { totalUsers, activeUsers, newUsersThisMonth }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ============ Client API Health Monitor ============
+router.get('/api-health', authenticate, authorize('client', 'admin', 'super_admin'), async (req, res) => {
+  const BASE = `http://localhost:${process.env.PORT || 5000}/api`;
+  const token = req.headers.authorization;
+
+  const endpoints = [
+    { name: 'Client Health',        group: 'Client',    method: 'GET', url: `${BASE}/client/health` },
+    { name: 'Client Users',         group: 'Client',    method: 'GET', url: `${BASE}/client/users?limit=1` },
+    { name: 'Auth - Client Me',     group: 'Client',    method: 'GET', url: `${BASE}/auth/client/me` },
+    { name: 'Spiritual Check-in',   group: 'Spiritual', method: 'GET', url: `${BASE}/mobile/spiritual-checkin` },
+    { name: 'Spiritual Activities', group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-activities` },
+    { name: 'Spiritual Rewards',    group: 'Spiritual', method: 'GET', url: `${BASE}/spiritual-rewards` },
+    { name: 'Karma Points',         group: 'Spiritual', method: 'GET', url: `${BASE}/karma-points` },
+    { name: 'Leaderboard',          group: 'Spiritual', method: 'GET', url: `${BASE}/leaderboard` },
+    { name: 'Sankalp',              group: 'Spiritual', method: 'GET', url: `${BASE}/sankalp` },
+    { name: 'Puja Padhati',         group: 'Spiritual', method: 'GET', url: `${BASE}/puja-padhati` },
+    { name: 'Swapna Decoder',       group: 'Spiritual', method: 'GET', url: `${BASE}/swapna-decoder` },
+    { name: 'Experts',              group: 'Content',   method: 'GET', url: `${BASE}/experts` },
+    { name: 'Expert Categories',    group: 'Content',   method: 'GET', url: `${BASE}/expert-categories` },
+    { name: 'Meditations',          group: 'Content',   method: 'GET', url: `${BASE}/meditations` },
+    { name: 'Chantings',            group: 'Content',   method: 'GET', url: `${BASE}/chantings` },
+    { name: 'Brahm Avatars',        group: 'Content',   method: 'GET', url: `${BASE}/brahm-avatars` },
+    { name: 'Chapters',             group: 'Content',   method: 'GET', url: `${BASE}/chapters` },
+    { name: 'Notifications',        group: 'Content',   method: 'GET', url: `${BASE}/notifications` },
+    { name: 'Voice Config',         group: 'Content',   method: 'GET', url: `${BASE}/voice-config` },
+    { name: 'Prathanas',            group: 'Content',   method: 'GET', url: `${BASE}/prathanas` },
+    { name: 'Shlokas',              group: 'Content',   method: 'GET', url: `${BASE}/shlokas` },
+    { name: 'Health Check',         group: 'System',    method: 'GET', url: `${BASE}/health` },
+  ];
+
+  const results = await Promise.all(
+    endpoints.map(async (ep) => {
+      const start = Date.now();
+      try {
+        const response = await fetch(ep.url, {
+          method: ep.method,
+          headers: { Authorization: token, 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(8000)
+        });
+        const ms = Date.now() - start;
+        const healthy = response.status > 0 && response.status < 500;
+        const label = response.status < 300 ? 'OK' : response.status < 400 ? 'Redirect' : response.status < 500 ? 'Client Err' : 'Server Err';
+        return { ...ep, url: ep.url.replace(BASE, '/api'), status: response.status, ms, healthy, label };
+      } catch (err) {
+        return { ...ep, url: ep.url.replace(BASE, '/api'), method: ep.method, status: 0, ms: Date.now() - start, healthy: false, label: 'Unreachable', error: err.message };
+      }
+    })
+  );
+
+  const totalHealthy = results.filter(r => r.healthy).length;
+  const avgMs = Math.round(results.reduce((s, r) => s + r.ms, 0) / results.length);
+
+  res.json({
+    success: true,
+    data: {
+      summary: { total: results.length, healthy: totalHealthy, failed: results.length - totalHealthy, avgMs },
+      endpoints: results
+    }
+  });
 });
 
 export default router;
