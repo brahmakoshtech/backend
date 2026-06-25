@@ -107,7 +107,7 @@ app.use(cors({
 
 // ─── Security headers ─────────────────────────────────────────────────────────
 app.use((req, res, next) => {
-  res.setHeader('Cross-Origin-Opener-Policy',    'same-origin-allow-popups');
+  res.setHeader('Cross-Origin-Opener-Policy',    'unsafe-none');
   res.setHeader('Cross-Origin-Embedder-Policy',  'unsafe-none');
   res.setHeader('Cross-Origin-Resource-Policy',  'cross-origin');
   res.setHeader('Access-Control-Allow-Origin',   req.headers.origin || '*');
