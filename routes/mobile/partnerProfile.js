@@ -899,15 +899,23 @@ router.post('/check-email', async (req, res) => {
     }
 
     if (!partner.isActive) {
-      // Partner completed registration but waiting for client approval
+      // Check verificationStatus to give accurate message
+      if (partner.verificationStatus === 'rejected') {
+        return res.status(401).json({
+          success: false,
+          message: 'Your registration has been rejected. Please contact the administrator for more information.',
+          data: { rejected: true, verificationStatus: 'rejected', registered: true, email: partner.email }
+        });
+      }
       const pendingApproval = partner.registrationStep >= 3;
       return res.status(401).json({ 
         success: false, 
         message: pendingApproval 
-          ? 'Your registration is pending. Please wait for client approval before you can login.' 
+          ? 'Your registration is pending approval. Please wait for client approval before you can login.' 
           : 'Account is inactive. Please contact administrator.',
         data: { 
           pendingApproval: !!pendingApproval,
+          verificationStatus: partner.verificationStatus,
           registered: true,
           email: partner.email
         }
@@ -985,14 +993,22 @@ router.post('/login', async (req, res) => {
     }
 
     if (!partner.isActive) {
-      // Partner completed registration but waiting for client approval
+      // Check verificationStatus to give accurate message
+      if (partner.verificationStatus === 'rejected') {
+        return res.status(401).json({
+          success: false,
+          message: 'Your registration has been rejected. Please contact the administrator for more information.',
+          data: { rejected: true, verificationStatus: 'rejected' }
+        });
+      }
+      // verificationStatus === 'pending' or any other case
       const pendingApproval = partner.registrationStep >= 3;
       return res.status(401).json({ 
         success: false, 
         message: pendingApproval 
-          ? 'Your registration is pending. Please wait for client approval before you can login.' 
+          ? 'Your registration is pending approval. Please wait for client approval before you can login.' 
           : 'Account is inactive. Please contact administrator.',
-        data: pendingApproval ? { pendingApproval: true } : undefined
+        data: pendingApproval ? { pendingApproval: true, verificationStatus: partner.verificationStatus } : undefined
       });
     }
 
