@@ -2,8 +2,11 @@ import express from 'express';
 import multer from 'multer';
 import { v4 as uuidv4 } from 'uuid';
 import Partner from '../../models/Partner.js';
+import User from '../../models/User.js';
 import ServiceCreditLedger from '../../models/ServiceCreditLedger.js';
+import ConversationSession from '../../models/ConversationSession.js';
 import Client from '../../models/Client.js';
+import { emailUsedByOtherAccountType, phoneUsedByOtherAccountType } from '../../utils/accountValidation.js';
 import ExpertCategory from '../../models/ExpertCategory.js';
 import { generateToken, authenticate } from '../../middleware/auth.js';
 import {
@@ -71,6 +74,11 @@ router.post('/register/step1', async (req, res) => {
 
     // Validate client
     const client = await validateClientId(clientCode);
+
+    const crossEmailError = await emailUsedByOtherAccountType(email, 'partner');
+    if (crossEmailError) {
+      return res.status(400).json({ success: false, message: crossEmailError });
+    }
 
     // Check if partner already exists globally by email (unique constraint)
     let partner = await Partner.findOne({ email }).select('+emailOtp +emailOtpExpiry');
@@ -267,6 +275,11 @@ router.post('/register/step2', async (req, res) => {
         clientId: client._id,
         clientCode: client.clientId
       });
+    }
+
+    const crossPhoneError = await phoneUsedByOtherAccountType(phone, client._id, 'partner');
+    if (crossPhoneError) {
+      return res.status(400).json({ success: false, message: crossPhoneError });
     }
 
     // Check if phone is already registered to another partner in this client
@@ -973,7 +986,7 @@ router.post('/login', async (req, res) => {
     }
 
     // Find partner by email (and optionally by clientId)
-    const partner = await Partner.findOne(query).select('+password');
+    const partner = await Partner.findOne(query).select('+password').populate('clientId', 'clientId businessName');
     
     if (!partner) {
       return res.status(401).json({ 
@@ -1152,6 +1165,52 @@ router.get('/profile', authenticate, async (req, res) => {
       partnerData.profilePictureUrl = profilePictureUrl;
     }
 
+    // Recent sessions for profile screen (ConversationSession + ledger fallback)
+    let recentSessions = [];
+    try {
+      const sessionDocs = await ConversationSession.find({ partnerId: partner._id })
+        .sort({ endTime: -1 })
+        .limit(10)
+        .populate('userId', 'email profile profileImage')
+        .lean();
+
+      if (sessionDocs.length > 0) {
+        recentSessions = sessionDocs.map((s) => ({
+          conversationId: s.conversationId,
+          serviceType: 'chat',
+          userName: s.userId?.profile?.name || s.userId?.email || 'User',
+          userEmail: s.userId?.email || null,
+          duration: s.duration || 0,
+          creditsUsed: s.creditsUsed || 0,
+          creditsEarned: s.creditsUsed || 0,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          summary: s.summary || null
+        }));
+      } else {
+        const ledgerEntries = await ServiceCreditLedger.find({ partnerId: partner._id })
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .populate('userId', 'email profile profileImage')
+          .lean();
+        recentSessions = ledgerEntries.map((entry) => ({
+          conversationId: entry.conversationId,
+          serviceType: entry.serviceType || 'chat',
+          userName: entry.userId?.profile?.name || entry.userId?.email || 'User',
+          userEmail: entry.userId?.email || null,
+          duration: entry.billableMinutes || 0,
+          creditsEarned: entry.partnerCredited || 0,
+          startTime: entry.startTime || entry.createdAt,
+          endTime: entry.endTime || entry.createdAt
+        }));
+      }
+    } catch (sessionErr) {
+      console.error('Error loading partner sessions for profile:', sessionErr);
+    }
+
+    partnerData.recentSessions = recentSessions;
+    partnerData.totalSessions = partnerData.totalSessions || recentSessions.length;
+
     const token = generateToken(partner._id, 'partner');
 
     res.json({
@@ -1159,7 +1218,8 @@ router.get('/profile', authenticate, async (req, res) => {
       message: 'Profile retrieved successfully',
       data: {
         partner: { ...partnerData, role: 'partner' },
-        token
+        token,
+        sessions: recentSessions
       }
     });
   } catch (error) {
@@ -1434,6 +1494,94 @@ router.post('/register/resend-phone-otp', async (req, res) => {
       success: false, 
       message: error.message || 'Failed to resend phone OTP' 
     });
+  }
+});
+
+/**
+ * Get partner session history (for profile / earnings screens)
+ * GET /api/mobile/partner/sessions
+ * Query: ?page=1&limit=20
+ */
+router.get('/sessions', authenticate, async (req, res) => {
+  try {
+    if (req.user.role !== 'partner') {
+      return res.status(403).json({ success: false, message: 'Access denied. Partner access required.' });
+    }
+
+    const page = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 100);
+    const skip = (page - 1) * limit;
+
+    const [sessionDocs, sessionTotal] = await Promise.all([
+      ConversationSession.find({ partnerId: req.user._id })
+        .sort({ endTime: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('userId', 'email profile profileImage')
+        .lean(),
+      ConversationSession.countDocuments({ partnerId: req.user._id })
+    ]);
+
+    let sessions = [];
+    let total = sessionTotal;
+
+    if (sessionTotal > 0) {
+      sessions = sessionDocs.map((s) => ({
+        conversationId: s.conversationId,
+        serviceType: 'chat',
+        userName: s.userId?.profile?.name || s.userId?.email || 'User',
+        userEmail: s.userId?.email || null,
+        user: s.userId,
+        duration: s.duration || 0,
+        billableMinutes: s.duration || 0,
+        creditsEarned: s.creditsUsed || 0,
+        creditsUsed: s.creditsUsed || 0,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        summary: s.summary || null,
+        rating: s.rating || null,
+        createdAt: s.createdAt
+      }));
+    } else {
+      const [ledgerEntries, ledgerTotal] = await Promise.all([
+        ServiceCreditLedger.find({ partnerId: req.user._id })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .populate('userId', 'email profile profileImage')
+          .lean(),
+        ServiceCreditLedger.countDocuments({ partnerId: req.user._id })
+      ]);
+      total = ledgerTotal;
+      sessions = ledgerEntries.map((entry) => ({
+        conversationId: entry.conversationId,
+        serviceType: entry.serviceType || 'chat',
+        userName: entry.userId?.profile?.name || entry.userId?.email || 'User',
+        userEmail: entry.userId?.email || null,
+        user: entry.userId,
+        duration: entry.billableMinutes || 0,
+        billableMinutes: entry.billableMinutes || 0,
+        creditsEarned: entry.partnerCredited || 0,
+        creditsUsed: entry.userDebited || 0,
+        startTime: entry.startTime || entry.createdAt,
+        endTime: entry.endTime || entry.createdAt,
+        createdAt: entry.createdAt
+      }));
+    }
+
+    res.json({
+      success: true,
+      data: sessions,
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1
+      }
+    });
+  } catch (error) {
+    console.error('Get partner sessions error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to fetch sessions' });
   }
 });
 

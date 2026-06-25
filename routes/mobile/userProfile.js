@@ -515,6 +515,12 @@ router.post('/register/step1', async (req, res) => {
     // Validate client
     const client = await validateClientId(clientCode);
 
+    const { emailUsedByOtherAccountType } = await import('../../utils/accountValidation.js');
+    const crossEmailError = await emailUsedByOtherAccountType(email, 'user');
+    if (crossEmailError) {
+      return res.status(400).json({ success: false, message: crossEmailError });
+    }
+
     // Check if user already exists for this client
     let user = await User.findOne({ 
       clientId: client._id, 

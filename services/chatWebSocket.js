@@ -6,6 +6,12 @@ import Partner from '../models/Partner.js';
 import User from '../models/User.js';
 import ServiceCreditLedger from '../models/ServiceCreditLedger.js';
 import VoiceCallLog from '../models/VoiceCallLog.js';
+import { getBillingRates } from '../services/billingRates.js';
+import {
+  validateUserPartnerNotSameContact,
+  getUserDisplayName,
+  getPartnerDisplayName
+} from '../utils/accountValidation.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -14,22 +20,6 @@ const socketMetadata = new Map();
 const activeVoiceCalls = new Map();
 const voiceCallStartedAt = new Map();
 const voiceBillingIntervals = new Map();
-
-const DEFAULT_CHAT_CCR = 0.5;
-const DEFAULT_VOICE_CCR = 0.5;
-const PARTNER_RATE_PER_MIN = 3;
-
-const getCCRRates = async (clientId) => {
-  if (!clientId) return { chatCCR: DEFAULT_CHAT_CCR, voiceCCR: DEFAULT_VOICE_CCR };
-  try {
-    const { default: Client } = await import('../models/Client.js');
-    const client = await Client.findById(clientId).select('settings.chatCCR settings.voiceCCR').lean();
-    return {
-      chatCCR: client?.settings?.chatCCR ?? DEFAULT_CHAT_CCR,
-      voiceCCR: client?.settings?.voiceCCR ?? DEFAULT_VOICE_CCR
-    };
-  } catch { return { chatCCR: DEFAULT_CHAT_CCR, voiceCCR: DEFAULT_VOICE_CCR }; }
-};
 
 // Helper: settle partner earnings when a conversation ends via WebSocket
 const settlePartnerEarnings = async (conversationId, serviceType = 'chat') => {
@@ -43,7 +33,12 @@ const settlePartnerEarnings = async (conversationId, serviceType = 'chat') => {
     const billableMinutes = rawMinutes > 0 ? Math.max(1, Math.ceil(rawMinutes)) : 0;
     if (billableMinutes === 0) return;
 
-    const partnerCredited = billableMinutes * PARTNER_RATE_PER_MIN;
+    const userDoc = await User.findById(conversation.userId).select('clientId credits').lean();
+    const rates = await getBillingRates(conversation.partnerId, userDoc?.clientId);
+    const partnerRatePerMinute = serviceType === 'voice'
+      ? rates.partnerVoicePerMinute
+      : rates.partnerChatPerMinute;
+    const partnerCredited = billableMinutes * partnerRatePerMinute;
 
     const partner = await Partner.findById(conversation.partnerId);
     if (partner) {
@@ -55,9 +50,8 @@ const settlePartnerEarnings = async (conversationId, serviceType = 'chat') => {
       await partner.updateBusyStatus();
     }
 
-    const user = await User.findById(conversation.userId).select('credits');
-    const userNewBalance = user?.credits ?? 0;
-    const userPreviousBalance = userNewBalance; // already deducted per-message
+    const userNewBalance = userDoc?.credits ?? 0;
+    const userPreviousBalance = userNewBalance;
 
     await ServiceCreditLedger.findOneAndUpdate(
       { conversationId, serviceType },
@@ -67,14 +61,14 @@ const settlePartnerEarnings = async (conversationId, serviceType = 'chat') => {
         userId: conversation.userId,
         partnerId: conversation.partnerId,
         billableMinutes,
-        userDebited: 0, // already deducted per-message via chatCCR
+        userDebited: 0,
         partnerCredited,
         userPreviousBalance,
         userNewBalance,
         partnerPreviousBalance: (partner?.creditsEarnedBalance || 0) - partnerCredited,
         partnerNewBalance: partner?.creditsEarnedBalance || 0,
         userRatePerMinute: 0,
-        partnerRatePerMinute: PARTNER_RATE_PER_MIN,
+        partnerRatePerMinute,
         startTime,
         endTime
       },
@@ -167,6 +161,10 @@ export const setupChatWebSocket = (server) => {
         return next(new Error('User not found'));
       }
 
+      if (userType === 'partner' && !user.isActive) {
+        return next(new Error('Account pending approval or inactive'));
+      }
+
       socket.userId = userId;
       socket.userType = userType;
       socket.user = user;
@@ -250,7 +248,7 @@ export const setupChatWebSocket = (server) => {
         peerId: peerDoc._id.toString(),
         peerInfo: {
           id: peerDoc._id,
-          name: peerDoc.name || peerDoc.profile?.name || peerDoc.email,
+          name: isCallerPartner ? getUserDisplayName(peerDoc) : getPartnerDisplayName(peerDoc),
           email: peerDoc.email,
           profilePicture: peerDoc.profilePicture || peerDoc.profileImage || null,
           onlineStatus: peerDoc.onlineStatus || peerDoc.status || null
@@ -338,7 +336,8 @@ export const setupChatWebSocket = (server) => {
             await settlePartnerEarnings(conversationId, 'chat');
             return callback?.({ success: false, message: 'Insufficient credits. Chat ended.' });
           }
-          const { chatCCR } = await getCCRRates(userDoc.clientId);
+          const rates = await getBillingRates(conversation.partnerId, userDoc.clientId);
+          const chatCCR = rates.chatPerMessage;
           const newBalance = Math.max(0, userDoc.credits - chatCCR);
           userDoc.credits = newBalance;
           await userDoc.save();
@@ -450,7 +449,36 @@ export const setupChatWebSocket = (server) => {
       console.log(`📞 [${userType}] voice:call:initiate`, data);
 
       try {
-        const { conversationId } = data || {};
+        let { conversationId, partnerId } = data || {};
+
+        // Auto-create or reuse conversation when user calls expert directly
+        if (!conversationId && partnerId && userType === 'user') {
+          const contactError = await validateUserPartnerNotSameContact(userId, partnerId);
+          if (contactError) {
+            return callback?.({ success: false, message: contactError });
+          }
+
+          let existingConv = await Conversation.findOne({
+            userId,
+            partnerId,
+            status: { $in: ['pending', 'accepted', 'active'] }
+          });
+
+          if (!existingConv) {
+            const baseId = [partnerId, userId].sort().join('_');
+            const newConversationId = `${baseId}_${Date.now()}`;
+            existingConv = await Conversation.create({
+              conversationId: newConversationId,
+              userId,
+              partnerId,
+              status: 'pending',
+              isAcceptedByPartner: false
+            });
+          }
+
+          conversationId = existingConv.conversationId;
+        }
+
         if (!conversationId) {
           return callback?.({ success: false, message: 'conversationId is required' });
         }
@@ -458,6 +486,13 @@ export const setupChatWebSocket = (server) => {
         const { conversation, peerId, peerInfo, error } = await getCallPeer(conversationId);
         if (error) {
           return callback?.({ success: false, message: error });
+        }
+
+        const convUserId = conversation.userId?._id?.toString() || conversation.userId?.toString();
+        const convPartnerId = conversation.partnerId?._id?.toString() || conversation.partnerId?.toString();
+        const contactError = await validateUserPartnerNotSameContact(convUserId, convPartnerId);
+        if (contactError) {
+          return callback?.({ success: false, message: contactError });
         }
 
         // Ensure caller belongs to this conversation
@@ -469,6 +504,10 @@ export const setupChatWebSocket = (server) => {
         if (!hasAccess) {
           return callback?.({ success: false, message: 'Access denied for this conversation' });
         }
+
+        const callerDisplayName = userType === 'partner'
+          ? getPartnerDisplayName(user)
+          : getUserDisplayName(user);
 
         // Prevent multiple simultaneous voice calls per participant
         const callerKey = userId.toString();
@@ -484,7 +523,7 @@ export const setupChatWebSocket = (server) => {
               partnerId: conversation.partnerId?._id || conversation.partnerId,
               status: 'busy',
               initiatedBy: { id: userId, type: userType },
-              from: { id: userId, type: userType, name: user.email || user.name, email: user.email || null },
+              from: { id: userId, type: userType, name: callerDisplayName, email: user.email || null },
               to: { id: peerId, type: userType === 'partner' ? 'user' : 'partner', name: peerInfo?.name || null, email: peerInfo?.email || null },
               initiatedAt: new Date()
             },
@@ -501,7 +540,7 @@ export const setupChatWebSocket = (server) => {
               partnerId: conversation.partnerId?._id || conversation.partnerId,
               status: 'busy',
               initiatedBy: { id: userId, type: userType },
-              from: { id: userId, type: userType, name: user.email || user.name, email: user.email || null },
+              from: { id: userId, type: userType, name: callerDisplayName, email: user.email || null },
               to: { id: peerId, type: userType === 'partner' ? 'user' : 'partner', name: peerInfo?.name || null, email: peerInfo?.email || null },
               initiatedAt: new Date()
             },
@@ -528,16 +567,15 @@ export const setupChatWebSocket = (server) => {
           from: {
             id: userId,
             type: userType,
-            name: user.email || user.name
+            name: callerDisplayName,
+            email: user.email || null
           },
           to: peerInfo,
           startedAt
         };
 
-        // Track start time for billing
         voiceCallStartedAt.set(conversationId, startedAt);
 
-        // Persist call log (ringing)
         await VoiceCallLog.findOneAndUpdate(
           { conversationId },
           {
@@ -546,7 +584,7 @@ export const setupChatWebSocket = (server) => {
             partnerId: conversation.partnerId?._id || conversation.partnerId,
             status: 'ringing',
             initiatedBy: { id: userId, type: userType },
-            from: { id: userId, type: userType, name: user.email || user.name, email: user.email || null },
+            from: { id: userId, type: userType, name: callerDisplayName, email: user.email || null },
             to: { id: peerId, type: userType === 'partner' ? 'user' : 'partner', name: peerInfo?.name || null, email: peerInfo?.email || null },
             initiatedAt: startedAt
           },
@@ -562,6 +600,7 @@ export const setupChatWebSocket = (server) => {
         callback?.({
           success: true,
           message: 'Call initiated',
+          conversationId,
           call: payload
         });
       } catch (err) {
@@ -578,12 +617,16 @@ export const setupChatWebSocket = (server) => {
           const userDoc = await User.findById(userIdForBilling);
           if (!userDoc) return;
 
-          const { voiceCCR } = await getCCRRates(clientId || userDoc.clientId);
+          const rates = await getBillingRates(partnerIdForBilling, clientId || userDoc.clientId);
+          const voiceCCR = rates.voicePerSecond;
 
           if (userDoc.credits <= 0) {
             clearInterval(interval);
             voiceBillingIntervals.delete(conversationId);
-            await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+            await Conversation.findOneAndUpdate(
+              { conversationId },
+              { voiceCallActive: false, lastVoiceCallEndedAt: new Date() }
+            );
             const userSocketId = activeConnections.get(userIdForBilling.toString());
             const partnerSocketId = activeConnections.get(partnerIdForBilling.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
@@ -612,7 +655,10 @@ export const setupChatWebSocket = (server) => {
           if (newBalance <= 0) {
             clearInterval(interval);
             voiceBillingIntervals.delete(conversationId);
-            await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
+            await Conversation.findOneAndUpdate(
+              { conversationId },
+              { voiceCallActive: false, lastVoiceCallEndedAt: new Date() }
+            );
             const partnerSocketId = activeConnections.get(partnerIdForBilling.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
             if (userSocketId) io.to(userSocketId).emit('voice:auto_ended', autoEndPayload);
@@ -694,17 +740,36 @@ export const setupChatWebSocket = (server) => {
           }
         );
 
+        await Conversation.findOneAndUpdate(
+          { conversationId },
+          { voiceCallActive: true }
+        );
+
+        // Notify user that pending chat was auto-accepted when answering call
+        if (isCalleePartner && conversation.isAcceptedByPartner) {
+          const userSocketId = activeConnections.get(
+            conversation.userId?._id?.toString() || conversation.userId?.toString()
+          );
+          if (userSocketId) {
+            io.to(userSocketId).emit('conversation:accepted', { conversationId });
+          }
+        }
+
         const callerSocketId = activeConnections.get(peerId);
         if (!callerSocketId) {
           return callback?.({ success: false, message: 'Caller is offline' });
         }
+
+        const acceptDisplayName = userType === 'partner'
+          ? getPartnerDisplayName(user)
+          : getUserDisplayName(user);
 
         const payload = {
           conversationId,
           acceptedBy: {
             id: userId,
             type: userType,
-            name: user.email || user.name
+            name: acceptDisplayName
           },
           peer: peerInfo,
           acceptedAt: new Date()
@@ -721,6 +786,7 @@ export const setupChatWebSocket = (server) => {
         callback?.({
           success: true,
           message: 'Call accepted',
+          conversationId,
           call: payload
         });
       } catch (err) {
@@ -803,14 +869,18 @@ export const setupChatWebSocket = (server) => {
 
         const peerSocketId = activeConnections.get(peerId);
         const endedAt = new Date();
+        const enderDisplayName = userType === 'partner'
+          ? getPartnerDisplayName(user)
+          : getUserDisplayName(user);
         const payload = {
           conversationId,
           endedBy: {
             id: userId,
             type: userType,
-            name: user.email || user.name
+            name: enderDisplayName
           },
-          endedAt
+          endedAt,
+          continueChat: true
         };
 
         if (peerSocketId) {
@@ -832,13 +902,10 @@ export const setupChatWebSocket = (server) => {
           voiceBillingIntervals.delete(conversationId);
         }
 
-        // ✅ FIX: Mark conversation as ended after voice call ends
-        // This prevents chat billing from continuing after voice call
+        // Keep chat session active — only clear voice call state
         await Conversation.findOneAndUpdate(
           { conversationId },
-          { 
-            status: 'ended',
-            endedAt,
+          {
             voiceCallActive: false,
             lastVoiceCallEndedAt: endedAt
           }
@@ -852,26 +919,22 @@ export const setupChatWebSocket = (server) => {
           voiceCallStartedAt.delete(conversationId);
           const durationMs = Math.max(0, endedAt.getTime() - new Date(startTime).getTime());
           durationSecondsForLog = Math.round(durationMs / 1000);
-          billableMinutesForLog = Math.ceil(durationSecondsForLog / 60);
+          billableMinutesForLog = Math.max(1, Math.ceil(durationSecondsForLog / 60));
 
-          // Settle partner earnings for voice call
-          const partnerCredited = billableMinutesForLog * PARTNER_RATE_PER_MIN;
+          const userDoc = await User.findById(conversation.userId).select('credits clientId').lean();
+          const rates = await getBillingRates(conversation.partnerId, userDoc?.clientId);
+          const partnerCredited = billableMinutesForLog * rates.partnerVoicePerMinute;
           const partnerDoc = await Partner.findById(conversation.partnerId);
           if (partnerDoc && partnerCredited > 0) {
             const partnerPreviousBalance = partnerDoc.creditsEarnedBalance || 0;
             partnerDoc.creditsEarnedBalance = partnerPreviousBalance + partnerCredited;
             partnerDoc.creditsEarnedTotal = (partnerDoc.creditsEarnedTotal || 0) + partnerCredited;
-            if (partnerDoc.activeConversationsCount > 0) {
-              partnerDoc.activeConversationsCount -= 1;
-            }
             await partnerDoc.updateBusyStatus();
             console.log(`[ChatWebSocket] Voice partner earnings settled: +${partnerCredited} credits for ${billableMinutesForLog} min (${conversationId})`);
           }
 
-          // Get final balances for ledger record
-          const userDoc = await User.findById(conversation.userId);
           if (userDoc) {
-            const { voiceCCR: ledgerVoiceCCR } = await getCCRRates(userDoc.clientId);
+            const userDebited = durationSecondsForLog * rates.voicePerSecond;
             const partnerPrevBal = partnerDoc ? (partnerDoc.creditsEarnedBalance - partnerCredited) : 0;
             await ServiceCreditLedger.findOneAndUpdate(
               { conversationId, serviceType: 'voice' },
@@ -881,14 +944,14 @@ export const setupChatWebSocket = (server) => {
                 userId: conversation.userId,
                 partnerId: conversation.partnerId,
                 billableMinutes: billableMinutesForLog,
-                userDebited: durationSecondsForLog * ledgerVoiceCCR,
+                userDebited,
                 partnerCredited,
-                userPreviousBalance: userDoc.credits + (durationSecondsForLog * ledgerVoiceCCR),
+                userPreviousBalance: userDoc.credits + userDebited,
                 userNewBalance: userDoc.credits,
                 partnerPreviousBalance: partnerPrevBal,
                 partnerNewBalance: partnerDoc ? partnerDoc.creditsEarnedBalance : 0,
-                userRatePerMinute: ledgerVoiceCCR * 60,
-                partnerRatePerMinute: PARTNER_RATE_PER_MIN,
+                userRatePerMinute: rates.voicePerMinute,
+                partnerRatePerMinute: rates.partnerVoicePerMinute,
                 startTime,
                 endTime: endedAt
               },
@@ -950,21 +1013,94 @@ export const setupChatWebSocket = (server) => {
     socket.on('disconnect', async () => {
       console.log(`\n❌ [${userType}] DISCONNECTED:`, user.email || user.name, '\n');
 
+      const disconnectedUserId = userId.toString();
+      const activeCallConvId = activeVoiceCalls.get(disconnectedUserId);
+
+      if (activeCallConvId) {
+        try {
+          const conversation = await Conversation.findOne({ conversationId: activeCallConvId }).lean();
+          if (conversation) {
+            const convUserId = conversation.userId?.toString();
+            const convPartnerId = conversation.partnerId?.toString();
+            const peerId = disconnectedUserId === convUserId ? convPartnerId : convUserId;
+            const peerSocketId = peerId ? activeConnections.get(peerId) : null;
+            const endedAt = new Date();
+
+            activeVoiceCalls.delete(disconnectedUserId);
+            if (peerId) activeVoiceCalls.delete(peerId);
+
+            const billingInterval = voiceBillingIntervals.get(activeCallConvId);
+            if (billingInterval) {
+              clearInterval(billingInterval);
+              voiceBillingIntervals.delete(activeCallConvId);
+            }
+
+            await Conversation.findOneAndUpdate(
+              { conversationId: activeCallConvId },
+              { voiceCallActive: false, lastVoiceCallEndedAt: endedAt }
+            );
+
+            const endPayload = {
+              conversationId: activeCallConvId,
+              endedBy: { id: userId, type: userType, name: user.email || user.name },
+              endedAt,
+              reason: 'peer_disconnected',
+              continueChat: true
+            };
+
+            if (peerSocketId) {
+              io.to(peerSocketId).emit('voice:call:ended', endPayload);
+            }
+
+            const startTime = voiceCallStartedAt.get(activeCallConvId) || conversation.startedAt;
+            voiceCallStartedAt.delete(activeCallConvId);
+            const durationSeconds = startTime
+              ? Math.max(0, Math.round((endedAt - new Date(startTime)) / 1000))
+              : 0;
+            const billableMinutes = durationSeconds > 0 ? Math.max(1, Math.ceil(durationSeconds / 60)) : 0;
+
+            await VoiceCallLog.findOneAndUpdate(
+              { conversationId: activeCallConvId },
+              {
+                status: 'ended',
+                endedAt,
+                endedBy: { id: userId, type: userType },
+                durationSeconds,
+                billableMinutes
+              }
+            );
+
+            if (billableMinutes > 0) {
+              const userDoc = await User.findById(conversation.userId).select('clientId credits').lean();
+              const rates = await getBillingRates(conversation.partnerId, userDoc?.clientId);
+              const partnerCredited = billableMinutes * rates.partnerVoicePerMinute;
+              const partnerDoc = await Partner.findById(conversation.partnerId);
+              if (partnerDoc && partnerCredited > 0) {
+                partnerDoc.creditsEarnedBalance = (partnerDoc.creditsEarnedBalance || 0) + partnerCredited;
+                partnerDoc.creditsEarnedTotal = (partnerDoc.creditsEarnedTotal || 0) + partnerCredited;
+                await partnerDoc.save();
+              }
+            }
+          }
+        } catch (disconnectCallErr) {
+          console.error('[ChatWebSocket] disconnect call cleanup error:', disconnectCallErr.message);
+        }
+      }
+
       activeConnections.delete(userId);
       socketMetadata.delete(socket.id);
 
-      // Bug Fix: Clear any active voice billing interval on disconnect to prevent memory leak
+      // Clear any remaining voice billing intervals for this user
       for (const [convId, interval] of voiceBillingIntervals.entries()) {
         const conv = await Conversation.findOne({ conversationId: convId }).lean().catch(() => null);
         if (conv) {
           const isParticipant =
-            conv.userId?.toString() === userId ||
-            conv.partnerId?.toString() === userId;
+            conv.userId?.toString() === disconnectedUserId ||
+            conv.partnerId?.toString() === disconnectedUserId;
           if (isParticipant) {
             clearInterval(interval);
             voiceBillingIntervals.delete(convId);
             voiceCallStartedAt.delete(convId);
-            activeVoiceCalls.delete(userId);
             console.log(`[ChatWebSocket] Cleared billing interval on disconnect for conv: ${convId}`);
           }
         }

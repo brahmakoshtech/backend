@@ -843,6 +843,7 @@ router.post('/partners/:partnerId/approve', authenticate, authorize('client', 'a
     }
 
     partner.isActive = true;
+    partner.isVerified = true;
     partner.verificationStatus = 'approved';
     partner.verifiedAt = new Date();
     await partner.save();

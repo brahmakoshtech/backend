@@ -275,6 +275,12 @@ router.post('/', authenticate, async (req, res) => {
       });
     }
 
+    const { emailUsedByOtherAccountType } = await import('../../utils/accountValidation.js');
+    const crossEmailError = await emailUsedByOtherAccountType(email, 'partner');
+    if (crossEmailError) {
+      return res.status(400).json({ success: false, message: crossEmailError });
+    }
+
     const expNum = Number(String(experience).match(/\d+/)?.[0] || 0);
     const expertiseArr = String(expertise)
       .split(',')

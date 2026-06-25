@@ -16,6 +16,8 @@ import remedyService from '../services/remedyService.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
 import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
+import { getBillingRates } from '../services/billingRates.js';
+import { validateUserPartnerNotSameContact, getUserDisplayName } from '../utils/accountValidation.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
@@ -348,6 +350,11 @@ router.post('/conversations', authenticate, async (req, res) => {
     }
 
     console.log('✅ Partner found:', partner.name);
+
+    const contactError = await validateUserPartnerNotSameContact(finalUserId, finalPartnerId);
+    if (contactError) {
+      return res.status(400).json({ success: false, message: contactError });
+    }
 
     // If user is starting a chat, ensure they have credits > 0
     if (req.userType === 'user') {
@@ -1024,10 +1031,8 @@ router.post('/conversations/:conversationId/messages', authenticate, async (req,
           creditSummary: { creditsDeducted: 0, remainingBalance: 0 }
         });
       }
-      // Fetch dynamic CCR from client settings
-      const clientDoc = await (await import('../models/Client.js')).default
-        .findById(userDoc.clientId).select('settings.chatCCR').lean();
-      const chatCCR = clientDoc?.settings?.chatCCR ?? 0.5;
+      const rates = await getBillingRates(conversation.partnerId, userDoc.clientId);
+      const chatCCR = rates.chatPerMessage;
       const newBalance = Math.max(0, userDoc.credits - chatCCR);
       userDoc.credits = newBalance;
       await userDoc.save();
@@ -1171,9 +1176,11 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
       isDeleted: false
     });
 
-    // Credit billing rates (shared for all flows)
-    const USER_RATE_PER_MIN = 4;
-    const PARTNER_RATE_PER_MIN = 3;
+    // Credit billing rates from expert pricing / client CCR settings
+    const userForRates = await User.findById(conversation.userId).select('clientId').lean();
+    const billingRates = await getBillingRates(conversation.partnerId, userForRates?.clientId);
+    const USER_RATE_PER_MIN = billingRates.chatPerMinute;
+    const PARTNER_RATE_PER_MIN = billingRates.partnerChatPerMinute;
 
     // If conversation was never accepted by partner (still pending),
     // treat this as a non-billable end: no credits, no summary.
@@ -1280,14 +1287,26 @@ router.patch('/conversations/:conversationId/end', authenticate, async (req, res
     conversation.status = 'ended';
     conversation.endedAt = endTime;
 
-    // Compute credits: user pays 4/min, partner earns 3/min (proportional to actual debit)
-    const user = await User.findById(conversation.userId).select('credits email profile');
+    // Compute credits using expert rates; skip user debit if already billed via WebSocket
+    const user = await User.findById(conversation.userId).select('credits email profile clientId');
     const partner = await Partner.findById(conversation.partnerId).select('creditsEarnedTotal creditsEarnedBalance email name activeConversationsCount');
+
+    const existingLedger = await ServiceCreditLedger.findOne({
+      conversationId,
+      serviceType: { $in: ['chat', 'voice'] }
+    }).lean();
+    const existingChatLedger = await ChatCreditLedger.findOne({ conversationId }).lean();
+    const alreadyDebited =
+      (existingLedger?.userDebited || 0) + (existingChatLedger?.userDebited || 0);
 
     const userPreviousBalance = user?.credits || 0;
     const intendedUserDebit = billableMinutes * USER_RATE_PER_MIN;
-    const userDebited = Math.min(userPreviousBalance, intendedUserDebit);
-    const userNewBalance = Math.max(0, userPreviousBalance - userDebited);
+    const userDebited = alreadyDebited > 0
+      ? 0
+      : Math.min(userPreviousBalance, intendedUserDebit);
+    const userNewBalance = alreadyDebited > 0
+      ? userPreviousBalance
+      : Math.max(0, userPreviousBalance - userDebited);
 
     const partnerPreviousBalance = partner?.creditsEarnedBalance || 0;
     // Partner always earns full 3 credits per billable minute
@@ -1674,6 +1693,59 @@ router.post('/voice/recording/upload-url', authenticate, async (req, res) => {
 
 // ==================== VOICE CALL LOG HISTORY ====================
 
+async function enrichVoiceCallLogItems(items) {
+  const userIds = [...new Set(items.map((i) => i.userId?.toString()).filter(Boolean))];
+  const partnerIds = [...new Set(items.map((i) => i.partnerId?.toString()).filter(Boolean))];
+
+  const [users, partners] = await Promise.all([
+    userIds.length
+      ? User.find({ _id: { $in: userIds } }).select('email profile profileImage name').lean()
+      : [],
+    partnerIds.length
+      ? Partner.find({ _id: { $in: partnerIds } }).select('name email profilePicture').lean()
+      : []
+  ]);
+
+  const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+  const partnerMap = new Map(partners.map((p) => [p._id.toString(), p]));
+
+  return items.map((item) => {
+    const user = userMap.get(item.userId?.toString());
+    const partner = partnerMap.get(item.partnerId?.toString());
+    const userName = getUserDisplayName(user) || item.from?.name || 'User';
+    const partnerName = partner?.name || item.to?.name || 'Expert';
+
+    const from = { ...(item.from || {}) };
+    const to = { ...(item.to || {}) };
+
+    if (from.type === 'user' && user) {
+      from.name = getUserDisplayName(user);
+      from.email = user.email;
+    } else if (from.type === 'partner' && partner) {
+      from.name = partner.name || partner.email;
+      from.email = partner.email;
+    }
+
+    if (to.type === 'user' && user) {
+      to.name = getUserDisplayName(user);
+      to.email = user.email;
+    } else if (to.type === 'partner' && partner) {
+      to.name = partner.name || partner.email;
+      to.email = partner.email;
+    }
+
+    return {
+      ...item,
+      from,
+      to,
+      userName,
+      partnerName,
+      user: user ? { _id: user._id, email: user.email, profile: user.profile, profileImage: user.profileImage } : null,
+      partner: partner ? { _id: partner._id, name: partner.name, email: partner.email, profilePicture: partner.profilePicture } : null
+    };
+  });
+}
+
 // @route   GET /api/chat/voice/calls/history/user
 // @desc    Get paginated voice call logs for current user
 // @access  Private (User)
@@ -1728,7 +1800,7 @@ router.get('/voice/calls/history/user', authenticate, async (req, res) => {
     };
 
     const data = await Promise.all(
-      items.map(async (i) => {
+      (await enrichVoiceCallLogItems(items)).map(async (i) => {
         const voiceRecordings = convMap.get(i.conversationId)?.metadata?.voiceRecordings || null;
         const signed = await signVoiceRecordings(voiceRecordings);
         return { ...i, voiceRecordings: signed };
@@ -1797,7 +1869,7 @@ router.get('/voice/calls/history/partner', authenticate, async (req, res) => {
     };
 
     const data = await Promise.all(
-      items.map(async (i) => {
+      (await enrichVoiceCallLogItems(items)).map(async (i) => {
         const voiceRecordings = convMap.get(i.conversationId)?.metadata?.voiceRecordings || null;
         const signed = await signVoiceRecordings(voiceRecordings);
         return { ...i, voiceRecordings: signed };

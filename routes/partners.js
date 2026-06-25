@@ -75,9 +75,9 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
     // Find partner
-    const partner = await Partner.findOne({ email });
+    const partner = await Partner.findOne({ email }).populate('clientId', 'clientId businessName');
     if (!partner) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
@@ -86,17 +86,30 @@ router.post('/login', async (req, res) => {
     // Check password
     const isMatch = await partner.comparePassword(password);
     if (!isMatch) {
-      return res.status(400).json({
+      return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
-    // Check if partner is active
+    // Check approval / activation status with accurate messaging
     if (!partner.isActive) {
-      return res.status(400).json({
+      if (partner.verificationStatus === 'rejected') {
+        return res.status(401).json({
+          success: false,
+          message: 'Your registration has been rejected. Please contact the administrator for more information.',
+          data: { rejected: true, verificationStatus: 'rejected' }
+        });
+      }
+      const pendingApproval = partner.registrationStep >= 3;
+      return res.status(401).json({
         success: false,
-        message: 'Account is deactivated. Please contact support.'
+        message: pendingApproval
+          ? 'Your registration is pending approval. Please wait for client approval before you can login.'
+          : 'Account is inactive. Please contact administrator.',
+        data: pendingApproval
+          ? { pendingApproval: true, verificationStatus: partner.verificationStatus }
+          : undefined
       });
     }
 
