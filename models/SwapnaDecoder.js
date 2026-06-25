@@ -157,8 +157,7 @@ const swapnaDecoderSchema = new mongoose.Schema({
   },
   tags: {
     type: [String],
-    default: [],
-    index: true
+    default: []
   },
   clientId: {
     type: String,
