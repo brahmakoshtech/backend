@@ -2069,7 +2069,8 @@ router.post('/get-location', authenticate, async (req, res) => {
 
     await user.save();
 
-    // Refresh astrology when live location changes
+    // Only refresh astrology when live location actually changes (not on every get-location call).
+    // Use cached data if it exists and the coordinates haven't changed significantly.
     const userWithLoc = await User.findById(user._id).select('profile liveLocation').lean();
     const profileWithLocation = {
       ...userWithLoc?.profile,
@@ -2078,9 +2079,11 @@ router.post('/get-location', authenticate, async (req, res) => {
     };
     if (profileWithLocation.dob && profileWithLocation.timeOfBirth &&
         profileWithLocation.latitude != null && profileWithLocation.longitude != null) {
-      astrologyService.refreshAstrologyData(user._id, profileWithLocation)
-        .then(() => console.log('[UserProfile] Astrology data refreshed after get-location'))
-        .catch(err => console.warn('[UserProfile] Astrology refresh failed:', err.message));
+      // Use getCompleteAstrologyData with forceRefresh=false so cached DB data is returned
+      // when available, avoiding repeated expensive API calls on every location ping.
+      astrologyService.getCompleteAstrologyData(user._id, profileWithLocation, false)
+        .then(() => console.log('[UserProfile] Astrology data ensured (cached or fresh) after get-location'))
+        .catch(err => console.warn('[UserProfile] Astrology ensure failed:', err.message));
     }
 
     console.log(`Live location saved for user ${user._id}:`, {

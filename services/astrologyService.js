@@ -237,10 +237,11 @@ class AstrologyService {
 
   async fetchPlanetNature(birthData) {
     try {
-      const response = await this.apiClient.post('/planet_nature', birthData);
+      // Correct endpoint name is 'planets_nature' (plural), not 'planet_nature'
+      const response = await this.apiClient.post('/planets_nature', birthData);
       return response.data;
     } catch (error) {
-      console.warn('[Astrology Service] planet_nature error:', error.response?.data || error.message);
+      console.warn('[Astrology Service] planets_nature error:', error.response?.data || error.message);
       return null;
     }
   }

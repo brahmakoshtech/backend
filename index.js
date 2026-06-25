@@ -4,7 +4,7 @@ import 'dotenv/config';
 import server from './app.js';
 import './services/cronJobs.js';
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
   console.log('\n' + '='.repeat(80));

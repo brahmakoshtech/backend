@@ -125,8 +125,9 @@ astrologySchema.pre('save', function(next) {
   next();
 });
 
-// Index for faster queries
-astrologySchema.index({ userId: 1 });
+// NOTE: userId index is already created by unique:true in the schema field definition above.
+// Adding a second explicit index here would create a duplicate index in MongoDB.
+// astrologySchema.index({ userId: 1 }); // REMOVED - duplicate of the unique index on userId field
 
 const Astrology = mongoose.model('Astrology', astrologySchema);
 

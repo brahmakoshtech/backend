@@ -190,6 +190,16 @@ const conversationSchema = new mongoose.Schema({
     }
   },
   
+  // Voice Call State (runtime flag - not persisted long-term)
+  voiceCallActive: {
+    type: Boolean,
+    default: false
+  },
+  lastVoiceCallEndedAt: {
+    type: Date,
+    default: null
+  },
+  
   // Notes (for internal use)
   notes: {
     type: String,

@@ -322,6 +322,13 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'This conversation has ended. No messages can be sent.' });
         }
 
+        // ✅ FIX: Block chat billing when a voice call is currently active for this conversation.
+        // During an active voice call the per-second voice billing interval is already running.
+        // Allowing chat billing to run simultaneously would cause double-charging.
+        if (!isPartner && conversation.voiceCallActive === true) {
+          return callback?.({ success: false, message: 'Voice call in progress. Send messages after the call ends.' });
+        }
+
         const isPartner = userType === 'partner';
 
         // Credit deduction: only user pays per message
@@ -902,7 +909,8 @@ export const setupChatWebSocket = (server) => {
           voiceBillingIntervals.delete(conversationId);
         }
 
-        // Keep chat session active — only clear voice call state
+        // Keep chat session active — only clear voice call state.
+        // The conversation status remains 'accepted' so users can continue chatting.
         await Conversation.findOneAndUpdate(
           { conversationId },
           {
@@ -1035,6 +1043,7 @@ export const setupChatWebSocket = (server) => {
               voiceBillingIntervals.delete(activeCallConvId);
             }
 
+            // Clear voiceCallActive flag so chat message billing resumes correctly
             await Conversation.findOneAndUpdate(
               { conversationId: activeCallConvId },
               { voiceCallActive: false, lastVoiceCallEndedAt: endedAt }
