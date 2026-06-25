@@ -97,28 +97,48 @@ router.post('/', authenticateToken, async (req, res) => {
       return res.status(401).json({ error: 'User authentication failed' });
     }
 
-    // If clientId not sent from frontend, extract from user token
+    // If clientId not sent from frontend, extract from authenticated user
     if (!clientId) {
-      if (req.user.clientId) {
-        // clientId may be ObjectId — resolve to string clientId
-        const rawClientId = req.user.clientId?.toString();
-        if (rawClientId && rawClientId.length === 24 && /^[0-9a-fA-F]{24}$/.test(rawClientId)) {
-          const Client = (await import('../models/Client.js')).default;
-          const client = await Client.findById(rawClientId);
-          clientId = client?.clientId || rawClientId;
-        } else {
-          clientId = rawClientId;
+      const Client = (await import('../models/Client.js')).default;
+
+      const resolveClientId = async (ref) => {
+        if (!ref) return null;
+        // Already populated object with CLI-XXXXXX
+        if (ref.clientId) return ref.clientId;
+        // ObjectId — fetch from DB
+        const raw = (ref._id || ref).toString();
+        if (/^[0-9a-fA-F]{24}$/.test(raw)) {
+          const client = await Client.findById(raw).select('clientId').lean();
+          return client?.clientId || null;
         }
+        // Already CLI-XXXXXX format
+        if (/^CLI-/i.test(raw)) return raw;
+        return null;
+      };
+
+      // 1. From populated/ref clientId on user object
+      clientId = await resolveClientId(req.user.clientId);
+
+      // 2. From token's clientId (ObjectId stored in JWT)
+      if (!clientId && req.user.tokenClientId) {
+        clientId = await resolveClientId(req.user.tokenClientId);
+      }
+
+      // 3. From decoded token clientId
+      if (!clientId && req.decodedClientId) {
+        clientId = await resolveClientId(req.decodedClientId);
       }
     }
 
     if (!clientId) {
-      return res.status(400).json({ error: 'Client ID is required' });
+      return res.status(400).json({ 
+        error: 'Client ID not found. Your account is not linked to any client. Please contact support.' 
+      });
     }
 
     const userId = req.user._id;
-    const userEmail = req.user.email;
-    const userName = req.user.profile?.name || req.user.name || (userEmail ? userEmail.split('@')[0] : 'User');
+    const userEmail = req.user.email || `user_${userId}@brahmakosh.app`;
+    const userName = req.user.profile?.name || req.user.name || (req.user.email ? req.user.email.split('@')[0] : 'User');
 
     const request = new DreamRequest({
       dreamSymbol,
