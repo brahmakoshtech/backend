@@ -785,10 +785,8 @@ export const setupChatWebSocket = (server) => {
           { voiceCallActive: true }
         );
 
-        // Notify user that pending chat was auto-accepted when answering call
-        if (isCalleePartner && conversation.isAcceptedByPartner) {
-          emitToUser(io, conversation.userId?._id?.toString() || conversation.userId?.toString(), 'conversation:accepted', { conversationId });
-        }
+        // Note: conversation:accepted is NOT emitted here to avoid auto-opening chat on voice call accept
+        // Chat will open only when user explicitly navigates to chat screen
 
         const acceptDisplayName = userType === 'partner'
           ? getPartnerDisplayName(user)
