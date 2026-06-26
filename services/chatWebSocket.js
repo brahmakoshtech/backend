@@ -361,16 +361,14 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Conversation not found' });
         }
 
+        const isPartner = userType === 'partner';
+
         // ✅ FIX: ended conversation mein message nahi bhej sakte
         if (conversation.status === 'ended' || conversation.status === 'cancelled' || conversation.status === 'rejected') {
           return callback?.({ success: false, message: 'This conversation has ended. No messages can be sent.' });
         }
 
-        const isPartner = userType === 'partner';
-
         // ✅ FIX: Block chat billing when a voice call is currently active for this conversation.
-        // During an active voice call the per-second voice billing interval is already running.
-        // Allowing chat billing to run simultaneously would cause double-charging.
         if (!isPartner && conversation.voiceCallActive === true) {
           return callback?.({ success: false, message: 'Voice call in progress. Send messages after the call ends.' });
         }
