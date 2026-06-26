@@ -13,6 +13,7 @@ import astrologyService from '../services/astrologyService.js';
 import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
+import { canPartnerAcceptConversation, syncPartnerActiveConversationCount } from '../utils/partnerConversationUtils.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
 import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
@@ -469,6 +470,9 @@ router.get('/partner/requests', authenticate, async (req, res) => {
       });
     }
 
+    // Keep activeConversationsCount in sync with real open conversations
+    await syncPartnerActiveConversationCount(req.userId);
+
     const partnerObjectId = mongoose.Types.ObjectId.isValid(req.userId) ? new mongoose.Types.ObjectId(req.userId) : req.userId;
     const requests = await Conversation.find({
       partnerId: partnerObjectId,
@@ -548,15 +552,17 @@ router.post('/partner/requests/:conversationId/accept', authenticate, async (req
       });
     }
 
-    // Check if partner can accept more conversations
-    const partner = await Partner.findById(req.userId);
-    if (partner.activeConversationsCount >= partner.maxConversations) {
-      console.log('❌ Max conversations reached');
+    // Check if partner can accept more conversations (sync from DB to avoid stale counter)
+    const acceptCheck = await canPartnerAcceptConversation(req.userId);
+    if (!acceptCheck.allowed) {
+      console.log('❌ Max conversations reached (actual:', acceptCheck.actualCount, 'max:', acceptCheck.maxConversations, ')');
       return res.status(400).json({
         success: false,
-        message: 'Maximum concurrent conversations reached. Please end some conversations first.'
+        message: acceptCheck.message
       });
     }
+
+    const partner = acceptCheck.partner;
 
     // Accept conversation - session timing starts from partner acceptance
     const acceptedAt = new Date();
@@ -754,6 +760,9 @@ router.get('/conversations', authenticate, async (req, res) => {
     console.log('User ID:', req.userId);
 
     const isPartner = req.userType === 'partner';
+    if (isPartner) {
+      await syncPartnerActiveConversationCount(req.userId);
+    }
     const query = isPartner 
       ? { partnerId: req.userId, status: { $in: ['accepted', 'active', 'ended'] } }
       : { userId: req.userId, status: { $in: ['accepted', 'active', 'pending', 'ended'] } };

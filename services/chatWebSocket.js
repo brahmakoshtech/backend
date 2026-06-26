@@ -12,14 +12,58 @@ import {
   getUserDisplayName,
   getPartnerDisplayName
 } from '../utils/accountValidation.js';
+import { canPartnerAcceptConversation } from '../utils/partnerConversationUtils.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// userId -> Set<socketId> — partners often have multiple tabs (chat + voice)
 const activeConnections = new Map();
 const socketMetadata = new Map();
 const activeVoiceCalls = new Map();
 const voiceCallStartedAt = new Map();
 const voiceBillingIntervals = new Map();
+
+function registerConnection(userId, socketId) {
+  const key = String(userId);
+  if (!activeConnections.has(key)) {
+    activeConnections.set(key, new Set());
+  }
+  activeConnections.get(key).add(socketId);
+}
+
+function unregisterConnection(userId, socketId) {
+  const key = String(userId);
+  const sockets = activeConnections.get(key);
+  if (!sockets) return true;
+  sockets.delete(socketId);
+  if (sockets.size === 0) {
+    activeConnections.delete(key);
+    return true;
+  }
+  return false;
+}
+
+function getUserSocketIds(userId) {
+  const sockets = activeConnections.get(String(userId));
+  return sockets ? [...sockets] : [];
+}
+
+function getPrimarySocketId(userId) {
+  const ids = getUserSocketIds(userId);
+  return ids.length ? ids[ids.length - 1] : null;
+}
+
+function emitToUser(io, userId, event, payload) {
+  const socketIds = getUserSocketIds(userId);
+  for (const socketId of socketIds) {
+    io.to(socketId).emit(event, payload);
+  }
+  return socketIds.length > 0;
+}
+
+function isUserOnline(userId) {
+  return getUserSocketIds(userId).length > 0;
+}
 
 // Helper: settle partner earnings when a conversation ends via WebSocket
 const settlePartnerEarnings = async (conversationId, serviceType = 'chat') => {
@@ -198,7 +242,7 @@ export const setupChatWebSocket = (server) => {
     console.log('Socket:', socket.id);
     console.log('🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉\n');
 
-    activeConnections.set(userId, socket.id);
+    registerConnection(userId, socket.id);
     socketMetadata.set(socket.id, { userId, userType, email: user.email });
 
     socket.join(`user:${userId}`);
@@ -322,6 +366,8 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'This conversation has ended. No messages can be sent.' });
         }
 
+        const isPartner = userType === 'partner';
+
         // ✅ FIX: Block chat billing when a voice call is currently active for this conversation.
         // During an active voice call the per-second voice billing interval is already running.
         // Allowing chat billing to run simultaneously would cause double-charging.
@@ -329,17 +375,14 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Voice call in progress. Send messages after the call ends.' });
         }
 
-        const isPartner = userType === 'partner';
-
         // Credit deduction: only user pays per message
         if (!isPartner) {
           const userDoc = await User.findById(userId);
           if (!userDoc || userDoc.credits <= 0) {
             await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
-            const partnerSocketId = activeConnections.get(conversation.partnerId.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
             socket.emit('chat:auto_ended', autoEndPayload);
-            if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
+            emitToUser(io, conversation.partnerId.toString(), 'chat:auto_ended', autoEndPayload);
             await settlePartnerEarnings(conversationId, 'chat');
             return callback?.({ success: false, message: 'Insufficient credits. Chat ended.' });
           }
@@ -358,10 +401,9 @@ export const setupChatWebSocket = (server) => {
 
           if (newBalance <= 0) {
             await Conversation.findOneAndUpdate({ conversationId }, { status: 'ended', endedAt: new Date() });
-            const partnerSocketId = activeConnections.get(conversation.partnerId.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
             socket.emit('chat:auto_ended', autoEndPayload);
-            if (partnerSocketId) io.to(partnerSocketId).emit('chat:auto_ended', autoEndPayload);
+            emitToUser(io, conversation.partnerId.toString(), 'chat:auto_ended', autoEndPayload);
             await settlePartnerEarnings(conversationId, 'chat');
           }
         }
@@ -407,8 +449,7 @@ export const setupChatWebSocket = (server) => {
           conversationId
         });
 
-        const receiverSocketId = activeConnections.get(receiverId.toString());
-        if (receiverSocketId) {
+        if (isUserOnline(receiverId)) {
           message.isDelivered = true;
           message.deliveredAt = new Date();
           await message.save();
@@ -563,8 +604,7 @@ export const setupChatWebSocket = (server) => {
           }
         }
 
-        const targetSocketId = activeConnections.get(peerId);
-        if (!targetSocketId) {
+        if (!isUserOnline(peerId)) {
           return callback?.({ success: false, message: 'Peer is offline' });
         }
 
@@ -602,7 +642,7 @@ export const setupChatWebSocket = (server) => {
         activeVoiceCalls.set(callerKey, conversationId);
         activeVoiceCalls.set(peerKey, conversationId);
 
-        io.to(targetSocketId).emit('voice:call:incoming', payload);
+        emitToUser(io, peerId, 'voice:call:incoming', payload);
 
         callback?.({
           success: true,
@@ -634,11 +674,9 @@ export const setupChatWebSocket = (server) => {
               { conversationId },
               { voiceCallActive: false, lastVoiceCallEndedAt: new Date() }
             );
-            const userSocketId = activeConnections.get(userIdForBilling.toString());
-            const partnerSocketId = activeConnections.get(partnerIdForBilling.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
-            if (userSocketId) io.to(userSocketId).emit('voice:auto_ended', autoEndPayload);
-            if (partnerSocketId) io.to(partnerSocketId).emit('voice:auto_ended', autoEndPayload);
+            emitToUser(io, userIdForBilling.toString(), 'voice:auto_ended', autoEndPayload);
+            emitToUser(io, partnerIdForBilling.toString(), 'voice:auto_ended', autoEndPayload);
             activeVoiceCalls.delete(userIdForBilling.toString());
             activeVoiceCalls.delete(partnerIdForBilling.toString());
             await settlePartnerEarnings(conversationId, 'voice');
@@ -649,15 +687,12 @@ export const setupChatWebSocket = (server) => {
           userDoc.credits = newBalance;
           await userDoc.save();
 
-          const userSocketId = activeConnections.get(userIdForBilling.toString());
-          if (userSocketId) {
-            io.to(userSocketId).emit('credit:update', {
-              conversationId,
-              creditsDeducted: voiceCCR,
-              remainingBalance: newBalance,
-              type: 'voice_second'
-            });
-          }
+          emitToUser(io, userIdForBilling.toString(), 'credit:update', {
+            conversationId,
+            creditsDeducted: voiceCCR,
+            remainingBalance: newBalance,
+            type: 'voice_second'
+          });
 
           if (newBalance <= 0) {
             clearInterval(interval);
@@ -666,10 +701,9 @@ export const setupChatWebSocket = (server) => {
               { conversationId },
               { voiceCallActive: false, lastVoiceCallEndedAt: new Date() }
             );
-            const partnerSocketId = activeConnections.get(partnerIdForBilling.toString());
             const autoEndPayload = { conversationId, reason: 'insufficient_credits', remainingBalance: 0 };
-            if (userSocketId) io.to(userSocketId).emit('voice:auto_ended', autoEndPayload);
-            if (partnerSocketId) io.to(partnerSocketId).emit('voice:auto_ended', autoEndPayload);
+            emitToUser(io, userIdForBilling.toString(), 'voice:auto_ended', autoEndPayload);
+            emitToUser(io, partnerIdForBilling.toString(), 'voice:auto_ended', autoEndPayload);
             activeVoiceCalls.delete(userIdForBilling.toString());
             activeVoiceCalls.delete(partnerIdForBilling.toString());
             await settlePartnerEarnings(conversationId, 'voice');
@@ -708,17 +742,16 @@ export const setupChatWebSocket = (server) => {
 
         // If partner is accepting a still-pending chat request, auto-accept the conversation for chat as well
         if (isCalleePartner && conversation.status === 'pending' && !conversation.isAcceptedByPartner) {
-          const partnerDoc = await Partner.findById(userId);
-          if (partnerDoc) {
-            const activeCount = partnerDoc.activeConversationsCount || 0;
-            const maxConversations = partnerDoc.maxConversations || 5;
-            if (activeCount >= maxConversations) {
-              return callback?.({
-                success: false,
-                message: 'Maximum concurrent conversations reached. Please end some conversations first.'
-              });
-            }
+          const acceptCheck = await canPartnerAcceptConversation(userId);
+          if (!acceptCheck.allowed) {
+            return callback?.({
+              success: false,
+              message: acceptCheck.message
+            });
+          }
 
+          const partnerDoc = acceptCheck.partner;
+          if (partnerDoc) {
             const acceptedAt = new Date();
             conversation.status = 'accepted';
             conversation.isAcceptedByPartner = true;
@@ -733,7 +766,7 @@ export const setupChatWebSocket = (server) => {
             };
             await conversation.save();
 
-            partnerDoc.activeConversationsCount = activeCount + 1;
+            partnerDoc.activeConversationsCount = (acceptCheck.actualCount || 0) + 1;
             await partnerDoc.updateBusyStatus();
           }
         }
@@ -754,17 +787,7 @@ export const setupChatWebSocket = (server) => {
 
         // Notify user that pending chat was auto-accepted when answering call
         if (isCalleePartner && conversation.isAcceptedByPartner) {
-          const userSocketId = activeConnections.get(
-            conversation.userId?._id?.toString() || conversation.userId?.toString()
-          );
-          if (userSocketId) {
-            io.to(userSocketId).emit('conversation:accepted', { conversationId });
-          }
-        }
-
-        const callerSocketId = activeConnections.get(peerId);
-        if (!callerSocketId) {
-          return callback?.({ success: false, message: 'Caller is offline' });
+          emitToUser(io, conversation.userId?._id?.toString() || conversation.userId?.toString(), 'conversation:accepted', { conversationId });
         }
 
         const acceptDisplayName = userType === 'partner'
@@ -782,7 +805,10 @@ export const setupChatWebSocket = (server) => {
           acceptedAt: new Date()
         };
 
-        io.to(callerSocketId).emit('voice:call:accepted', payload);
+        const callerOnline = emitToUser(io, peerId, 'voice:call:accepted', payload);
+        if (!callerOnline) {
+          return callback?.({ success: false, message: 'Caller is offline' });
+        }
 
         // Start per-second billing when call is accepted
         const convUserId = conversation.userId?._id?.toString() || conversation.userId?.toString();
@@ -817,7 +843,6 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: error });
         }
 
-        const callerSocketId = activeConnections.get(peerId);
         const payload = {
           conversationId,
           rejectedBy: {
@@ -829,9 +854,7 @@ export const setupChatWebSocket = (server) => {
           rejectedAt: new Date()
         };
 
-        if (callerSocketId) {
-          io.to(callerSocketId).emit('voice:call:rejected', payload);
-        }
+        emitToUser(io, peerId, 'voice:call:rejected', payload);
 
         // Persist call log (rejected)
         await VoiceCallLog.findOneAndUpdate(
@@ -874,7 +897,6 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: error });
         }
 
-        const peerSocketId = activeConnections.get(peerId);
         const endedAt = new Date();
         const enderDisplayName = userType === 'partner'
           ? getPartnerDisplayName(user)
@@ -890,8 +912,8 @@ export const setupChatWebSocket = (server) => {
           continueChat: true
         };
 
-        if (peerSocketId) {
-          io.to(peerSocketId).emit('voice:call:ended', payload);
+        if (peerId) {
+          emitToUser(io, peerId, 'voice:call:ended', payload);
         }
 
         // Clear active call state for both participants
@@ -1002,10 +1024,9 @@ export const setupChatWebSocket = (server) => {
         const { peerId, error } = await getCallPeer(conversationId);
         if (error) return;
 
-        const peerSocketId = activeConnections.get(peerId);
-        if (!peerSocketId) return;
+        if (!isUserOnline(peerId)) return;
 
-        io.to(peerSocketId).emit('voice:signal', {
+        emitToUser(io, peerId, 'voice:signal', {
           conversationId,
           from: {
             id: userId,
@@ -1031,7 +1052,6 @@ export const setupChatWebSocket = (server) => {
             const convUserId = conversation.userId?.toString();
             const convPartnerId = conversation.partnerId?.toString();
             const peerId = disconnectedUserId === convUserId ? convPartnerId : convUserId;
-            const peerSocketId = peerId ? activeConnections.get(peerId) : null;
             const endedAt = new Date();
 
             activeVoiceCalls.delete(disconnectedUserId);
@@ -1057,8 +1077,8 @@ export const setupChatWebSocket = (server) => {
               continueChat: true
             };
 
-            if (peerSocketId) {
-              io.to(peerSocketId).emit('voice:call:ended', endPayload);
+            if (peerId) {
+              emitToUser(io, peerId, 'voice:call:ended', endPayload);
             }
 
             const startTime = voiceCallStartedAt.get(activeCallConvId) || conversation.startedAt;
@@ -1096,7 +1116,7 @@ export const setupChatWebSocket = (server) => {
         }
       }
 
-      activeConnections.delete(userId);
+      const fullyDisconnected = unregisterConnection(userId, socket.id);
       socketMetadata.delete(socket.id);
 
       // Clear any remaining voice billing intervals for this user
@@ -1115,7 +1135,7 @@ export const setupChatWebSocket = (server) => {
         }
       }
 
-      if (userType === 'partner') {
+      if (userType === 'partner' && fullyDisconnected) {
         await Partner.findByIdAndUpdate(userId, {
           onlineStatus: 'offline',
           lastActiveAt: new Date()
