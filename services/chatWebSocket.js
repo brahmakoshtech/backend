@@ -59,6 +59,10 @@ function getPrimarySocketId(userId) {
   return ids.length ? ids[ids.length - 1] : null;
 }
 
+function isUserOnline(userId) {
+  return getUserSocketIds(userId).length > 0;
+}
+
 function emitToUser(io, userId, event, payload) {
   const socketIds = getUserSocketIds(userId);
   for (const socketId of socketIds) {
@@ -595,22 +599,30 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'conversationId is required' });
         }
 
+        // BUG FIX 1: ensureVoiceCallConversation ke baad getCallPeer se fresh populated data lo
+        // Pehle raw conversation fetch karo for ensureVoiceCallConversation
+        if (userType === 'user') {
+          const rawConv = await Conversation.findOne({ conversationId });
+          if (rawConv) {
+            const voiceConversation = await ensureVoiceCallConversation(rawConv);
+            // Agar conversationId change ho gaya (chat → voice_call upgrade)
+            if (voiceConversation.conversationId !== conversationId) {
+              conversationId = voiceConversation.conversationId;
+            }
+          }
+        }
+
+        // Ab getCallPeer se fully populated conversation lo
         let { conversation, peerId, peerInfo, error } = await getCallPeer(conversationId);
         if (error) {
           return callback?.({ success: false, message: error });
         }
 
-        if (userType === 'user') {
-          const voiceConversation = await ensureVoiceCallConversation(conversation);
-          if (voiceConversation.conversationId !== conversationId) {
-            conversationId = voiceConversation.conversationId;
-            ({ conversation, peerId, peerInfo, error } = await getCallPeer(conversationId));
-            if (error) {
-              return callback?.({ success: false, message: error });
-            }
-          } else {
-            conversation = voiceConversation;
-          }
+        // BUG FIX 1: voice_call type allow karo even if status is 'pending'
+        // (Android creates conversation with status:'pending' before calling)
+        if (!['pending', 'accepted', 'active', 'voice_call'].includes(conversation.status) &&
+            conversation.type !== 'voice_call') {
+          return callback?.({ success: false, message: 'Conversation is not in a valid state for a voice call' });
         }
 
         const convUserId = conversation.userId?._id?.toString() || conversation.userId?.toString();
@@ -622,9 +634,11 @@ export const setupChatWebSocket = (server) => {
 
         // Ensure caller belongs to this conversation
         const isCallerPartner = userType === 'partner';
+        // BUG FIX 3: ObjectId string comparison — dono side toString() guarantee
+        const callerIdStr = String(userId);
         const hasAccess = isCallerPartner
-          ? conversation.partnerId?._id?.toString() === userId
-          : conversation.userId?._id?.toString() === userId;
+          ? String(conversation.partnerId?._id || conversation.partnerId) === callerIdStr
+          : String(conversation.userId?._id || conversation.userId) === callerIdStr;
 
         if (!hasAccess) {
           return callback?.({ success: false, message: 'Access denied for this conversation' });
@@ -635,8 +649,8 @@ export const setupChatWebSocket = (server) => {
           : getUserDisplayName(user);
 
         // Prevent multiple simultaneous voice calls per participant
-        const callerKey = userId.toString();
-        const peerKey = peerId;
+        const callerKey = String(userId);
+        const peerKey = String(peerId);
         const existingCallerCall = activeVoiceCalls.get(callerKey);
         const existingPeerCall = activeVoiceCalls.get(peerKey);
         if (existingCallerCall && existingCallerCall !== conversationId) {
@@ -674,14 +688,19 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Peer is currently busy in another call' });
         }
 
-        // Basic credit check for user before starting call
-        if (conversation.userId?.credits !== undefined) {
-          if (conversation.userId.credits <= 0) {
+        // BUG FIX 1: credits check — populated userId se credits nahi aata, fresh fetch karo
+        if (userType === 'user') {
+          const userCreditsDoc = await User.findById(userId).select('credits').lean();
+          if (!userCreditsDoc || userCreditsDoc.credits <= 0) {
             return callback?.({ success: false, message: 'Insufficient credits to start a voice call' });
           }
         }
 
-        if (!isUserOnline(peerId)) {
+        // BUG FIX 2 & 3: isUserOnline peerId string se check hota hai — already fixed above
+        // Extra debug log taaki Android issue trace ho sake
+        const peerOnline = isUserOnline(peerKey);
+        console.log(`📞 [voice:call:initiate] peerKey=${peerKey} online=${peerOnline} activeConnections keys=[${[...activeConnections.keys()].join(',')}]`);
+        if (!peerOnline) {
           return callback?.({ success: false, message: 'Peer is offline' });
         }
 
@@ -821,9 +840,11 @@ export const setupChatWebSocket = (server) => {
 
         // Ensure callee belongs to this conversation
         const isCalleePartner = userType === 'partner';
+        // BUG FIX 3: ObjectId toString() guarantee
+        const calleeIdStr = String(userId);
         const hasAccess = isCalleePartner
-          ? conversation.partnerId?._id?.toString() === userId
-          : conversation.userId?._id?.toString() === userId;
+          ? String(conversation.partnerId?._id || conversation.partnerId) === calleeIdStr
+          : String(conversation.userId?._id || conversation.userId) === calleeIdStr;
 
         if (!hasAccess) {
           return callback?.({ success: false, message: 'Access denied for this conversation' });
@@ -1041,6 +1062,8 @@ export const setupChatWebSocket = (server) => {
           voiceBillingIntervals.delete(conversationId);
         }
 
+        // FIX #5: startTime ko DELETE se pehle read karo
+        const callStartTime = voiceCallStartedAt.get(conversationId) || conversation.startedAt || new Date(endedAt.getTime() - 1000);
         voiceCallStartedAt.delete(conversationId);
 
         await Conversation.findOneAndUpdate(
@@ -1055,7 +1078,7 @@ export const setupChatWebSocket = (server) => {
         let durationSecondsForLog = 0;
         let billableMinutesForLog = 0;
         try {
-          const startTime = voiceCallStartedAt.get(conversationId) || conversation.startedAt || new Date(endedAt.getTime() - 1000);
+          const startTime = callStartTime;
           durationSecondsForLog = Math.round(Math.max(0, endedAt.getTime() - new Date(startTime).getTime()) / 1000);
           billableMinutesForLog = durationSecondsForLog > 0 ? Math.max(1, Math.ceil(durationSecondsForLog / 60)) : 0;
 
@@ -1136,12 +1159,23 @@ export const setupChatWebSocket = (server) => {
         const { conversationId, signal } = data || {};
         if (!conversationId || !signal) return;
 
+        // BUG FIX 4: getCallPeer se peerId string mein aata hai
+        // emitToUser already direct socketIds pe emit karta hai (room nahi)
+        // Extra safety: peerIdStr explicitly String() se
         const { peerId, error } = await getCallPeer(conversationId);
-        if (error) return;
+        if (error) {
+          console.warn(`[voice:signal] getCallPeer error for ${conversationId}: ${error}`);
+          return;
+        }
 
-        if (!isUserOnline(peerId)) return;
+        const peerIdStr = String(peerId);
+        if (!isUserOnline(peerIdStr)) {
+          console.warn(`[voice:signal] peer ${peerIdStr} is offline, dropping signal`);
+          return;
+        }
 
-        emitToUser(io, peerId, 'voice:signal', {
+        // Direct socket emit — no room dependency
+        emitToUser(io, peerIdStr, 'voice:signal', {
           conversationId,
           from: {
             id: userId,
@@ -1224,7 +1258,8 @@ export const setupChatWebSocket = (server) => {
               if (partnerDoc && partnerCredited > 0) {
                 partnerDoc.creditsEarnedBalance = (partnerDoc.creditsEarnedBalance || 0) + partnerCredited;
                 partnerDoc.creditsEarnedTotal = (partnerDoc.creditsEarnedTotal || 0) + partnerCredited;
-                await partnerDoc.save();
+                // FIX #9: updateBusyStatus() call karo taaki partner ka busy status sahi ho
+                await partnerDoc.updateBusyStatus();
               }
             }
 

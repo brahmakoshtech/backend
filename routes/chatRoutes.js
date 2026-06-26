@@ -411,10 +411,12 @@ router.post('/conversations', authenticate, async (req, res) => {
       }
     }
 
+    // BUG FIX: voice_call conversation already exists aur response mein conversationId properly aana chahiye
     if (conversation) {
       console.log('ℹ️ Active/pending conversation already exists', {
         conversationId: conversation.conversationId,
-        type: conversation.type
+        type: conversation.type,
+        status: conversation.status
       });
       await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus bio experience expertise languages qualifications location totalSessions completedSessions pricePerSession');
       await conversation.populate('userId', 'email profile profileImage');
@@ -423,7 +425,10 @@ router.post('/conversations', authenticate, async (req, res) => {
         message: conversation.type === 'voice_call'
           ? 'Voice call request already exists'
           : 'Conversation already exists',
-        data: conversation
+        data: {
+          ...conversation.toObject(),
+          conversationId: conversation.conversationId  // Explicitly include at top level
+        }
       });
     }
 
@@ -485,12 +490,18 @@ router.post('/conversations', authenticate, async (req, res) => {
       conversationType: conversation.conversationType
     });
 
+    // BUG FIX: conversationId explicitly top-level mein include karo response mein
+    // Android app data.conversationId parse karta hai
+    const convObj = conversation.toObject();
     res.json({
       success: true,
       message: isVoiceRequest
         ? 'Voice call request created. Waiting for partner to accept the call.'
         : 'Conversation request created. Waiting for partner acceptance.',
-      data: conversation
+      data: {
+        ...convObj,
+        conversationId: conversation.conversationId  // Guarantee top-level field
+      }
     });
   } catch (error) {
     console.error('❌ Error creating conversation:', error.message);
