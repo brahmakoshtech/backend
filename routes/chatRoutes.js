@@ -14,6 +14,7 @@ import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import { canPartnerAcceptConversation, syncPartnerActiveConversationCount } from '../utils/partnerConversationUtils.js';
+import { normalizeConversationType } from '../utils/voiceCallConversationUtils.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
 import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
@@ -320,7 +321,8 @@ router.post('/conversations', authenticate, async (req, res) => {
     console.log('Request Body:', req.body);
     console.log('User Type:', req.userType);
 
-    const { partnerId, userId, astrologyData } = req.body;
+    const { partnerId, userId, astrologyData, type: requestedType } = req.body;
+    const conversationKind = normalizeConversationType(requestedType);
 
     // Validate request based on user type
     if (req.userType === 'user' && !partnerId) {
@@ -377,10 +379,11 @@ router.post('/conversations', authenticate, async (req, res) => {
     const baseId = [finalPartnerId, finalUserId].sort().join('_');
     console.log('Base conversation ID:', baseId);
 
-    // Check if active/pending conversation already exists (same session)
+    // Check if active/pending conversation already exists (same session + type)
     let conversation = await Conversation.findOne({
       partnerId: finalPartnerId,
       userId: finalUserId,
+      type: conversationKind,
       status: { $in: ['pending', 'accepted', 'active'] }
     });
 
@@ -433,6 +436,8 @@ router.post('/conversations', authenticate, async (req, res) => {
       userId: finalUserId,
       status: 'pending',
       isAcceptedByPartner: false,
+      type: conversationKind,
+      conversationType: conversationKind === 'voice_call' ? 'call' : 'chat',
       userAstrologyData: userAstrologyInfo
     });
 
@@ -481,7 +486,8 @@ router.get('/partner/requests', authenticate, async (req, res) => {
     const requests = await Conversation.find({
       partnerId: partnerObjectId,
       status: 'pending',
-      isAcceptedByPartner: false
+      isAcceptedByPartner: false,
+      type: { $ne: 'voice_call' }
     })
       .sort({ createdAt: -1 })
       .populate('userId', 'email profile profileImage')
@@ -767,9 +773,17 @@ router.get('/conversations', authenticate, async (req, res) => {
     if (isPartner) {
       await syncPartnerActiveConversationCount(req.userId);
     }
-    const query = isPartner 
+
+    const listType = req.query.type ? normalizeConversationType(req.query.type) : null;
+    const query = isPartner
       ? { partnerId: req.userId, status: { $in: ['accepted', 'active', 'ended'] } }
       : { userId: req.userId, status: { $in: ['accepted', 'active', 'pending', 'ended'] } };
+
+    if (listType) {
+      query.type = listType;
+    } else {
+      query.type = { $ne: 'voice_call' };
+    }
 
     console.log('Query:', JSON.stringify(query));
 
@@ -829,6 +843,7 @@ router.get('/conversations', authenticate, async (req, res) => {
       _id: conv._id,
       conversationId: conv.conversationId,
       status: conv.status,
+      type: conv.type || 'chat',
       isAcceptedByPartner: conv.isAcceptedByPartner,
       acceptedAt: conv.acceptedAt,
       lastMessage: conv.lastMessage,

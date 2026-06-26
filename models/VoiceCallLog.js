@@ -9,7 +9,7 @@ const voiceCallLogSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ['ringing', 'in_call', 'rejected', 'ended', 'busy'],
+      enum: ['ringing', 'in_call', 'rejected', 'ended', 'busy', 'missed'],
       default: 'ringing',
       index: true
     },

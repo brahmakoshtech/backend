@@ -5,7 +5,8 @@ export async function countActivePartnerConversations(partnerId) {
   return Conversation.countDocuments({
     partnerId,
     isAcceptedByPartner: true,
-    status: { $in: ['accepted', 'active'] }
+    status: { $in: ['accepted', 'active'] },
+    type: { $ne: 'voice_call' }
   });
 }
 

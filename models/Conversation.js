@@ -29,6 +29,14 @@ const conversationSchema = new mongoose.Schema({
     enum: ['pending', 'accepted', 'active', 'ended', 'rejected', 'cancelled'],
     default: 'pending'
   },
+
+  // Distinguishes text chat sessions from voice-only call sessions
+  type: {
+    type: String,
+    enum: ['chat', 'voice_call'],
+    default: 'chat',
+    index: true
+  },
   
   // Partner Acceptance (NEW)
   isAcceptedByPartner: {

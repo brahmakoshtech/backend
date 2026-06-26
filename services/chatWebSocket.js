@@ -12,6 +12,10 @@ import {
   getUserDisplayName,
   getPartnerDisplayName
 } from '../utils/accountValidation.js';
+import {
+  closeVoiceCallConversation,
+  VOICE_CALL_RING_TIMEOUT_MS
+} from '../utils/voiceCallConversationUtils.js';
 import { canPartnerAcceptConversation } from '../utils/partnerConversationUtils.js';
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -22,6 +26,7 @@ const socketMetadata = new Map();
 const activeVoiceCalls = new Map();
 const voiceCallStartedAt = new Map();
 const voiceBillingIntervals = new Map();
+const voiceCallRingTimeouts = new Map();
 
 function registerConnection(userId, socketId) {
   const key = String(userId);
@@ -61,8 +66,65 @@ function emitToUser(io, userId, event, payload) {
   return socketIds.length > 0;
 }
 
-function isUserOnline(userId) {
-  return getUserSocketIds(userId).length > 0;
+function clearVoiceCallRingTimeout(conversationId) {
+  const timeout = voiceCallRingTimeouts.get(conversationId);
+  if (timeout) {
+    clearTimeout(timeout);
+    voiceCallRingTimeouts.delete(conversationId);
+  }
+}
+
+function emitConversationEnded(io, closeResult) {
+  if (!closeResult) return;
+  const { userId, partnerId, payload } = closeResult;
+  emitToUser(io, userId, 'conversation:ended', payload);
+  emitToUser(io, partnerId, 'conversation:ended', payload);
+  io.to(`conversation:${payload.conversationId}`).emit('conversation:ended', payload);
+}
+
+function scheduleVoiceCallRingTimeout(io, conversationId) {
+  clearVoiceCallRingTimeout(conversationId);
+
+  const timeout = setTimeout(async () => {
+    voiceCallRingTimeouts.delete(conversationId);
+
+    try {
+      const callLog = await VoiceCallLog.findOne({ conversationId }).lean();
+      if (!callLog || callLog.status !== 'ringing') return;
+
+      await VoiceCallLog.findOneAndUpdate(
+        { conversationId },
+        { status: 'missed', endedAt: new Date() }
+      );
+
+      const conversation = await Conversation.findOne({ conversationId }).lean();
+      if (!conversation) return;
+
+      const convUserId = conversation.userId?.toString();
+      const convPartnerId = conversation.partnerId?.toString();
+      activeVoiceCalls.delete(convUserId);
+      activeVoiceCalls.delete(convPartnerId);
+      voiceCallStartedAt.delete(conversationId);
+
+      const missedPayload = {
+        conversationId,
+        reason: 'missed_call',
+        endedAt: new Date()
+      };
+
+      if (convUserId) emitToUser(io, convUserId, 'voice:call:ended', missedPayload);
+      if (convPartnerId) emitToUser(io, convPartnerId, 'voice:call:ended', missedPayload);
+
+      const closeResult = await closeVoiceCallConversation(conversationId, {
+        reason: 'missed_call'
+      });
+      emitConversationEnded(io, closeResult);
+    } catch (err) {
+      console.error('[ChatWebSocket] voice call ring timeout error:', err.message);
+    }
+  }, VOICE_CALL_RING_TIMEOUT_MS);
+
+  voiceCallRingTimeouts.set(conversationId, timeout);
 }
 
 // Helper: settle partner earnings when a conversation ends via WebSocket
@@ -507,6 +569,7 @@ export const setupChatWebSocket = (server) => {
           let existingConv = await Conversation.findOne({
             userId,
             partnerId,
+            type: 'voice_call',
             status: { $in: ['pending', 'accepted', 'active'] }
           });
 
@@ -518,7 +581,9 @@ export const setupChatWebSocket = (server) => {
               userId,
               partnerId,
               status: 'pending',
-              isAcceptedByPartner: false
+              isAcceptedByPartner: false,
+              type: 'voice_call',
+              conversationType: 'call'
             });
           }
 
@@ -642,6 +707,8 @@ export const setupChatWebSocket = (server) => {
 
         emitToUser(io, peerId, 'voice:call:incoming', payload);
 
+        scheduleVoiceCallRingTimeout(io, conversationId);
+
         callback?.({
           success: true,
           message: 'Call initiated',
@@ -678,6 +745,11 @@ export const setupChatWebSocket = (server) => {
             activeVoiceCalls.delete(userIdForBilling.toString());
             activeVoiceCalls.delete(partnerIdForBilling.toString());
             await settlePartnerEarnings(conversationId, 'voice');
+            clearVoiceCallRingTimeout(conversationId);
+            const closeResult = await closeVoiceCallConversation(conversationId, {
+              reason: 'insufficient_credits'
+            });
+            emitConversationEnded(io, closeResult);
             return;
           }
 
@@ -705,6 +777,11 @@ export const setupChatWebSocket = (server) => {
             activeVoiceCalls.delete(userIdForBilling.toString());
             activeVoiceCalls.delete(partnerIdForBilling.toString());
             await settlePartnerEarnings(conversationId, 'voice');
+            clearVoiceCallRingTimeout(conversationId);
+            const closeResult = await closeVoiceCallConversation(conversationId, {
+              reason: 'insufficient_credits'
+            });
+            emitConversationEnded(io, closeResult);
           }
         } catch (err) {
           console.error('Voice billing interval error:', err.message);
@@ -738,38 +815,52 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'Access denied for this conversation' });
         }
 
-        // If partner is accepting a still-pending chat request, auto-accept the conversation for chat as well
+        // If partner is accepting a still-pending request, auto-accept the conversation.
+        // Voice-only calls are accepted for billing but do not count toward chat limits.
         if (isCalleePartner && conversation.status === 'pending' && !conversation.isAcceptedByPartner) {
-          const acceptCheck = await canPartnerAcceptConversation(userId);
-          if (!acceptCheck.allowed) {
-            return callback?.({
-              success: false,
-              message: acceptCheck.message
-            });
-          }
+          const isVoiceCall = conversation.type === 'voice_call';
 
-          const partnerDoc = acceptCheck.partner;
-          if (partnerDoc) {
+          if (!isVoiceCall) {
+            const acceptCheck = await canPartnerAcceptConversation(userId);
+            if (!acceptCheck.allowed) {
+              return callback?.({
+                success: false,
+                message: acceptCheck.message
+              });
+            }
+
+            const partnerDoc = acceptCheck.partner;
+            if (partnerDoc) {
+              const acceptedAt = new Date();
+              conversation.status = 'accepted';
+              conversation.isAcceptedByPartner = true;
+              conversation.acceptedAt = acceptedAt;
+              conversation.startedAt = conversation.startedAt || acceptedAt;
+              conversation.sessionDetails = {
+                ...(conversation.sessionDetails || {}),
+                startTime: conversation.sessionDetails?.startTime || acceptedAt,
+                duration: conversation.sessionDetails?.duration || 0,
+                messagesCount: conversation.sessionDetails?.messagesCount || 0,
+                creditsUsed: conversation.sessionDetails?.creditsUsed || 0
+              };
+              await conversation.save();
+
+              partnerDoc.activeConversationsCount = (acceptCheck.actualCount || 0) + 1;
+              await partnerDoc.updateBusyStatus();
+            }
+          } else {
             const acceptedAt = new Date();
             conversation.status = 'accepted';
             conversation.isAcceptedByPartner = true;
             conversation.acceptedAt = acceptedAt;
             conversation.startedAt = conversation.startedAt || acceptedAt;
-            conversation.sessionDetails = {
-              ...(conversation.sessionDetails || {}),
-              startTime: conversation.sessionDetails?.startTime || acceptedAt,
-              duration: conversation.sessionDetails?.duration || 0,
-              messagesCount: conversation.sessionDetails?.messagesCount || 0,
-              creditsUsed: conversation.sessionDetails?.creditsUsed || 0
-            };
             await conversation.save();
-
-            partnerDoc.activeConversationsCount = (acceptCheck.actualCount || 0) + 1;
-            await partnerDoc.updateBusyStatus();
           }
         }
 
         // Persist call log (accepted)
+        clearVoiceCallRingTimeout(conversationId);
+
         await VoiceCallLog.findOneAndUpdate(
           { conversationId },
           {
@@ -852,6 +943,8 @@ export const setupChatWebSocket = (server) => {
 
         emitToUser(io, peerId, 'voice:call:rejected', payload);
 
+        clearVoiceCallRingTimeout(conversationId);
+
         // Persist call log (rejected)
         await VoiceCallLog.findOneAndUpdate(
           { conversationId },
@@ -870,6 +963,11 @@ export const setupChatWebSocket = (server) => {
           activeVoiceCalls.delete(calleeKey);
           voiceCallStartedAt.delete(conversationId);
         }
+
+        const closeResult = await closeVoiceCallConversation(conversationId, {
+          reason: 'voice_call_rejected'
+        });
+        emitConversationEnded(io, closeResult);
 
         callback?.({ success: true, message: 'Call rejected' });
       } catch (err) {
@@ -912,6 +1010,8 @@ export const setupChatWebSocket = (server) => {
           emitToUser(io, peerId, 'voice:call:ended', payload);
         }
 
+        clearVoiceCallRingTimeout(conversationId);
+
         // Clear active call state for both participants
         if (conversation) {
           const callerKey = peerId;
@@ -927,8 +1027,8 @@ export const setupChatWebSocket = (server) => {
           voiceBillingIntervals.delete(conversationId);
         }
 
-        // Keep chat session active — only clear voice call state.
-        // The conversation status remains 'accepted' so users can continue chatting.
+        voiceCallStartedAt.delete(conversationId);
+
         await Conversation.findOneAndUpdate(
           { conversationId },
           {
@@ -942,9 +1042,7 @@ export const setupChatWebSocket = (server) => {
         let billableMinutesForLog = 0;
         try {
           const startTime = voiceCallStartedAt.get(conversationId) || conversation.startedAt || new Date(endedAt.getTime() - 1000);
-          voiceCallStartedAt.delete(conversationId);
-          const durationMs = Math.max(0, endedAt.getTime() - new Date(startTime).getTime());
-          durationSecondsForLog = Math.round(durationMs / 1000);
+          durationSecondsForLog = Math.round(Math.max(0, endedAt.getTime() - new Date(startTime).getTime()) / 1000);
           billableMinutesForLog = durationSecondsForLog > 0 ? Math.max(1, Math.ceil(durationSecondsForLog / 60)) : 0;
 
           const userDoc = await User.findById(conversation.userId).select('credits clientId').lean();
@@ -1006,6 +1104,11 @@ export const setupChatWebSocket = (server) => {
           console.error('❌ Voice call log update failed:', logErr.message);
         }
 
+        const closeResult = await closeVoiceCallConversation(conversationId, {
+          reason: 'voice_call_ended'
+        });
+        emitConversationEnded(io, closeResult);
+
         callback?.({ success: true, message: 'Call ended', call: payload });
       } catch (err) {
         console.error('voice:call:end error:', err);
@@ -1054,6 +1157,8 @@ export const setupChatWebSocket = (server) => {
 
             activeVoiceCalls.delete(disconnectedUserId);
             if (peerId) activeVoiceCalls.delete(peerId);
+
+            clearVoiceCallRingTimeout(activeCallConvId);
 
             const billingInterval = voiceBillingIntervals.get(activeCallConvId);
             if (billingInterval) {
@@ -1108,6 +1213,11 @@ export const setupChatWebSocket = (server) => {
                 await partnerDoc.save();
               }
             }
+
+            const closeResult = await closeVoiceCallConversation(activeCallConvId, {
+              reason: 'peer_disconnected'
+            });
+            emitConversationEnded(io, closeResult);
           }
         } catch (disconnectCallErr) {
           console.error('[ChatWebSocket] disconnect call cleanup error:', disconnectCallErr.message);
