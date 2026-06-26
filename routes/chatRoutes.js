@@ -14,7 +14,7 @@ import numerologyService from '../services/numerologyService.js';
 import doshaService from '../services/doshaService.js';
 import remedyService from '../services/remedyService.js';
 import { canPartnerAcceptConversation, syncPartnerActiveConversationCount } from '../utils/partnerConversationUtils.js';
-import { normalizeConversationType } from '../utils/voiceCallConversationUtils.js';
+import { normalizeConversationType, resolveConversationKindFromRequest, ensureVoiceCallConversation } from '../utils/voiceCallConversationUtils.js';
 import panchangService from '../services/panchangService.js';
 import { generateConversationSummary } from '../services/geminiService.js';
 import { getPresignedUrl, generateUploadUrl } from '../utils/storage.js';
@@ -321,8 +321,18 @@ router.post('/conversations', authenticate, async (req, res) => {
     console.log('Request Body:', req.body);
     console.log('User Type:', req.userType);
 
-    const { partnerId, userId, astrologyData, type: requestedType } = req.body;
-    const conversationKind = normalizeConversationType(requestedType);
+    const { partnerId, userId, astrologyData } = req.body;
+    const conversationKind = resolveConversationKindFromRequest({
+      ...req.body,
+      type: req.body?.type ?? req.query?.type,
+      conversationType: req.body?.conversationType ?? req.query?.conversationType,
+      callType: req.body?.callType ?? req.query?.callType,
+      serviceType: req.body?.serviceType ?? req.query?.serviceType,
+      mode: req.body?.mode ?? req.query?.mode,
+      requestType: req.body?.requestType ?? req.query?.requestType
+    });
+
+    console.log('Resolved conversation kind:', conversationKind);
 
     // Validate request based on user type
     if (req.userType === 'user' && !partnerId) {
@@ -387,13 +397,32 @@ router.post('/conversations', authenticate, async (req, res) => {
       status: { $in: ['pending', 'accepted', 'active'] }
     });
 
+    // Android may retry voice after an older pending chat request was created incorrectly.
+    if (!conversation && conversationKind === 'voice_call') {
+      const pendingChat = await Conversation.findOne({
+        partnerId: finalPartnerId,
+        userId: finalUserId,
+        type: 'chat',
+        status: 'pending',
+        isAcceptedByPartner: false
+      });
+      if (pendingChat) {
+        conversation = await ensureVoiceCallConversation(pendingChat);
+      }
+    }
+
     if (conversation) {
-      console.log('ℹ️ Active/pending conversation already exists');
+      console.log('ℹ️ Active/pending conversation already exists', {
+        conversationId: conversation.conversationId,
+        type: conversation.type
+      });
       await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus bio experience expertise languages qualifications location totalSessions completedSessions pricePerSession');
       await conversation.populate('userId', 'email profile profileImage');
       return res.json({
         success: true,
-        message: 'Conversation already exists',
+        message: conversation.type === 'voice_call'
+          ? 'Voice call request already exists'
+          : 'Conversation already exists',
         data: conversation
       });
     }
@@ -430,6 +459,7 @@ router.post('/conversations', authenticate, async (req, res) => {
 
     // Create new conversation request
     console.log('🆕 Creating new conversation...');
+    const isVoiceRequest = conversationKind === 'voice_call';
     conversation = await Conversation.create({
       conversationId,
       partnerId: finalPartnerId,
@@ -437,18 +467,29 @@ router.post('/conversations', authenticate, async (req, res) => {
       status: 'pending',
       isAcceptedByPartner: false,
       type: conversationKind,
-      conversationType: conversationKind === 'voice_call' ? 'call' : 'chat',
-      userAstrologyData: userAstrologyInfo
+      conversationType: isVoiceRequest ? 'call' : 'chat',
+      userAstrologyData: userAstrologyInfo,
+      metadata: {
+        source: req.headers['x-client-platform'] || req.body?.platform || 'api',
+        deviceType: req.headers['x-client-platform'] || req.body?.deviceType || null,
+        userAgent: req.headers['user-agent'] || null
+      }
     });
 
     await conversation.populate('partnerId', 'name email profilePicture specialization rating onlineStatus bio experience expertise languages qualifications location totalSessions completedSessions pricePerSession');
     await conversation.populate('userId', 'email profile profileImage');
 
-    console.log('✅ Conversation created successfully');
+    console.log('✅ Conversation created successfully', {
+      conversationId: conversation.conversationId,
+      type: conversation.type,
+      conversationType: conversation.conversationType
+    });
 
     res.json({
       success: true,
-      message: 'Conversation request created. Waiting for partner acceptance.',
+      message: isVoiceRequest
+        ? 'Voice call request created. Waiting for partner to accept the call.'
+        : 'Conversation request created. Waiting for partner acceptance.',
       data: conversation
     });
   } catch (error) {

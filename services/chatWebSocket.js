@@ -14,6 +14,7 @@ import {
 } from '../utils/accountValidation.js';
 import {
   closeVoiceCallConversation,
+  ensureVoiceCallConversation,
   VOICE_CALL_RING_TIMEOUT_MS
 } from '../utils/voiceCallConversationUtils.js';
 import { canPartnerAcceptConversation } from '../utils/partnerConversationUtils.js';
@@ -594,9 +595,22 @@ export const setupChatWebSocket = (server) => {
           return callback?.({ success: false, message: 'conversationId is required' });
         }
 
-        const { conversation, peerId, peerInfo, error } = await getCallPeer(conversationId);
+        let { conversation, peerId, peerInfo, error } = await getCallPeer(conversationId);
         if (error) {
           return callback?.({ success: false, message: error });
+        }
+
+        if (userType === 'user') {
+          const voiceConversation = await ensureVoiceCallConversation(conversation);
+          if (voiceConversation.conversationId !== conversationId) {
+            conversationId = voiceConversation.conversationId;
+            ({ conversation, peerId, peerInfo, error } = await getCallPeer(conversationId));
+            if (error) {
+              return callback?.({ success: false, message: error });
+            }
+          } else {
+            conversation = voiceConversation;
+          }
         }
 
         const convUserId = conversation.userId?._id?.toString() || conversation.userId?.toString();
