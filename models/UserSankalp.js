@@ -45,8 +45,7 @@ const userSankalpSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['active', 'completed', 'abandoned'],
-    default: 'active',
-    index: true
+    default: 'active'
   },
   currentDay: {
     type: Number,

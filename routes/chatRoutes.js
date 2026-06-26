@@ -21,7 +21,11 @@ import { getBillingRates } from '../services/billingRates.js';
 import { validateUserPartnerNotSameContact, getUserDisplayName } from '../utils/accountValidation.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production-to-a-strong-random-string';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('❌ FATAL: JWT_SECRET environment variable is not set!');
+  process.exit(1);
+}
 
 // Middleware to authenticate
 const authenticate = async (req, res, next) => {
