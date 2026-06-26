@@ -8,8 +8,8 @@ import mongoose from 'mongoose';
 const chatCreditLedgerSchema = new mongoose.Schema(
   {
     conversationId: { type: String, required: true, unique: true, index: true },
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    partnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', required: true, index: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    partnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', required: true },
 
     billableMinutes: { type: Number, required: true, min: 0 },
     userDebited: { type: Number, required: true, min: 0 },
