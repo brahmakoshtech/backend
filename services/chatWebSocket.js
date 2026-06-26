@@ -909,7 +909,7 @@ export const setupChatWebSocket = (server) => {
             name: enderDisplayName
           },
           endedAt,
-          continueChat: true
+          continueChat: false
         };
 
         if (peerId) {
@@ -949,11 +949,12 @@ export const setupChatWebSocket = (server) => {
           voiceCallStartedAt.delete(conversationId);
           const durationMs = Math.max(0, endedAt.getTime() - new Date(startTime).getTime());
           durationSecondsForLog = Math.round(durationMs / 1000);
-          billableMinutesForLog = Math.max(1, Math.ceil(durationSecondsForLog / 60));
+          billableMinutesForLog = durationSecondsForLog > 0 ? Math.max(1, Math.ceil(durationSecondsForLog / 60)) : 0;
 
           const userDoc = await User.findById(conversation.userId).select('credits clientId').lean();
           const rates = await getBillingRates(conversation.partnerId, userDoc?.clientId);
-          const partnerCredited = billableMinutesForLog * rates.partnerVoicePerMinute;
+          // Partner credited based on actual seconds billed (same rate as user deduction)
+          const partnerCredited = durationSecondsForLog * rates.voicePerSecond;
           const partnerDoc = await Partner.findById(conversation.partnerId);
           if (partnerDoc && partnerCredited > 0) {
             const partnerPreviousBalance = partnerDoc.creditsEarnedBalance || 0;
@@ -974,6 +975,7 @@ export const setupChatWebSocket = (server) => {
                 userId: conversation.userId,
                 partnerId: conversation.partnerId,
                 billableMinutes: billableMinutesForLog,
+                durationSeconds: durationSecondsForLog,
                 userDebited,
                 partnerCredited,
                 userPreviousBalance: userDoc.credits + userDebited,
@@ -1074,7 +1076,7 @@ export const setupChatWebSocket = (server) => {
               endedBy: { id: userId, type: userType, name: user.email || user.name },
               endedAt,
               reason: 'peer_disconnected',
-              continueChat: true
+              continueChat: false
             };
 
             if (peerId) {
@@ -1099,10 +1101,10 @@ export const setupChatWebSocket = (server) => {
               }
             );
 
-            if (billableMinutes > 0) {
+            if (durationSeconds > 0) {
               const userDoc = await User.findById(conversation.userId).select('clientId credits').lean();
               const rates = await getBillingRates(conversation.partnerId, userDoc?.clientId);
-              const partnerCredited = billableMinutes * rates.partnerVoicePerMinute;
+              const partnerCredited = durationSeconds * rates.voicePerSecond;
               const partnerDoc = await Partner.findById(conversation.partnerId);
               if (partnerDoc && partnerCredited > 0) {
                 partnerDoc.creditsEarnedBalance = (partnerDoc.creditsEarnedBalance || 0) + partnerCredited;
